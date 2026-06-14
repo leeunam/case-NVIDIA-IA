@@ -10,8 +10,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 import re
-import unicodedata
 
+from nvidia_startup_intel.normalization import normalize_text, origin_url
 from nvidia_startup_intel.page_collection import CollectedPage
 from nvidia_startup_intel.search_params import UNKNOWN
 
@@ -160,7 +160,7 @@ def _extract_sector(pages: tuple[CollectedPage, ...]) -> ProfileField:
         return labeled
 
     for page in pages:
-        normalized_text = _normalize_text(page.main_text)
+        normalized_text = normalize_text(page.main_text)
         for keyword, sector in SECTOR_KEYWORDS.items():
             if keyword in normalized_text:
                 return ProfileField(
@@ -179,7 +179,7 @@ def _extract_ai_signals(pages: tuple[CollectedPage, ...]) -> ProfileField:
     signals: list[str] = []
     evidences: list[FieldEvidence] = []
     for page in pages:
-        normalized_text = _normalize_text(page.main_text)
+        normalized_text = normalize_text(page.main_text)
         for keyword in AI_SIGNAL_KEYWORDS:
             if keyword in normalized_text and keyword not in signals:
                 signals.append(keyword)
@@ -213,7 +213,7 @@ def _find_labeled_value(text: str, labels: tuple[str, ...]) -> str:
 def _official_site_from_pages(pages: tuple[CollectedPage, ...]) -> str:
     if not pages:
         return UNKNOWN
-    return _origin(pages[0].url)
+    return origin_url(pages[0].url)
 
 
 def _site_evidence(pages: tuple[CollectedPage, ...], site_value: str) -> tuple[FieldEvidence, ...]:
@@ -255,22 +255,6 @@ def _snippet_around(text: str, value: str, *, window: int = 160) -> str:
     start = max(index - window // 2, 0)
     end = min(index + len(value) + window // 2, len(text))
     return text[start:end].strip()
-
-
-def _origin(url: str) -> str:
-    match = re.match(r"^(https?://[^/]+)", url)
-    if not match:
-        return UNKNOWN
-    return match.group(1)
-
-
-def _normalize_text(value: str) -> str:
-    without_accents = "".join(
-        char
-        for char in unicodedata.normalize("NFKD", value)
-        if not unicodedata.combining(char)
-    )
-    return without_accents.lower()
 
 
 def _enum_values(data: object) -> object:

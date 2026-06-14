@@ -8,11 +8,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-import re
-import unicodedata
 from urllib.parse import urlparse
 
+from nvidia_startup_intel.normalization import (
+    normalize_domain,
+    normalize_startup_name,
+    origin_url,
+)
 from nvidia_startup_intel.search_params import UNKNOWN
+from nvidia_startup_intel.startup_deduplication import deduplicate_startups
 
 
 class DiscoverySourceType(StrEnum):
@@ -88,18 +92,6 @@ PERSONAL_PROFILE_DOMAINS = {
     "x.com",
 }
 
-LEGAL_SUFFIXES = {
-    "brasil",
-    "company",
-    "inc",
-    "ltda",
-    "me",
-    "sa",
-    "startup",
-    "startups",
-    "tecnologia",
-}
-
 
 def discover_candidate_startups(
     results: list[RawDiscoveryResult] | tuple[RawDiscoveryResult, ...],
@@ -111,7 +103,7 @@ def discover_candidate_startups(
     if limit is not None and limit < 1:
         raise ValueError("limit must be greater than zero")
 
-    candidates_by_key: dict[str, CandidateStartup] = {}
+    candidates: list[CandidateStartup] = []
 
     for result in results:
         source_type = classify_source_type(result.url)
@@ -128,7 +120,7 @@ def discover_candidate_startups(
         )
         candidate = CandidateStartup(
             name=name,
-            normalized_name=normalize_company_name(name),
+            normalized_name=normalize_startup_name(name),
             primary_url=_primary_url(result.url, source_type),
             discovery_source=result.source_name,
             evidence_snippet=result.snippet,
@@ -136,27 +128,21 @@ def discover_candidate_startups(
             source_types=(source_type,),
             evidences=(evidence,),
         )
+        candidates.append(candidate)
 
-        key = _dedupe_key(candidate)
-        existing = candidates_by_key.get(key)
-        if existing is None:
-            candidates_by_key[key] = candidate
-        else:
-            candidates_by_key[key] = _merge_candidates(existing, candidate)
-
-    candidates = sorted(
-        candidates_by_key.values(),
+    deduplicated_candidates = sorted(
+        deduplicate_startups(candidates),
         key=lambda candidate: (-candidate.confidence_score, candidate.name),
     )
     if limit is None:
-        return candidates
-    return candidates[:limit]
+        return list(deduplicated_candidates)
+    return list(deduplicated_candidates[:limit])
 
 
 def classify_source_type(url: str) -> DiscoverySourceType:
     """Classify a discovery source by URL/domain."""
 
-    domain = _registered_domain(url)
+    domain = normalize_domain(url)
     path = urlparse(url).path.lower()
 
     if domain in PERSONAL_PROFILE_DOMAINS or "/in/" in path:
@@ -173,36 +159,7 @@ def classify_source_type(url: str) -> DiscoverySourceType:
 def normalize_company_name(name: str) -> str:
     """Normalize obvious company name variants for conservative deduplication."""
 
-    normalized = _normalize_text(name)
-    normalized = re.sub(r"[^\w\s-]", " ", normalized)
-    normalized = re.sub(r"\s+", " ", normalized).strip()
-    tokens = [token for token in normalized.split() if token not in LEGAL_SUFFIXES]
-    return " ".join(tokens) or UNKNOWN
-
-
-def _merge_candidates(existing: CandidateStartup, new: CandidateStartup) -> CandidateStartup:
-    evidences = _dedupe_evidences(existing.evidences + new.evidences)
-    source_types = tuple(dict.fromkeys(existing.source_types + new.source_types))
-    name = _preferred_name(existing.name, new.name)
-    primary_url = _preferred_primary_url(existing.primary_url, new.primary_url)
-
-    return CandidateStartup(
-        name=name,
-        normalized_name=normalize_company_name(name),
-        primary_url=primary_url,
-        discovery_source=existing.discovery_source,
-        evidence_snippet=existing.evidence_snippet,
-        confidence_score=_score_candidate_for_evidences(evidences),
-        source_types=source_types,
-        evidences=evidences,
-    )
-
-
-def _dedupe_evidences(evidences: tuple[DiscoveryEvidence, ...]) -> tuple[DiscoveryEvidence, ...]:
-    unique: dict[tuple[str, str], DiscoveryEvidence] = {}
-    for evidence in evidences:
-        unique[(evidence.url, evidence.snippet)] = evidence
-    return tuple(unique.values())
+    return normalize_startup_name(name)
 
 
 def _candidate_name(result: RawDiscoveryResult, source_type: DiscoverySourceType) -> str:
@@ -215,15 +172,8 @@ def _candidate_name(result: RawDiscoveryResult, source_type: DiscoverySourceType
 
 def _primary_url(url: str, source_type: DiscoverySourceType) -> str:
     if source_type is DiscoverySourceType.COMPANY:
-        return _canonical_home_url(url)
+        return origin_url(url)
     return UNKNOWN
-
-
-def _dedupe_key(candidate: CandidateStartup) -> str:
-    domain = _registered_domain(candidate.primary_url)
-    if domain != UNKNOWN:
-        return f"domain:{domain}"
-    return f"name:{candidate.normalized_name}"
 
 
 def _score_candidate(source_type: DiscoverySourceType, *, evidence_count: int) -> float:
@@ -237,56 +187,8 @@ def _score_candidate(source_type: DiscoverySourceType, *, evidence_count: int) -
     return round(min(base_score + max(evidence_count - 1, 0) * 0.05, 0.98), 2)
 
 
-def _score_candidate_for_evidences(evidences: tuple[DiscoveryEvidence, ...]) -> float:
-    best_source = max(evidences, key=lambda evidence: _score_candidate(evidence.source_type, evidence_count=1))
-    return _score_candidate(best_source.source_type, evidence_count=len(evidences))
-
-
-def _preferred_name(existing_name: str, new_name: str) -> str:
-    if len(new_name) < len(existing_name):
-        return new_name
-    return existing_name
-
-
-def _preferred_primary_url(existing_url: str, new_url: str) -> str:
-    if existing_url != UNKNOWN:
-        return existing_url
-    return new_url
-
-
-def _canonical_home_url(url: str) -> str:
-    parsed = urlparse(url)
-    if not parsed.netloc:
-        return UNKNOWN
-    scheme = parsed.scheme or "https"
-    return f"{scheme}://{parsed.netloc.removeprefix('www.')}"
-
-
-def _registered_domain(url: str) -> str:
-    parsed = urlparse(url)
-    host = parsed.netloc.lower().removeprefix("www.")
-    if not host:
-        return UNKNOWN
-
-    parts = host.split(".")
-    if len(parts) >= 3 and parts[-2] in {"com", "net", "org", "gov"} and parts[-1] == "br":
-        return ".".join(parts[-3:])
-    if len(parts) >= 2:
-        return ".".join(parts[-2:])
-    return host
-
-
 def _name_from_domain(url: str) -> str:
-    domain = _registered_domain(url)
+    domain = normalize_domain(url)
     if domain == UNKNOWN:
         return UNKNOWN
     return domain.split(".")[0].replace("-", " ").title()
-
-
-def _normalize_text(value: str) -> str:
-    without_accents = "".join(
-        char
-        for char in unicodedata.normalize("NFKD", value)
-        if not unicodedata.combining(char)
-    )
-    return without_accents.lower().strip()

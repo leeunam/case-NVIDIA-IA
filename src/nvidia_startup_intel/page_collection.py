@@ -12,17 +12,31 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from html.parser import HTMLParser
-import re
-import unicodedata
+from time import sleep
 from urllib.error import HTTPError, URLError
-from urllib.parse import urldefrag, urljoin, urlparse
+from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
+from nvidia_startup_intel.normalization import (
+    normalize_domain,
+    normalize_text,
+    normalize_url,
+    normalize_whitespace,
+)
+from nvidia_startup_intel.scraping_policy import (
+    ScrapeDecisionReason,
+    ScrapingPolicy,
+    ScrapeDecision,
+    classify_scrape_error,
+    evaluate_scrape_request,
+)
+from nvidia_startup_intel.robots import RobotsCache, RobotsDecisionReason
 from nvidia_startup_intel.search_params import UNKNOWN
 
 
 Fetcher = Callable[[str], "FetchResponse"]
 Clock = Callable[[], datetime]
+Sleeper = Callable[[float], None]
 
 
 @dataclass(frozen=True)
@@ -49,6 +63,7 @@ class PageCollectionError:
     message: str
     collected_at: str
     status_code: int | None = None
+    error_category: str = UNKNOWN
 
 
 @dataclass(frozen=True)
@@ -107,6 +122,9 @@ def collect_public_pages(
     max_pages: int = 5,
     max_depth: int = 1,
     clock: Clock | None = None,
+    scraping_policy: ScrapingPolicy | None = None,
+    robots_cache: RobotsCache | None = None,
+    sleeper: Sleeper | None = None,
 ) -> PageCollectionResult:
     """Collect relevant public pages from one website without crossing domains."""
 
@@ -117,8 +135,10 @@ def collect_public_pages(
 
     fetch = fetcher or fetch_url
     now = clock or _utc_now
-    normalized_start_url = _normalize_url(start_url)
-    start_domain = _registered_domain(normalized_start_url)
+    wait = sleeper or sleep
+    active_policy = scraping_policy or ScrapingPolicy()
+    normalized_start_url = normalize_url(start_url)
+    start_domain = normalize_domain(normalized_start_url)
 
     pages: list[CollectedPage] = []
     errors: list[PageCollectionError] = []
@@ -134,7 +154,22 @@ def collect_public_pages(
         visited.add(url)
 
         collected_at = _format_time(now())
+        decision = _evaluate_collection_request(url, active_policy, robots_cache)
+        if not decision.allowed:
+            errors.append(
+                PageCollectionError(
+                    url=url,
+                    error_type=_policy_error_type(decision.reason),
+                    message=decision.message,
+                    collected_at=collected_at,
+                    error_category=decision.reason.value,
+                )
+            )
+            continue
+
         try:
+            if decision.delay_seconds > 0:
+                wait(decision.delay_seconds)
             response = fetch(url)
         except Exception as exc:  # noqa: BLE001 - errors are persisted as pipeline data.
             errors.append(
@@ -144,6 +179,7 @@ def collect_public_pages(
                     message=str(exc),
                     collected_at=collected_at,
                     status_code=getattr(exc, "code", None),
+                    error_category=classify_scrape_error(exc).value,
                 )
             )
             continue
@@ -152,7 +188,7 @@ def collect_public_pages(
         parser.feed(response.body)
         parser.close()
 
-        main_text = _normalize_whitespace(" ".join(parser.text_parts))
+        main_text = normalize_whitespace(" ".join(parser.text_parts))
         pages.append(
             CollectedPage(
                 url=response.url,
@@ -225,7 +261,7 @@ class _ReadableHTMLParser(HTMLParser):
         if not text:
             return
         if self._in_title:
-            self.title = _normalize_whitespace(f"{self.title} {text}")
+            self.title = normalize_whitespace(f"{self.title} {text}")
             return
         if any(tag in {"script", "style", "noscript"} for tag in self._tag_stack):
             return
@@ -234,7 +270,7 @@ class _ReadableHTMLParser(HTMLParser):
 
 def _prioritized_links(base_url: str, links: list[str], start_domain: str) -> tuple[str, ...]:
     normalized_links = {
-        _normalize_url(urljoin(base_url, link))
+        normalize_url(urljoin(base_url, link))
         for link in links
         if _is_relevant_link(urljoin(base_url, link), start_domain)
     }
@@ -245,7 +281,7 @@ def _is_relevant_link(url: str, start_domain: str) -> bool:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"}:
         return False
-    if _registered_domain(url) != start_domain:
+    if normalize_domain(url) != start_domain:
         return False
     if parsed.path.lower().endswith(IRRELEVANT_EXTENSIONS):
         return False
@@ -262,44 +298,12 @@ def _link_priority(url: str) -> tuple[int, str]:
     return (len(RELEVANT_PATH_KEYWORDS) + 1, url)
 
 
-def _normalize_url(url: str) -> str:
-    defragged_url, _fragment = urldefrag(url.strip())
-    parsed = urlparse(defragged_url)
-    scheme = parsed.scheme or "https"
-    netloc = parsed.netloc.lower()
-    path = parsed.path or "/"
-    if path != "/":
-        path = path.rstrip("/")
-    return parsed._replace(scheme=scheme, netloc=netloc, path=path, params="", query="").geturl()
-
-
-def _registered_domain(url: str) -> str:
-    host = urlparse(url).netloc.lower().removeprefix("www.")
-    if not host:
-        return UNKNOWN
-    parts = host.split(".")
-    if len(parts) >= 3 and parts[-2] in {"com", "net", "org", "gov"} and parts[-1] == "br":
-        return ".".join(parts[-3:])
-    if len(parts) >= 2:
-        return ".".join(parts[-2:])
-    return host
-
-
 def _is_home_path(path: str) -> bool:
     return path in {"", "/"}
 
 
 def _slugify_path(path: str) -> str:
-    without_accents = "".join(
-        char
-        for char in unicodedata.normalize("NFKD", path)
-        if not unicodedata.combining(char)
-    )
-    return without_accents.lower()
-
-
-def _normalize_whitespace(value: str) -> str:
-    return re.sub(r"\s+", " ", value).strip()
+    return normalize_text(path)
 
 
 def _utc_now() -> datetime:
@@ -310,3 +314,55 @@ def _format_time(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return value.isoformat()
+
+
+def _policy_error_type(reason: ScrapeDecisionReason) -> str:
+    return {
+        ScrapeDecisionReason.BLOCKED_DOMAIN: "ScrapeBlocked",
+        ScrapeDecisionReason.LOGIN_REQUIRED: "LoginRequired",
+        ScrapeDecisionReason.ROBOTS_DISALLOWED: "RobotsDisallowed",
+        ScrapeDecisionReason.ROBOTS_UNAVAILABLE: "RobotsUnavailable",
+        ScrapeDecisionReason.ALLOWED: "unknown",
+    }[reason]
+
+
+def _evaluate_collection_request(
+    url: str,
+    scraping_policy: ScrapingPolicy,
+    robots_cache: RobotsCache | None,
+) -> ScrapeDecision:
+    policy_decision = evaluate_scrape_request(url, scraping_policy)
+    if not policy_decision.allowed:
+        return policy_decision
+
+    delay_seconds = scraping_policy.rate_limit_seconds
+    if robots_cache is None:
+        return ScrapeDecision(
+            allowed=True,
+            reason=ScrapeDecisionReason.ALLOWED,
+            message=policy_decision.message,
+            delay_seconds=delay_seconds,
+        )
+
+    robots_decision = robots_cache.evaluate(url)
+    if not robots_decision.allowed:
+        reason = (
+            ScrapeDecisionReason.ROBOTS_DISALLOWED
+            if robots_decision.reason is RobotsDecisionReason.ROBOTS_DISALLOWED
+            else ScrapeDecisionReason.ROBOTS_UNAVAILABLE
+        )
+        return ScrapeDecision(
+            allowed=False,
+            reason=reason,
+            message=robots_decision.message,
+        )
+
+    if robots_decision.crawl_delay_seconds is not None:
+        delay_seconds = max(delay_seconds, robots_decision.crawl_delay_seconds)
+
+    return ScrapeDecision(
+        allowed=True,
+        reason=ScrapeDecisionReason.ALLOWED,
+        message=robots_decision.message,
+        delay_seconds=delay_seconds,
+    )

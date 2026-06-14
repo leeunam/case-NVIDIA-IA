@@ -49,3 +49,9 @@ dist/
 outputs/
 runs/
 tmp/
+postgres_data/
+pgdata/
+data/postgres/
+*.db
+*.sqlite
+*.sqlite3

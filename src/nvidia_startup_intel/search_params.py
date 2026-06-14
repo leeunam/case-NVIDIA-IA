@@ -9,7 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 import re
-import unicodedata
+
+from nvidia_startup_intel.normalization import normalize_text
 
 
 UNKNOWN = "unknown"
@@ -144,7 +145,7 @@ def parse_search_params(
     """Parse a free-text startup search request into structured parameters."""
 
     clean_query = " ".join(query.split())
-    normalized_query = _normalize_text(clean_query)
+    normalized_query = normalize_text(clean_query)
 
     return SearchParams(
         raw_query=query,
@@ -253,7 +254,7 @@ def _state_region(raw_query: str, state_alias: str, state_code: str) -> Region:
 
 
 def _normalize_region_value(raw_region: str) -> Region:
-    normalized_region = _normalize_text(raw_region)
+    normalized_region = normalize_text(raw_region)
     parsed = _extract_region(raw_region, normalized_region)
     if parsed.type is RegionType.UNKNOWN:
         return Region(raw=raw_region, normalized=UNKNOWN, type=RegionType.UNKNOWN)
@@ -313,7 +314,7 @@ def _has_qualified_location(
 def _extract_raw_match(raw_query: str, normalized_match: str) -> str:
     words = normalized_match.split()
     raw_tokens = raw_query.split()
-    normalized_tokens = [_normalize_text(token) for token in raw_tokens]
+    normalized_tokens = [normalize_text(token) for token in raw_tokens]
 
     for index in range(len(normalized_tokens) - len(words) + 1):
         if normalized_tokens[index : index + len(words)] == words:
@@ -330,12 +331,3 @@ def _extract_unknown_region_candidate(raw_query: str, normalized_query: str) -> 
     if normalized_query:
         return raw_query
     return UNKNOWN
-
-
-def _normalize_text(value: str) -> str:
-    without_accents = "".join(
-        char
-        for char in unicodedata.normalize("NFKD", value)
-        if not unicodedata.combining(char)
-    )
-    return without_accents.lower().strip()
