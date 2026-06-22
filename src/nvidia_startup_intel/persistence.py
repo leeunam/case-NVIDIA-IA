@@ -80,6 +80,10 @@ def save_collection_quality(run: PipelineRun, quality_summary: Any) -> Path:
     return _write_json(run.processed_dir / "collection_quality.json", quality_summary)
 
 
+def save_ai_native_assessments(run: PipelineRun, assessments: Any) -> Path:
+    return _write_json(run.processed_dir / "ai_native_assessments.json", assessments)
+
+
 def load_collected_pages(run: PipelineRun) -> dict[str, Any]:
     """Load raw collected pages for extraction reprocessing."""
 

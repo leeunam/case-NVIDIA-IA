@@ -35,9 +35,10 @@ def test_scraping_graph_runs_happy_path_with_fixture_data() -> None:
                         "<html><head><title>NeuralMind</title></head><body>"
                         "Resumo: IA para documentos. Setor: dados. "
                         "Produto: Plataforma de IA documental. "
-                        "Sinais de IA: modelos de IA proprietarios. "
+                        "Sinais de IA: modelos proprietarios, fine-tuning e MLOps. "
                         "Clientes: bancos. Founders: Ana Silva. "
-                        "Tecnologias: machine learning. Localizacao: Campinas, SP."
+                        "Tecnologias: inferencia em producao, model serving, dados proprietarios e feedback loop. "
+                        "Localizacao: Campinas, SP."
                         "</body></html>"
                     ),
                 )
@@ -50,10 +51,12 @@ def test_scraping_graph_runs_happy_path_with_fixture_data() -> None:
 
     state = graph.invoke({"query": "startups AI-native do Brasil", "limit": 1})
 
-    assert state["next_action"] == "proceed_to_ai_native_evaluation"
+    assert state["next_action"] == "ready_for_recommendation"
     assert state["quality_summary"].ready_for_evaluation is True
     assert state["evidence_groups_by_profile"]
-    assert len(runtime.checkpoints) == 8
+    assert state["ai_native_assessments_by_profile"]["NeuralMind"].classification == "ai_native"
+    assert state["ai_native_assessments_by_profile"]["NeuralMind"].ready_for_recommendation is True
+    assert len(runtime.checkpoints) == 9
 
 
 def test_scraping_graph_flags_insufficient_quality_for_human_review() -> None:
@@ -77,4 +80,5 @@ def test_scraping_graph_flags_insufficient_quality_for_human_review() -> None:
 
     assert state["next_action"] == "needs_more_collection_or_human_review"
     assert state["quality_summary"].ready_for_evaluation is False
+    assert state["ai_native_assessments_by_profile"] == {}
     assert "minimum_profile_coverage_below_threshold" in state["quality_summary"].readiness_reasons

@@ -4,11 +4,15 @@ from nvidia_startup_intel.discovery import (
     RawDiscoveryResult,
     discover_candidate_startups,
 )
+from nvidia_startup_intel.ai_native_assessment import assess_ai_native_maturity
+from nvidia_startup_intel.collection_quality import CollectionQualitySummary
+from nvidia_startup_intel.evidence import claims_from_profile, structure_evidence_by_field
 from nvidia_startup_intel.page_collection import CollectedPage
 from nvidia_startup_intel.persistence import (
     create_pipeline_run,
     load_collected_pages,
     load_json,
+    save_ai_native_assessments,
     save_candidate_startups,
     save_collected_pages,
     save_raw_discovery_results,
@@ -93,3 +97,45 @@ def test_loads_raw_collected_pages_for_reprocessing_without_new_collection(tmp_p
     assert loaded_pages[0]["main_text"] == "Resumo: Plataforma de IA. Setor: fintech."
     assert not (run.raw_dir / "search_params.json").exists()
     assert not (run.processed_dir / "collected_pages.json").exists()
+
+
+def test_persists_ai_native_assessments_as_processed_artifact(tmp_path) -> None:
+    run = create_pipeline_run(tmp_path, run_id="run-assessment", created_at=CREATED_AT)
+    profile = extract_startup_profile(
+        (
+            CollectedPage(
+                url="https://deepdocs.ai/",
+                title="DeepDocs",
+                main_text=(
+                    "Resumo: Plataforma AI-native. Setor: dados. Produto: IA para documentos. "
+                    "Sinais de IA: modelos proprietarios e fine-tuning. "
+                    "Tecnologias: inferencia em producao, MLOps, dados proprietarios e feedback loop."
+                ),
+                collected_at=COLLECTED_AT,
+                status_code=200,
+            ),
+        )
+    )
+    groups = structure_evidence_by_field(claims_from_profile(profile))
+    assessment = assess_ai_native_maturity(profile, groups, _ready_quality(), run_id=run.run_id)
+
+    save_ai_native_assessments(run, {profile.company_name.value: assessment})
+
+    loaded = load_json(run.processed_dir / "ai_native_assessments.json")
+    assert loaded["DeepDocs"]["schema_version"] == "ai_native_assessment.v1"
+    assert loaded["DeepDocs"]["classification"] == "ai_native"
+
+
+def _ready_quality() -> CollectionQualitySummary:
+    return CollectionQualitySummary(
+        candidate_count=1,
+        official_site_found_count=1,
+        official_site_found_rate=1.0,
+        minimum_profile_complete_count=1,
+        minimum_profile_complete_rate=1.0,
+        average_evidences_per_startup=6.0,
+        unknown_fields=(),
+        source_success_rates=(),
+        ready_for_evaluation=True,
+        readiness_reasons=("ready_for_ai_native_evaluation",),
+    )

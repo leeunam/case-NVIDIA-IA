@@ -19,6 +19,7 @@ import sqlite3
 from typing import Any
 from uuid import uuid4
 
+from nvidia_startup_intel.ai_native_assessment import AINativeAssessment
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.discovery import CandidateStartup, RawDiscoveryResult
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
@@ -41,6 +42,7 @@ class StoredPipelineRun:
     startup_profiles: tuple[dict[str, Any], ...]
     field_evidences: tuple[dict[str, Any], ...]
     collection_quality_summaries: tuple[dict[str, Any], ...]
+    ai_native_assessments: tuple[dict[str, Any], ...]
 
 
 class SqlPipelineRepository:
@@ -178,6 +180,29 @@ class SqlPipelineRepository:
         )
         self.connection.commit()
 
+    def save_ai_native_assessments(
+        self,
+        run_id: str,
+        assessments_by_profile: Mapping[str, AINativeAssessment],
+    ) -> None:
+        self._execute("DELETE FROM ai_native_assessments WHERE run_id = ?", (run_id,))
+        for company_name, assessment in assessments_by_profile.items():
+            self._execute(
+                """
+                INSERT INTO ai_native_assessments
+                (run_id, company_name, classification, ready_for_recommendation, payload_json)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    company_name,
+                    assessment.classification,
+                    int(assessment.ready_for_recommendation),
+                    _dumps(assessment),
+                ),
+            )
+        self.connection.commit()
+
     def save_pipeline_result(
         self,
         run_id: str,
@@ -216,6 +241,7 @@ class SqlPipelineRepository:
             startup_profiles=self._payloads("startup_profiles", run_id, order_by="company_name"),
             field_evidences=self._payloads("field_evidences", run_id, order_by="id"),
             collection_quality_summaries=self._payloads("collection_quality_summaries", run_id, order_by="id"),
+            ai_native_assessments=self._payloads("ai_native_assessments", run_id, order_by="company_name"),
         )
 
     def _payloads(self, table: str, run_id: str, *, order_by: str) -> tuple[dict[str, Any], ...]:
@@ -329,6 +355,16 @@ SQLITE_SCHEMA_STATEMENTS = (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         run_id TEXT NOT NULL,
         ready_for_evaluation INTEGER NOT NULL,
+        payload_json TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS ai_native_assessments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL,
+        company_name TEXT NOT NULL,
+        classification TEXT NOT NULL,
+        ready_for_recommendation INTEGER NOT NULL,
         payload_json TEXT NOT NULL
     )
     """,

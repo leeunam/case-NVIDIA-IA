@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from nvidia_startup_intel.ai_native_assessment import AINativeAssessment, assess_ai_native_maturity
 from nvidia_startup_intel.collection_quality import (
     CollectionQualitySummary,
     summarize_collection_quality,
@@ -114,6 +115,30 @@ def structure_profile_evidence(
         profile.company_name.value: structure_evidence_by_field(claims_from_profile(profile))
         for profile in profiles
     }
+
+
+def assess_profiles_ai_native(
+    profiles: list[StartupProfile] | tuple[StartupProfile, ...],
+    evidence_groups_by_profile: Mapping[str, tuple[FieldEvidenceGroup, ...]],
+    quality_summary: CollectionQualitySummary,
+    *,
+    run_id: str,
+) -> dict[str, AINativeAssessment]:
+    """Assess profiles that are ready for AI-native evaluation."""
+
+    if not quality_summary.ready_for_evaluation:
+        return {}
+
+    assessments: dict[str, AINativeAssessment] = {}
+    for profile in profiles:
+        company_name = profile.company_name.value
+        assessments[company_name] = assess_ai_native_maturity(
+            profile,
+            evidence_groups_by_profile.get(company_name, ()),
+            quality_summary,
+            run_id=run_id,
+        )
+    return assessments
 
 
 def run_scraping_pipeline(

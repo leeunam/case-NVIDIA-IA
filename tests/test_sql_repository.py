@@ -1,7 +1,9 @@
 from datetime import UTC, datetime
 
+from nvidia_startup_intel.ai_native_assessment import assess_ai_native_maturity
 from nvidia_startup_intel.discovery import RawDiscoveryResult
 from nvidia_startup_intel.page_collection import FetchResponse
+from nvidia_startup_intel.evidence import claims_from_profile, structure_evidence_by_field
 from nvidia_startup_intel.pipeline import fixture_fetcher, run_scraping_pipeline
 from nvidia_startup_intel.sql_repository import sqlite_repository
 
@@ -33,8 +35,9 @@ def test_sql_repository_saves_and_loads_complete_pipeline_run() -> None:
                         "<html><head><title>NeuralMind</title></head><body>"
                         "Resumo: IA para documentos. Setor: dados. "
                         "Produto: Plataforma de IA documental. "
-                        "Sinais de IA: modelos de IA proprietarios. "
-                        "Tecnologias: machine learning."
+                        "Sinais de IA: modelos proprietarios e fine-tuning. "
+                        "Tecnologias: inferencia em producao, MLOps, dados proprietarios e feedback loop. "
+                        "Clientes: bancos. Founders: Ana Silva. Localizacao: Campinas, SP."
                         "</body></html>"
                     ),
                 )
@@ -45,6 +48,13 @@ def test_sql_repository_saves_and_loads_complete_pipeline_run() -> None:
     )
 
     repository.save_pipeline_result(run_id, result, raw_discovery_results=raw_results)
+    assessment = assess_ai_native_maturity(
+        result.profiles[0],
+        structure_evidence_by_field(claims_from_profile(result.profiles[0])),
+        result.quality_summary,
+        run_id=run_id,
+    )
+    repository.save_ai_native_assessments(run_id, {result.profiles[0].company_name.value: assessment})
     loaded = repository.load_run(run_id)
 
     assert loaded.run_id == "run-sql"
@@ -56,3 +66,5 @@ def test_sql_repository_saves_and_loads_complete_pipeline_run() -> None:
     assert loaded.startup_profiles[0]["schema_version"] == "startup_profile.v1"
     assert loaded.field_evidences
     assert loaded.collection_quality_summaries[0]["candidate_count"] == 1
+    assert loaded.ai_native_assessments[0]["schema_version"] == "ai_native_assessment.v1"
+    assert loaded.ai_native_assessments[0]["classification"] == "ai_native"
