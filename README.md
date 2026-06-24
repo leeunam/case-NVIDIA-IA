@@ -1,1 +1,144 @@
 # case-NVIDIA-IA
+
+Desenvolvido por **Leunam Sousa de Jesus**.
+
+## O Que É Este Projeto
+
+Este projeto é uma ferramenta de inteligência para apoiar o gerente de Startups & VCs da NVIDIA no Brasil a descobrir, qualificar e nutrir startups brasileiras com potencial para o programa NVIDIA Inception.
+
+A pergunta principal do sistema é:
+
+> Esta startup brasileira merece uma abordagem da NVIDIA agora? Se sim, por qual motivo, com quais evidências e qual tecnologia ou programa NVIDIA faz sentido?
+
+O projeto não tenta apenas encontrar startups que dizem "usamos IA". Ele tenta separar startups com IA realmente central no produto e na stack daquelas que usam IA de forma superficial, por exemplo apenas como um wrapper de API de LLM.
+
+## Ideia Central
+
+A arquitetura é **evidence-first**:
+
+- toda afirmação importante precisa apontar para evidências públicas;
+- inferências precisam ser marcadas como inferências;
+- recomendações precisam citar fontes oficiais NVIDIA;
+- dados ausentes continuam como `unknown`;
+- conflitos e incertezas aparecem no briefing, não são escondidos.
+
+Isso é importante porque uma recomendação convincente, mas sem fonte, pode atrapalhar a priorização comercial e técnica.
+
+## Regras De Negócio Em Linguagem Simples
+
+- Uma `Startup Candidate` é uma empresa descoberta em fonte pública.
+- Um `Startup Profile` é o perfil estruturado dessa startup, com evidências.
+- Uma startup é `AI-Native` quando há evidência pública de que IA é central no produto e existe profundidade técnica suficiente.
+- Uma startup é `AI-Enabled` quando usa IA, mas sem prova suficiente de centralidade ou profundidade.
+- `Wrapper Risk` é o risco de a startup depender principalmente de APIs externas sem dados próprios, inferência em produção ou defensibilidade técnica.
+- `Technical Gap` é um gargalo técnico que tecnologia NVIDIA pode ajudar a resolver.
+- `Commercial Opportunity` é uma oportunidade de programa ou relacionamento, como Inception, parceiros, créditos, comunidade ou go-to-market.
+- `AI-Native Assessment` gera apenas um `Opportunity Signal`, ou seja, um sinal preliminar.
+- A prioridade final da oportunidade NVIDIA é calculada no módulo de `Recommendation`, depois de cruzar gaps ou oportunidades com fontes oficiais NVIDIA.
+- Se houver baixo sinal, alto risco de wrapper, conflito ou falta de fonte oficial, o sistema deve gerar um `Human Review Briefing`, não uma recomendação final.
+- O `Human Review Briefing` precisa trazer startup, área de atuação, o que foi descoberto, gargalos, riscos, conflitos, evidências e perguntas para validação humana.
+
+## Fluxo Do Sistema
+
+O fluxo planejado é:
+
+```text
+Discovery
+-> Collection
+-> Profile Extraction
+-> Evidence Quality
+-> AI-Native Assessment
+-> NVIDIA Knowledge
+-> Recommendation
+-> Briefing
+-> Human Review
+```
+
+Em termos práticos:
+
+1. O sistema planeja buscas sobre startups brasileiras.
+2. Encontra candidatas em fontes públicas.
+3. Coleta páginas públicas respeitando política de scraping e robots.txt.
+4. Extrai um perfil estruturado da startup.
+5. Agrupa evidências e mede a qualidade da coleta.
+6. Classifica maturidade AI-native e riscos.
+7. Consulta uma base versionada de fontes oficiais NVIDIA.
+8. Gera recomendações técnicas ou de programa.
+9. Gera briefing executivo ou briefing para revisão humana.
+
+## Status Atual
+
+Já existe walking skeleton implementado para:
+
+- planejamento de busca;
+- descoberta de candidatas;
+- coleta pública simples com `urllib` + `html.parser`;
+- política de scraping e robots.txt;
+- extração de `StartupProfile` com schema `startup_profile.v1`;
+- agrupamento de evidências;
+- resumo de qualidade da coleta;
+- avaliação AI-native determinística com schema `ai_native_assessment.v1`;
+- gaps técnicos iniciais;
+- riscos de wrapper/API-dependency;
+- sinal preliminar de oportunidade;
+- persistência JSON/SQL;
+- runner local compatível com LangGraph;
+- contrato local de `NVIDIA Knowledge` com corpus fixture oficial e BM25 lexical;
+- `nvidia_recommendation.v1` para recomendação técnica citada, hipótese e bloqueio;
+- `executive_briefing.v1` determinístico para recommendation set suportado.
+
+Ainda não está implementado:
+
+- `Human Review Briefing`;
+- workflow completo `ready_for_briefing` / `human_review_requested`;
+- busca vetorial, retrieval híbrido e pgvector;
+- recomendações de programa/Inception;
+- persistência downstream de knowledge, recommendations e briefings;
+- suíte ampla de regressão para scraping e assessment.
+
+## Próximo Escopo Recomendado
+
+O próximo ciclo deve completar as lacunas downstream restantes:
+
+1. Garantir briefing detalhado quando o resultado for `human_review_requested`.
+2. Criar workflow downstream local com branches `ready_for_briefing` e `human_review_requested`.
+3. Adicionar persistência JSON/SQL para retrievals, recommendations e briefings.
+4. Implementar busca vetorial e retrieval híbrido quando houver métricas/fixtures.
+5. Separar `Program Recommendation` e gate de NVIDIA Inception.
+
+## Frameworks E Retrieval
+
+- `LangGraph` será o orquestrador principal do workflow: estado, branches, checkpoints, retries e human-in-the-loop.
+- `LangChain` pode entrar dentro de adaptadores para LLMs, prompts, tools, structured output e retrievers.
+- `LiteLLM` pode entrar como gateway/adaptador para Grok, Groq, OpenRouter, Ollama ou outros modelos gratuitos/baratos.
+- `LlamaIndex` é candidato para a camada RAG de `NVIDIA Knowledge` quando ingestão, índices, busca vetorial/híbrida, citações e reranking ficarem mais complexos.
+- `Pydantic` pode validar novos schemas versionados.
+- A busca NVIDIA deve cobrir BM25 lexical e vetorial de forma reprodutível, com ranking híbrido; reranking do top K entra quando houver métricas.
+- O vector DB preferido é Postgres local com `pgvector`, aproveitando o Docker/Postgres já planejado antes de considerar serviço externo dedicado.
+- O LLM gerador, como Grok ou outro modelo gratuito, deve ficar desacoplado do modelo de embedding. O embedding deve ser escolhido por qualidade de recuperação, idioma, custo e estabilidade.
+
+O guia completo está em [Frameworks de IA, Orquestração e Retrieval](context/frameworks-and-retrieval-strategy.md).
+
+## Documentação Principal
+
+- [Glossário de domínio](CONTEXT.md)
+- [Escopo arquitetural](context/project-scope.md)
+- [Modelo de domínio detalhado](context/domain-model.md)
+- [Brief para próximas sessões](context/next-session.md)
+- [Grilling arquitetural e cobertura de escopo](context/architecture-grilling-coverage.md)
+- [Status do MVP de scraping](context/scraping-mvp-status.md)
+- [Roadmap de hardening de scraping](context/roadmap-scraping-hardening.md)
+- [Roadmap de avaliação AI-native](context/roadmap-pipeline-avaliação.md)
+- [Roadmap de NVIDIA Knowledge, Recommendation e Briefing](context/roadmap-nvidia-knowledge-recommendation-briefing.md)
+- [Frameworks de IA, orquestração e retrieval](context/frameworks-and-retrieval-strategy.md)
+- [ADRs](context/adr)
+
+## Validação
+
+A suíte antiga ampla de scraping/assessment foi removida por estar inválida para o escopo atual. Existe uma suíte local focada no downstream atual, sem rede, credenciais, Postgres real ou LangGraph obrigatório:
+
+```bash
+PYTHONPATH=src python3 -m unittest discover -s tests
+```
+
+Ruff e mypy ainda não estão configurados.
