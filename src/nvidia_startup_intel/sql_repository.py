@@ -21,9 +21,12 @@ from typing import Any
 from uuid import uuid4
 
 from nvidia_startup_intel.ai_native_assessment import AINativeAssessment
+from nvidia_startup_intel.briefing import executive_briefing_to_dict, human_review_briefing_to_dict
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.discovery import CandidateStartup, RawDiscoveryResult
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
+from nvidia_startup_intel.nvidia_knowledge import nvidia_knowledge_retrieval_to_dict
+from nvidia_startup_intel.nvidia_recommendation import nvidia_recommendation_set_to_dict
 from nvidia_startup_intel.page_collection import PageCollectionResult
 from nvidia_startup_intel.pipeline import ScrapingPipelineResult, candidate_result_key, profile_result_key
 from nvidia_startup_intel.search_params import SearchParams
@@ -44,6 +47,15 @@ class StoredPipelineRun:
     field_evidences: tuple[dict[str, Any], ...]
     collection_quality_summaries: tuple[dict[str, Any], ...]
     ai_native_assessments: tuple[dict[str, Any], ...]
+
+
+@dataclass(frozen=True)
+class StoredDownstreamArtifacts:
+    run_id: str
+    startup_identifier: str
+    retrievals: tuple[dict[str, Any], ...]
+    recommendation_sets: tuple[dict[str, Any], ...]
+    briefings: tuple[dict[str, Any], ...]
 
 
 class SqlPipelineRepository:
@@ -234,7 +246,118 @@ class SqlPipelineRepository:
                     int(assessment.ready_for_recommendation),
                     _dumps(assessment),
                 ),
+        )
+        self._commit()
+
+    def save_downstream_state(self, state: Mapping[str, Any]) -> None:
+        """Persist downstream workflow artifacts from the local runner state."""
+
+        retrievals = tuple(state.get("retrievals", ()))
+        recommendation_set = state.get("recommendation_set")
+        executive_briefing = state.get("executive_briefing")
+        human_review_briefing = state.get("human_review_briefing")
+        startup_identifier = _downstream_startup_identifier(
+            recommendation_set=recommendation_set,
+            executive_briefing=executive_briefing,
+            human_review_briefing=human_review_briefing,
+        )
+        run_id = str(state["run_id"])
+
+        with self._transaction():
+            if retrievals:
+                self.save_downstream_retrievals(
+                    run_id,
+                    startup_identifier=startup_identifier,
+                    retrievals=retrievals,
+                )
+            if recommendation_set is not None:
+                self.save_downstream_recommendation_set(run_id, recommendation_set)
+            if executive_briefing is not None:
+                self.save_downstream_briefing(run_id, executive_briefing)
+            if human_review_briefing is not None:
+                self.save_downstream_briefing(run_id, human_review_briefing)
+
+    def save_downstream_retrievals(
+        self,
+        run_id: str,
+        *,
+        startup_identifier: str,
+        retrievals: Sequence[Any],
+    ) -> None:
+        self._execute(
+            "DELETE FROM downstream_retrievals WHERE run_id = ? AND startup_identifier = ?",
+            (run_id, startup_identifier),
+        )
+        for position, retrieval in enumerate(retrievals, start=1):
+            self._execute(
+                """
+                INSERT INTO downstream_retrievals
+                (run_id, startup_identifier, corpus_version, retrieval_strategy, position, payload_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    startup_identifier,
+                    retrieval.corpus_version,
+                    _retrieval_strategy(retrieval),
+                    position,
+                    _dumps(nvidia_knowledge_retrieval_to_dict(retrieval)),
+                ),
             )
+        self._commit()
+
+    def save_downstream_recommendation_set(self, run_id: str, recommendation_set: Any) -> None:
+        self._execute(
+            "DELETE FROM downstream_recommendations WHERE run_id = ? AND startup_identifier = ?",
+            (run_id, recommendation_set.startup_identifier),
+        )
+        self._execute(
+            """
+            INSERT INTO downstream_recommendations
+            (
+                run_id,
+                startup_identifier,
+                corpus_version,
+                final_nvidia_opportunity_priority,
+                ready_for_briefing,
+                payload_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                recommendation_set.startup_identifier,
+                recommendation_set.corpus_version,
+                recommendation_set.final_nvidia_opportunity_priority,
+                int(recommendation_set.quality.ready_for_briefing),
+                _dumps(nvidia_recommendation_set_to_dict(recommendation_set)),
+            ),
+        )
+        self._commit()
+
+    def save_downstream_briefing(self, run_id: str, briefing: Any) -> None:
+        briefing_type = _briefing_type(briefing)
+        self._execute(
+            """
+            DELETE FROM downstream_briefings
+            WHERE run_id = ? AND startup_identifier = ? AND briefing_type = ?
+            """,
+            (run_id, briefing.startup_identifier, briefing_type),
+        )
+        self._execute(
+            """
+            INSERT INTO downstream_briefings
+            (run_id, startup_identifier, briefing_type, status, payload_json)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                briefing.startup_identifier,
+                briefing_type,
+                briefing.status,
+                _dumps(_briefing_payload(briefing)),
+            ),
+        )
         self._commit()
 
     def save_pipeline_result(
@@ -330,6 +453,35 @@ class SqlPipelineRepository:
             ),
         )
 
+    def load_downstream_artifacts(
+        self,
+        run_id: str,
+        *,
+        startup_identifier: str,
+    ) -> StoredDownstreamArtifacts:
+        return StoredDownstreamArtifacts(
+            run_id=run_id,
+            startup_identifier=startup_identifier,
+            retrievals=self._downstream_payloads(
+                "downstream_retrievals",
+                run_id,
+                startup_identifier=startup_identifier,
+                order_by="position",
+            ),
+            recommendation_sets=self._downstream_payloads(
+                "downstream_recommendations",
+                run_id,
+                startup_identifier=startup_identifier,
+                order_by="id",
+            ),
+            briefings=self._downstream_payloads(
+                "downstream_briefings",
+                run_id,
+                startup_identifier=startup_identifier,
+                order_by="id",
+            ),
+        )
+
     def _payloads(
         self,
         table: str,
@@ -351,6 +503,24 @@ class SqlPipelineRepository:
                 payload[column] = _column_value(column, row[index])
             loaded_payloads.append(payload)
         return tuple(loaded_payloads)
+
+    def _downstream_payloads(
+        self,
+        table: str,
+        run_id: str,
+        *,
+        startup_identifier: str,
+        order_by: str,
+    ) -> tuple[dict[str, Any], ...]:
+        rows = self._execute(
+            f"""
+            SELECT payload_json FROM {table}
+            WHERE run_id = ? AND startup_identifier = ?
+            ORDER BY {order_by}
+            """,
+            (run_id, startup_identifier),
+        ).fetchall()
+        return tuple(json.loads(row[0]) for row in rows)
 
     def _execute(self, sql: str, params: tuple[Any, ...]) -> Any:
         if self._postgres:
@@ -495,6 +665,38 @@ def _schema_statements(id_column_type: str) -> tuple[str, ...]:
             payload_json TEXT NOT NULL
         )
         """,
+        f"""
+        CREATE TABLE IF NOT EXISTS downstream_retrievals (
+            id {id_column_type},
+            run_id TEXT NOT NULL {run_fk},
+            startup_identifier TEXT NOT NULL,
+            corpus_version TEXT NOT NULL,
+            retrieval_strategy TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS downstream_recommendations (
+            id {id_column_type},
+            run_id TEXT NOT NULL {run_fk},
+            startup_identifier TEXT NOT NULL,
+            corpus_version TEXT NOT NULL,
+            final_nvidia_opportunity_priority TEXT NOT NULL,
+            ready_for_briefing INTEGER NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS downstream_briefings (
+            id {id_column_type},
+            run_id TEXT NOT NULL {run_fk},
+            startup_identifier TEXT NOT NULL,
+            briefing_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """,
         "CREATE INDEX IF NOT EXISTS idx_search_plan_items_run_id ON search_plan_items(run_id)",
         "CREATE INDEX IF NOT EXISTS idx_raw_discovery_results_run_id ON raw_discovery_results(run_id)",
         "CREATE INDEX IF NOT EXISTS idx_candidate_startups_run_id ON candidate_startups(run_id)",
@@ -506,6 +708,9 @@ def _schema_statements(id_column_type: str) -> tuple[str, ...]:
         "CREATE INDEX IF NOT EXISTS idx_field_evidences_run_profile_key ON field_evidences(run_id, profile_key)",
         "CREATE INDEX IF NOT EXISTS idx_collection_quality_summaries_run_id ON collection_quality_summaries(run_id)",
         "CREATE INDEX IF NOT EXISTS idx_ai_native_assessments_run_id ON ai_native_assessments(run_id)",
+        "CREATE INDEX IF NOT EXISTS idx_downstream_retrievals_run_startup ON downstream_retrievals(run_id, startup_identifier)",
+        "CREATE INDEX IF NOT EXISTS idx_downstream_recommendations_run_startup ON downstream_recommendations(run_id, startup_identifier)",
+        "CREATE INDEX IF NOT EXISTS idx_downstream_briefings_run_startup ON downstream_briefings(run_id, startup_identifier)",
     )
 
 
@@ -533,6 +738,37 @@ def _lookup_key(keys: Mapping[str, str] | None, name: str) -> str:
     if keys is None:
         return name
     return keys.get(name, name)
+
+
+def _downstream_startup_identifier(
+    *,
+    recommendation_set: Any,
+    executive_briefing: Any,
+    human_review_briefing: Any,
+) -> str:
+    for artifact in (recommendation_set, executive_briefing, human_review_briefing):
+        startup_identifier = getattr(artifact, "startup_identifier", None)
+        if startup_identifier:
+            return startup_identifier
+    return "unknown"
+
+
+def _retrieval_strategy(retrieval: Any) -> str:
+    if getattr(retrieval, "results", ()):
+        return str(retrieval.results[0].retrieval_strategy)
+    return "none"
+
+
+def _briefing_type(briefing: Any) -> str:
+    if getattr(briefing, "schema_version", "") == "human_review_briefing.v1":
+        return "human_review"
+    return "executive"
+
+
+def _briefing_payload(briefing: Any) -> dict[str, object]:
+    if _briefing_type(briefing) == "human_review":
+        return human_review_briefing_to_dict(briefing)
+    return executive_briefing_to_dict(briefing)
 
 
 def _to_jsonable(value: Any) -> Any:
