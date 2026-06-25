@@ -13,13 +13,16 @@ import re
 from typing import Protocol
 
 from nvidia_startup_intel.nvidia_knowledge import (
+    NVIDIACitation,
     NVIDIAKnowledgeChunk,
     NVIDIAKnowledgeCorpus,
     NVIDIAKnowledgeDocument,
     NVIDIAKnowledgeRetrieval,
     RetrievedNVIDIAKnowledge,
+    SCHEMA_VERSION as KNOWLEDGE_SCHEMA_VERSION,
     build_nvidia_knowledge_query,
     nvidia_citation_from_chunk,
+    retrieve_nvidia_knowledge,
 )
 from nvidia_startup_intel.normalization import normalize_text
 
@@ -29,6 +32,9 @@ EmbeddingVector = tuple[float, ...]
 VECTOR_RETRIEVAL_STRATEGY = "vector_semantic"
 VECTOR_RANKING_STRATEGY = "cosine_similarity_desc"
 VECTOR_TIE_BREAKERS = ("document_id", "chunk_index", "chunk_id")
+HYBRID_RETRIEVAL_STRATEGY = "hybrid_bm25_vector"
+HYBRID_RANKING_STRATEGY = "reciprocal_rank_fusion"
+HYBRID_TIE_BREAKERS = ("hybrid_score_desc", "document_id", "chunk_index", "chunk_id")
 DEFAULT_INDEX_PARAMETERS: dict[str, object] = {
     "distance_metric": "cosine",
     "index_type": "exact_in_memory",
@@ -91,6 +97,18 @@ class NVIDIAQueryEmbedding:
 class NVIDIAEmbeddingIndexRebuildAssessment:
     rebuild_required: bool
     reasons: tuple[str, ...]
+
+
+@dataclass
+class _HybridCandidate:
+    chunk: NVIDIAKnowledgeChunk
+    citation: NVIDIACitation
+    bm25_score: float = 0.0
+    vector_score: float = 0.0
+    lexical_rank: int | None = None
+    vector_rank: int | None = None
+    embedding_metadata: dict[str, object] = field(default_factory=dict)
+    vector_index_parameters: dict[str, object] = field(default_factory=dict)
 
 
 class EmbeddingClient(Protocol):
@@ -272,6 +290,124 @@ def retrieve_nvidia_knowledge_by_vector(
     )
 
 
+def retrieve_nvidia_knowledge_hybrid(
+    corpus: NVIDIAKnowledgeCorpus,
+    embedding_index: NVIDIAEmbeddingIndex,
+    embedding_client: EmbeddingClient,
+    *,
+    run_id: str,
+    gap_type: str = "",
+    opportunity_type: str = "",
+    description: str = "",
+    startup_signals: tuple[str, ...] = (),
+    query_terms: tuple[str, ...] = (),
+    normalized_query: str = "",
+    lexical_top_k: int = 3,
+    vector_top_k: int = 3,
+    top_k: int = 3,
+    lexical_weight: float = 1.0,
+    vector_weight: float = 1.0,
+    rrf_k: int = 60,
+    min_vector_score: float = 0.0,
+) -> NVIDIAKnowledgeRetrieval:
+    """Merge BM25 and vector NVIDIA Knowledge candidates with deterministic RRF ranking."""
+
+    _validate_embedding_index_for_retrieval(corpus, embedding_index, embedding_client)
+    all_query_terms = (*query_terms, normalized_query) if normalized_query else query_terms
+    lexical_retrieval = retrieve_nvidia_knowledge(
+        corpus,
+        run_id=run_id,
+        gap_type=gap_type,
+        opportunity_type=opportunity_type,
+        description=description,
+        startup_signals=startup_signals,
+        query_terms=all_query_terms,
+        top_k=lexical_top_k,
+    )
+    vector_retrieval = retrieve_nvidia_knowledge_by_vector(
+        corpus,
+        embedding_index,
+        embedding_client,
+        run_id=run_id,
+        gap_type=gap_type,
+        opportunity_type=opportunity_type,
+        description=description,
+        startup_signals=startup_signals,
+        query_terms=query_terms,
+        normalized_query=normalized_query,
+        top_k=vector_top_k,
+        min_vector_score=min_vector_score,
+    )
+
+    candidates = _merge_hybrid_candidates(lexical_retrieval, vector_retrieval)
+    ranked_candidates = sorted(
+        candidates,
+        key=lambda candidate: (
+            -_hybrid_score(
+                candidate,
+                lexical_weight=lexical_weight,
+                vector_weight=vector_weight,
+                rrf_k=rrf_k,
+            ),
+            candidate.chunk.document_id,
+            candidate.chunk.chunk_index,
+            candidate.chunk.chunk_id,
+        ),
+    )
+    documents_by_id = {document.document_id: document for document in corpus.documents}
+    results: list[RetrievedNVIDIAKnowledge] = []
+    result_documents: dict[str, NVIDIAKnowledgeDocument] = {}
+
+    for candidate in ranked_candidates[:top_k]:
+        document = documents_by_id.get(candidate.chunk.document_id)
+        if document is None:
+            continue
+        result_documents[document.document_id] = document
+        hybrid_score = round(
+            _hybrid_score(
+                candidate,
+                lexical_weight=lexical_weight,
+                vector_weight=vector_weight,
+                rrf_k=rrf_k,
+            ),
+            6,
+        )
+        results.append(
+            RetrievedNVIDIAKnowledge(
+                chunk=candidate.chunk,
+                citation=candidate.citation,
+                score=hybrid_score,
+                retrieval_strategy=HYBRID_RETRIEVAL_STRATEGY,
+                rationale=_hybrid_rationale(candidate),
+                rank=len(results) + 1,
+                bm25_score=candidate.bm25_score,
+                vector_score=candidate.vector_score,
+                hybrid_score=hybrid_score,
+                embedding_metadata=candidate.embedding_metadata,
+                index_parameters=_hybrid_index_parameters(
+                    candidate,
+                    lexical_top_k=lexical_top_k,
+                    vector_top_k=vector_top_k,
+                    top_k=top_k,
+                    lexical_weight=lexical_weight,
+                    vector_weight=vector_weight,
+                    rrf_k=rrf_k,
+                ),
+                ranking_strategy=HYBRID_RANKING_STRATEGY,
+                tie_breakers=HYBRID_TIE_BREAKERS,
+            )
+        )
+
+    return NVIDIAKnowledgeRetrieval(
+        schema_version=KNOWLEDGE_SCHEMA_VERSION,
+        run_id=run_id,
+        corpus_version=corpus.corpus_version,
+        query=lexical_retrieval.query or vector_retrieval.query,
+        results=tuple(results),
+        documents=tuple(result_documents.values()),
+    )
+
+
 def nvidia_embedding_index_metadata(
     corpus: NVIDIAKnowledgeCorpus,
     embedding_client: EmbeddingClient,
@@ -336,6 +472,92 @@ def nvidia_query_embedding_to_dict(query_embedding: NVIDIAQueryEmbedding) -> dic
     """Convert a query embedding payload to a JSON-serializable dictionary."""
 
     return _to_plain_data(query_embedding)
+
+
+def _merge_hybrid_candidates(
+    lexical_retrieval: NVIDIAKnowledgeRetrieval,
+    vector_retrieval: NVIDIAKnowledgeRetrieval,
+) -> tuple[_HybridCandidate, ...]:
+    candidates_by_chunk_id: dict[str, _HybridCandidate] = {}
+
+    for result in lexical_retrieval.results:
+        candidates_by_chunk_id[result.chunk.chunk_id] = _HybridCandidate(
+            chunk=result.chunk,
+            citation=result.citation,
+            bm25_score=result.bm25_score or result.score,
+            lexical_rank=result.rank,
+        )
+
+    for result in vector_retrieval.results:
+        candidate = candidates_by_chunk_id.get(result.chunk.chunk_id)
+        if candidate is None:
+            candidate = _HybridCandidate(
+                chunk=result.chunk,
+                citation=result.citation,
+            )
+            candidates_by_chunk_id[result.chunk.chunk_id] = candidate
+        candidate.vector_score = result.vector_score or result.score
+        candidate.vector_rank = result.rank
+        candidate.embedding_metadata = dict(result.embedding_metadata)
+        candidate.vector_index_parameters = dict(result.index_parameters)
+
+    return tuple(candidates_by_chunk_id.values())
+
+
+def _hybrid_score(
+    candidate: _HybridCandidate,
+    *,
+    lexical_weight: float,
+    vector_weight: float,
+    rrf_k: int,
+) -> float:
+    score = 0.0
+    if candidate.lexical_rank is not None:
+        score += lexical_weight / (rrf_k + candidate.lexical_rank)
+    if candidate.vector_rank is not None:
+        score += vector_weight / (rrf_k + candidate.vector_rank)
+    return score
+
+
+def _hybrid_index_parameters(
+    candidate: _HybridCandidate,
+    *,
+    lexical_top_k: int,
+    vector_top_k: int,
+    top_k: int,
+    lexical_weight: float,
+    vector_weight: float,
+    rrf_k: int,
+) -> dict[str, object]:
+    parameters = dict(candidate.vector_index_parameters)
+    parameters.update(
+        {
+            "fusion_method": HYBRID_RANKING_STRATEGY,
+            "lexical_top_k": lexical_top_k,
+            "vector_top_k": vector_top_k,
+            "top_k": top_k,
+            "lexical_weight": lexical_weight,
+            "vector_weight": vector_weight,
+            "rrf_k": rrf_k,
+            "source_ranks": _source_ranks(candidate),
+        }
+    )
+    return parameters
+
+
+def _source_ranks(candidate: _HybridCandidate) -> dict[str, int]:
+    ranks: dict[str, int] = {}
+    if candidate.lexical_rank is not None:
+        ranks["bm25_lexical"] = candidate.lexical_rank
+    if candidate.vector_rank is not None:
+        ranks[VECTOR_RETRIEVAL_STRATEGY] = candidate.vector_rank
+    return ranks
+
+
+def _hybrid_rationale(candidate: _HybridCandidate) -> str:
+    ranks = _source_ranks(candidate)
+    rank_summary = ", ".join(f"{strategy} rank {rank}" for strategy, rank in ranks.items())
+    return f"{rank_summary} combined with reciprocal rank fusion."
 
 
 _SEMANTIC_FIXTURE_FEATURES: tuple[frozenset[str], ...] = (
