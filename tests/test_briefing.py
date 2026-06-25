@@ -8,8 +8,14 @@ from nvidia_startup_intel.ai_native_assessment import (
     AINativeAssessment,
     DiagnosticQuality,
     TechnicalGap,
+    WrapperDependencyRisk,
 )
-from nvidia_startup_intel.briefing import executive_briefing_to_dict, generate_executive_briefing
+from nvidia_startup_intel.briefing import (
+    executive_briefing_to_dict,
+    generate_executive_briefing,
+    generate_human_review_briefing,
+    human_review_briefing_to_dict,
+)
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
 from nvidia_startup_intel.nvidia_knowledge import (
@@ -107,6 +113,244 @@ class ExecutiveBriefingTests(unittest.TestCase):
         self.assertEqual(serialized["citation_references"][0]["document_id"], "nvidia-nim-developers")
         self.assertEqual(serialized["evidence_references"][0]["url"], "https://vetai.example/product")
 
+    def test_blocked_recommendation_generates_human_review_briefing(self) -> None:
+        profile_evidence = _startup_evidence(
+            snippet="A VetAI usa inteligencia artificial no produto."
+        )
+        profile = _profile(profile_evidence)
+        blocked_gap = TechnicalGap(
+            gap_type="model_serving",
+            description="Needs lower latency inference and production model serving.",
+            severity="high",
+            confidence=0.86,
+            evidences=(),
+        )
+        assessment = _assessment(blocked_gap)
+        recommendation_set = _recommendation_set_for_gap(
+            profile=profile,
+            gap=blocked_gap,
+            evidence_groups=(),
+            assessment=assessment,
+        )
+
+        briefing = generate_human_review_briefing(
+            profile=profile,
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=assessment,
+            recommendation_set=recommendation_set,
+        )
+
+        self.assertEqual(briefing.schema_version, "human_review_briefing.v1")
+        self.assertEqual(briefing.run_id, "run-briefing-001")
+        self.assertEqual(briefing.startup_identifier, "VetAI")
+        self.assertEqual(briefing.status, "ready_for_human_review")
+        self.assertEqual(briefing.area_of_operation, "healthtech")
+        self.assertEqual(briefing.supported_recommendations, ())
+        self.assertEqual(briefing.blocked_recommendations, recommendation_set.blocked_recommendations)
+        self.assertIn("blocked_recommendation_requires_human_review", briefing.review_reasons)
+        self.assertTrue(any(question.priority == "critical" for question in briefing.pending_questions))
+        self.assertTrue(any(question.priority == "complementary" for question in briefing.pending_questions))
+        self.assertEqual(briefing.evidence_references, (profile_evidence,))
+        self.assertEqual(briefing.citation_references[0].document_id, "nvidia-nim-developers")
+        self.assertEqual(briefing.next_action, "resolve_blocking_evidence")
+
+    def test_missing_nvidia_citation_keeps_hypothesis_out_of_supported_recommendations(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
+        )
+        profile = _profile(startup_evidence)
+        gap = _model_serving_gap(startup_evidence)
+        assessment = _assessment(gap)
+        corpus = load_nvidia_knowledge_corpus(_fixture_path())
+        retrieval = retrieve_nvidia_knowledge_by_gap(
+            corpus,
+            run_id="run-briefing-001",
+            gap_type="quantum_billing",
+            description="Need tax invoicing workflow support.",
+            startup_signals=("accounts payable",),
+            top_k=1,
+        )
+        recommendation_set = build_nvidia_recommendations(
+            profile=profile,
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=assessment,
+            retrievals=(retrieval,),
+        )
+
+        briefing = generate_human_review_briefing(
+            profile=profile,
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=assessment,
+            recommendation_set=recommendation_set,
+        )
+
+        self.assertEqual(briefing.supported_recommendations, ())
+        self.assertEqual(briefing.hypothesis_recommendations, recommendation_set.hypotheses)
+        self.assertIn("recommendation_hypothesis_requires_human_review", briefing.review_reasons)
+        self.assertTrue(
+            any(
+                question.reason == "recommendation_hypothesis_requires_validation"
+                for question in briefing.pending_questions
+            )
+        )
+        self.assertEqual(briefing.citation_references, ())
+
+    def test_high_wrapper_risk_becomes_human_review_reason_and_question(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI usa OpenAI API sem evidencias de dados proprietarios."
+        )
+        profile = _profile(startup_evidence)
+        gap = _model_serving_gap(startup_evidence)
+        risk = WrapperDependencyRisk(
+            risk_type="external_api_dependency",
+            severity="high",
+            confidence=0.81,
+            rationale="Evidence suggests dependency on an external API without proprietary data.",
+            evidences=(startup_evidence,),
+        )
+        assessment = _assessment(gap, wrapper_dependency_risks=(risk,))
+        recommendation_set = _recommendation_set_for_gap(
+            profile=profile,
+            gap=gap,
+            evidence_groups=(),
+            assessment=assessment,
+        )
+
+        briefing = generate_human_review_briefing(
+            profile=profile,
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=assessment,
+            recommendation_set=recommendation_set,
+        )
+
+        self.assertEqual(briefing.wrapper_risks, (risk,))
+        self.assertIn("high_wrapper_risk_requires_human_review", briefing.review_reasons)
+        self.assertTrue(
+            any(question.field_name == "external_api_dependency" for question in briefing.pending_questions)
+        )
+        self.assertEqual(briefing.evidence_references, (startup_evidence,))
+
+    def test_low_signal_collection_quality_is_carried_into_human_review(self) -> None:
+        startup_evidence = _startup_evidence(snippet="A VetAI menciona inteligencia artificial.")
+        profile = _profile(startup_evidence)
+        gap = _model_serving_gap(startup_evidence)
+        assessment = _assessment(
+            gap,
+            confidence=0.42,
+            ready_for_recommendation=False,
+            diagnostic_reasons=("low_ai_native_signal",),
+        )
+        collection_quality = CollectionQualitySummary(
+            candidate_count=1,
+            official_site_found_count=0,
+            official_site_found_rate=0.0,
+            minimum_profile_complete_count=0,
+            minimum_profile_complete_rate=0.0,
+            average_evidences_per_startup=1.0,
+            unknown_fields=("technologies_used",),
+            source_success_rates=(),
+            ready_for_evaluation=False,
+            readiness_reasons=("insufficient_public_evidence",),
+        )
+        recommendation_set = _recommendation_set_for_gap(
+            profile=profile,
+            gap=gap,
+            evidence_groups=(),
+            assessment=assessment,
+            collection_quality=collection_quality,
+        )
+
+        briefing = generate_human_review_briefing(
+            profile=profile,
+            evidence_groups=(),
+            collection_quality=collection_quality,
+            assessment=assessment,
+            recommendation_set=recommendation_set,
+        )
+
+        self.assertIn("low_signal_requires_human_review", briefing.review_reasons)
+        self.assertIn("insufficient_public_evidence", briefing.audit_reasons)
+        self.assertTrue(any(question.field_name == "collection_quality" for question in briefing.pending_questions))
+
+    def test_conflicts_are_visible_in_human_review_briefing(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI se descreve como healthtech."
+        )
+        conflicting_evidence = FieldEvidence(
+            url="https://directory.example/vetai",
+            title="VetAI Directory",
+            snippet="A VetAI aparece como fintech no diretorio.",
+            collected_at="2026-06-23T00:00:00Z",
+            source_type="directory",
+        )
+        profile = _profile(startup_evidence)
+        gap = _model_serving_gap(startup_evidence)
+        evidence_groups = (
+            FieldEvidenceGroup(
+                field_name="sector",
+                value="healthtech",
+                evidences=(startup_evidence, conflicting_evidence),
+                has_conflict=True,
+                conflicting_values=("healthtech", "fintech"),
+            ),
+        )
+        assessment = _assessment(gap)
+        recommendation_set = _recommendation_set_for_gap(
+            profile=profile,
+            gap=gap,
+            evidence_groups=evidence_groups,
+            assessment=assessment,
+        )
+
+        briefing = generate_human_review_briefing(
+            profile=profile,
+            evidence_groups=evidence_groups,
+            collection_quality=_collection_quality(),
+            assessment=assessment,
+            recommendation_set=recommendation_set,
+        )
+
+        self.assertEqual(briefing.conflicts, evidence_groups)
+        self.assertIn("conflicting_startup_evidence", briefing.review_reasons)
+        self.assertTrue(any(question.field_name == "sector" for question in briefing.pending_questions))
+        self.assertEqual(briefing.evidence_references, (startup_evidence, conflicting_evidence))
+
+    def test_human_review_briefing_serializes_review_context(self) -> None:
+        profile_evidence = _startup_evidence(snippet="A VetAI usa inteligencia artificial no produto.")
+        profile = _profile(profile_evidence)
+        blocked_gap = TechnicalGap(
+            gap_type="model_serving",
+            description="Needs lower latency inference and production model serving.",
+            severity="high",
+            confidence=0.86,
+            evidences=(),
+        )
+        assessment = _assessment(blocked_gap)
+        recommendation_set = _recommendation_set_for_gap(
+            profile=profile,
+            gap=blocked_gap,
+            evidence_groups=(),
+            assessment=assessment,
+        )
+        briefing = generate_human_review_briefing(
+            profile=profile,
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=assessment,
+            recommendation_set=recommendation_set,
+        )
+
+        serialized = human_review_briefing_to_dict(briefing)
+
+        json.dumps(serialized)
+        self.assertEqual(serialized["schema_version"], "human_review_briefing.v1")
+        self.assertEqual(serialized["status"], "ready_for_human_review")
+        self.assertEqual(serialized["blocked_recommendations"][0]["state"], "blocked")
+        self.assertEqual(serialized["citation_references"][0]["document_id"], "nvidia-nim-developers")
 
 def _fixture_path() -> Path:
     return Path(__file__).parent / "fixtures" / "nvidia_knowledge_official_fixture.json"
@@ -136,6 +380,32 @@ def _supported_recommendation_set(
     )
 
 
+def _recommendation_set_for_gap(
+    *,
+    profile: StartupProfile,
+    gap: TechnicalGap,
+    evidence_groups: tuple[FieldEvidenceGroup, ...],
+    assessment: AINativeAssessment,
+    collection_quality: CollectionQualitySummary | None = None,
+):
+    corpus = load_nvidia_knowledge_corpus(_fixture_path())
+    retrieval = retrieve_nvidia_knowledge_by_gap(
+        corpus,
+        run_id="run-briefing-001",
+        gap_type=gap.gap_type,
+        description=gap.description,
+        startup_signals=("inference", "latency"),
+        top_k=1,
+    )
+    return build_nvidia_recommendations(
+        profile=profile,
+        evidence_groups=evidence_groups,
+        collection_quality=collection_quality or _collection_quality(),
+        assessment=assessment,
+        retrievals=(retrieval,),
+    )
+
+
 def _model_serving_gap(evidence: FieldEvidence) -> TechnicalGap:
     return TechnicalGap(
         gap_type="model_serving",
@@ -156,26 +426,40 @@ def _startup_evidence(*, snippet: str) -> FieldEvidence:
     )
 
 
-def _assessment(gap: TechnicalGap) -> AINativeAssessment:
+def _assessment(
+    gap: TechnicalGap,
+    *,
+    wrapper_dependency_risks: tuple[WrapperDependencyRisk, ...] = (),
+    confidence: float = 0.82,
+    ready_for_recommendation: bool = True,
+    diagnostic_reasons: tuple[str, ...] = ("ready_for_recommendation",),
+) -> AINativeAssessment:
     return AINativeAssessment(
         schema_version="ai_native_assessment.v1",
         run_id="run-briefing-001",
         company_name="VetAI",
         classification="ai_native",
-        confidence=0.82,
+        confidence=confidence,
         nvidia_opportunity_urgency="urgent",
         criteria_results=(),
         positive_signals=(),
         technical_gaps=(gap,),
-        wrapper_dependency_risks=(),
+        wrapper_dependency_risks=wrapper_dependency_risks,
         insufficient_evidence_fields=(),
-        evidences=gap.evidences,
-        diagnostic_quality=DiagnosticQuality(
-            ready_for_recommendation=True,
-            requires_human_review=False,
-            reasons=("ready_for_recommendation",),
+        evidences=tuple(
+            dict.fromkeys(
+                (
+                    *gap.evidences,
+                    *(evidence for risk in wrapper_dependency_risks for evidence in risk.evidences),
+                )
+            )
         ),
-        ready_for_recommendation=True,
+        diagnostic_quality=DiagnosticQuality(
+            ready_for_recommendation=ready_for_recommendation,
+            requires_human_review=not ready_for_recommendation,
+            reasons=diagnostic_reasons,
+        ),
+        ready_for_recommendation=ready_for_recommendation,
     )
 
 
