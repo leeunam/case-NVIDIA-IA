@@ -28,6 +28,7 @@ from nvidia_startup_intel.startup_profile import FieldEvidence, StartupProfile
 SCHEMA_VERSION = "nvidia_recommendation.v1"
 MIN_SUPPORTED_GAP_CONFIDENCE = 0.60
 MIN_SUPPORTED_OPPORTUNITY_CONFIDENCE = 0.60
+EXCESSIVE_UNKNOWN_FIELD_COUNT = 3
 CLOSE_ALTERNATIVE_RELATIVE_DELTA = 0.15
 SUPPORTED_TECHNICAL_GAP_TYPES = frozenset(
     {
@@ -43,10 +44,26 @@ SUPPORTED_PROGRAM_OPPORTUNITY_TYPES = frozenset(
 
 
 @dataclass(frozen=True)
+class RecommendationMetrics:
+    supported_recommendation_count: int
+    hypothesis_recommendation_count: int
+    blocked_recommendation_count: int
+    recommendations_with_official_nvidia_citation_count: int
+    recommendations_with_startup_evidence_count: int
+    gaps_without_recommendation: tuple[str, ...]
+    blocked_briefing_count: int
+    human_review_reason_counts: tuple[tuple[str, int], ...]
+    corpus_expansion_targets: tuple[str, ...]
+    evidence_collection_targets: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class RecommendationQuality:
     ready_for_briefing: bool
     human_review_requested: bool
+    states: tuple[str, ...]
     reasons: tuple[str, ...]
+    metrics: RecommendationMetrics
 
 
 @dataclass(frozen=True)
@@ -766,7 +783,31 @@ def _blocking_context_reasons(
         reasons.append("assessment_not_ready_for_recommendation")
     if any(group.has_conflict for group in evidence_groups):
         reasons.append("conflicting_startup_evidence")
+    if any(risk.severity == "high" for risk in assessment.wrapper_dependency_risks):
+        reasons.append("high_wrapper_risk")
+    if _has_excessive_unknown_fields(collection_quality):
+        reasons.append("excessive_unknown_fields")
+        reasons.extend(f"unknown_field:{field_name}" for field_name in _unknown_field_names(collection_quality))
     return tuple(reasons)
+
+
+def _has_excessive_unknown_fields(collection_quality: CollectionQualitySummary) -> bool:
+    return sum(count for _, count in _unknown_field_entries(collection_quality)) >= EXCESSIVE_UNKNOWN_FIELD_COUNT
+
+
+def _unknown_field_names(collection_quality: CollectionQualitySummary) -> tuple[str, ...]:
+    return tuple(field_name for field_name, count in _unknown_field_entries(collection_quality) if count > 0)
+
+
+def _unknown_field_entries(collection_quality: CollectionQualitySummary) -> tuple[tuple[str, int], ...]:
+    entries: list[tuple[str, int]] = []
+    for item in collection_quality.unknown_fields:
+        if isinstance(item, tuple) and len(item) == 2:
+            field_name, count = item
+            entries.append((str(field_name), int(count)))
+            continue
+        entries.append((str(item), 1))
+    return tuple(entries)
 
 
 def _top_recommendations_by_gap(
@@ -982,10 +1023,19 @@ def _recommendation_quality(
     blocked: tuple[NVIDIATechnicalRecommendation | NVIDIAProgramRecommendation, ...],
 ) -> RecommendationQuality:
     if supported and not hypotheses and not blocked:
+        reasons = ("supported_recommendation_ready",)
         return RecommendationQuality(
             ready_for_briefing=True,
             human_review_requested=False,
-            reasons=("supported_recommendation_ready",),
+            states=("supported", "ready_for_briefing"),
+            reasons=reasons,
+            metrics=_recommendation_metrics(
+                supported=supported,
+                hypotheses=hypotheses,
+                blocked=blocked,
+                reasons=reasons,
+                ready_for_briefing=True,
+            ),
         )
 
     reasons: list[str] = []
@@ -995,11 +1045,170 @@ def _recommendation_quality(
         reasons.append("blocked_recommendation_requires_human_review")
     if not supported and not hypotheses and not blocked:
         reasons.append("no_recommendation_candidate")
+    reason_tuple = tuple(dict.fromkeys((*reasons, *_quality_gate_reasons(hypotheses, blocked))))
     return RecommendationQuality(
         ready_for_briefing=False,
         human_review_requested=True,
-        reasons=tuple(reasons),
+        states=_quality_states(
+            supported=supported,
+            hypotheses=hypotheses,
+            blocked=blocked,
+            ready_for_briefing=False,
+            human_review_requested=True,
+        ),
+        reasons=reason_tuple,
+        metrics=_recommendation_metrics(
+            supported=supported,
+            hypotheses=hypotheses,
+            blocked=blocked,
+            reasons=reason_tuple,
+            ready_for_briefing=False,
+        ),
     )
+
+
+def _quality_states(
+    *,
+    supported: tuple[NVIDIATechnicalRecommendation | NVIDIAProgramRecommendation, ...],
+    hypotheses: tuple[NVIDIATechnicalRecommendation | NVIDIAProgramRecommendation, ...],
+    blocked: tuple[NVIDIATechnicalRecommendation | NVIDIAProgramRecommendation, ...],
+    ready_for_briefing: bool,
+    human_review_requested: bool,
+) -> tuple[str, ...]:
+    states: list[str] = []
+    if supported:
+        states.append("supported")
+    if hypotheses:
+        states.append("hypothesis")
+    if blocked:
+        states.append("blocked")
+    if ready_for_briefing:
+        states.append("ready_for_briefing")
+    if human_review_requested:
+        states.append("human_review_requested")
+    return tuple(states)
+
+
+def _recommendation_metrics(
+    *,
+    supported: tuple[NVIDIATechnicalRecommendation | NVIDIAProgramRecommendation, ...],
+    hypotheses: tuple[NVIDIATechnicalRecommendation | NVIDIAProgramRecommendation, ...],
+    blocked: tuple[NVIDIATechnicalRecommendation | NVIDIAProgramRecommendation, ...],
+    reasons: tuple[str, ...],
+    ready_for_briefing: bool,
+) -> RecommendationMetrics:
+    recommendations = (*supported, *hypotheses, *blocked)
+    return RecommendationMetrics(
+        supported_recommendation_count=len(supported),
+        hypothesis_recommendation_count=len(hypotheses),
+        blocked_recommendation_count=len(blocked),
+        recommendations_with_official_nvidia_citation_count=sum(
+            1 for recommendation in recommendations if _has_official_citation(recommendation)
+        ),
+        recommendations_with_startup_evidence_count=sum(
+            1 for recommendation in recommendations if recommendation.startup_evidences
+        ),
+        gaps_without_recommendation=_gaps_without_recommendation(hypotheses, blocked),
+        blocked_briefing_count=0 if ready_for_briefing else 1,
+        human_review_reason_counts=(
+            () if ready_for_briefing else tuple((reason, reasons.count(reason)) for reason in dict.fromkeys(reasons))
+        ),
+        corpus_expansion_targets=_corpus_expansion_targets(hypotheses, blocked),
+        evidence_collection_targets=_evidence_collection_targets(hypotheses, blocked),
+    )
+
+
+def _has_official_citation(
+    recommendation: NVIDIATechnicalRecommendation | NVIDIAProgramRecommendation,
+) -> bool:
+    return any(_is_official_nvidia_url(citation.source_url) for citation in recommendation.nvidia_citations)
+
+
+def _quality_gate_reasons(
+    hypotheses: tuple[NVIDIATechnicalRecommendation | NVIDIAProgramRecommendation, ...],
+    blocked: tuple[NVIDIATechnicalRecommendation | NVIDIAProgramRecommendation, ...],
+) -> tuple[str, ...]:
+    gate_reasons: list[str] = []
+    for recommendation in (*hypotheses, *blocked):
+        for reason in recommendation.selection_reasons:
+            if _is_quality_gate_reason(reason):
+                gate_reasons.append(reason)
+    return tuple(dict.fromkeys(gate_reasons))
+
+
+def _is_quality_gate_reason(reason: str) -> bool:
+    return (
+        reason.startswith("missing_")
+        or reason.startswith("low_")
+        or reason.endswith("_not_ready")
+        or reason.endswith("_not_covered_by_recommendation_rules")
+        or reason.endswith("_not_covered_by_program_rules")
+        or reason in {
+            "assessment_not_ready_for_recommendation",
+            "collection_quality_not_ready",
+            "conflicting_startup_evidence",
+            "excessive_unknown_fields",
+            "generic_inception_without_specific_gap_or_opportunity",
+            "high_wrapper_risk",
+        }
+    )
+
+
+def _gaps_without_recommendation(
+    hypotheses: tuple[NVIDIATechnicalRecommendation | NVIDIAProgramRecommendation, ...],
+    blocked: tuple[NVIDIATechnicalRecommendation | NVIDIAProgramRecommendation, ...],
+) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            recommendation.gap.gap_type
+            for recommendation in (*hypotheses, *blocked)
+            if isinstance(recommendation, NVIDIATechnicalRecommendation)
+            and recommendation.gap.gap_type != UNKNOWN
+        )
+    )
+
+
+def _corpus_expansion_targets(
+    hypotheses: tuple[NVIDIATechnicalRecommendation | NVIDIAProgramRecommendation, ...],
+    blocked: tuple[NVIDIATechnicalRecommendation | NVIDIAProgramRecommendation, ...],
+) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            _recommendation_target(recommendation)
+            for recommendation in (*hypotheses, *blocked)
+            if "missing_official_nvidia_citation" in recommendation.selection_reasons
+        )
+    )
+
+
+def _evidence_collection_targets(
+    hypotheses: tuple[NVIDIATechnicalRecommendation | NVIDIAProgramRecommendation, ...],
+    blocked: tuple[NVIDIATechnicalRecommendation | NVIDIAProgramRecommendation, ...],
+) -> tuple[str, ...]:
+    missing_startup_targets = tuple(
+        dict.fromkeys(
+            _recommendation_target(recommendation)
+            for recommendation in (*hypotheses, *blocked)
+            if any(reason.startswith("missing_startup") for reason in recommendation.selection_reasons)
+        )
+    )
+    unknown_field_targets = tuple(
+        dict.fromkeys(
+            reason.removeprefix("unknown_field:")
+            for recommendation in (*hypotheses, *blocked)
+            for reason in recommendation.selection_reasons
+            if reason.startswith("unknown_field:")
+        )
+    )
+    return (*missing_startup_targets, *unknown_field_targets)
+
+
+def _recommendation_target(
+    recommendation: NVIDIATechnicalRecommendation | NVIDIAProgramRecommendation,
+) -> str:
+    if isinstance(recommendation, NVIDIATechnicalRecommendation):
+        return recommendation.gap.gap_type
+    return recommendation.opportunity.opportunity_type
 
 
 def _final_priority(

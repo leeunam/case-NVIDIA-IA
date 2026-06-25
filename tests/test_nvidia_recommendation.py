@@ -7,6 +7,7 @@ from nvidia_startup_intel.ai_native_assessment import (
     AINativeAssessment,
     DiagnosticQuality,
     TechnicalGap,
+    WrapperDependencyRisk,
 )
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
@@ -29,6 +30,279 @@ from nvidia_startup_intel.startup_profile import ClaimSource, FieldEvidence, Pro
 
 
 class NVIDIARecommendationTests(unittest.TestCase):
+    def test_quality_metrics_count_supported_recommendations_with_sources_and_evidence(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao."
+        )
+        gap = TechnicalGap(
+            gap_type="model_serving",
+            description="Needs lower latency inference and production model serving.",
+            severity="high",
+            confidence=0.86,
+            evidences=(startup_evidence,),
+        )
+        corpus = load_nvidia_knowledge_corpus(_fixture_path())
+        retrieval = retrieve_nvidia_knowledge_by_gap(
+            corpus,
+            run_id="run-issue-14",
+            gap_type=gap.gap_type,
+            description=gap.description,
+            startup_signals=("inference", "latency"),
+            top_k=1,
+        )
+
+        recommendation_set = build_nvidia_recommendations(
+            profile=_profile(startup_evidence),
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=_assessment(gap),
+            retrievals=(retrieval,),
+        )
+
+        self.assertTrue(recommendation_set.quality.ready_for_briefing)
+        self.assertFalse(recommendation_set.quality.human_review_requested)
+        self.assertEqual(recommendation_set.quality.states, ("supported", "ready_for_briefing"))
+        self.assertEqual(recommendation_set.quality.reasons, ("supported_recommendation_ready",))
+
+        metrics = recommendation_set.quality.metrics
+        self.assertEqual(metrics.supported_recommendation_count, 1)
+        self.assertEqual(metrics.hypothesis_recommendation_count, 0)
+        self.assertEqual(metrics.blocked_recommendation_count, 0)
+        self.assertEqual(metrics.recommendations_with_official_nvidia_citation_count, 1)
+        self.assertEqual(metrics.recommendations_with_startup_evidence_count, 1)
+        self.assertEqual(metrics.gaps_without_recommendation, ())
+        self.assertEqual(metrics.blocked_briefing_count, 0)
+        self.assertEqual(metrics.human_review_reason_counts, ())
+        self.assertEqual(metrics.corpus_expansion_targets, ())
+        self.assertEqual(metrics.evidence_collection_targets, ())
+
+    def test_missing_citation_metrics_target_corpus_expansion(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao."
+        )
+        gap = TechnicalGap(
+            gap_type="model_serving",
+            description="Needs lower latency inference and production model serving.",
+            severity="high",
+            confidence=0.86,
+            evidences=(startup_evidence,),
+        )
+        retrieval = NVIDIAKnowledgeRetrieval(
+            schema_version="nvidia_knowledge.v1",
+            run_id="run-issue-14",
+            corpus_version="official-nvidia-fixture.v1",
+            query="unrelated billing workflow",
+            results=(),
+            documents=(),
+        )
+
+        recommendation_set = build_nvidia_recommendations(
+            profile=_profile(startup_evidence),
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=_assessment(gap),
+            retrievals=(retrieval,),
+        )
+
+        self.assertEqual(recommendation_set.quality.states, ("hypothesis", "human_review_requested"))
+        self.assertEqual(
+            recommendation_set.quality.reasons,
+            ("recommendation_hypothesis_requires_human_review", "missing_official_nvidia_citation"),
+        )
+
+        metrics = recommendation_set.quality.metrics
+        self.assertEqual(metrics.supported_recommendation_count, 0)
+        self.assertEqual(metrics.hypothesis_recommendation_count, 1)
+        self.assertEqual(metrics.blocked_recommendation_count, 0)
+        self.assertEqual(metrics.recommendations_with_official_nvidia_citation_count, 0)
+        self.assertEqual(metrics.recommendations_with_startup_evidence_count, 1)
+        self.assertEqual(metrics.gaps_without_recommendation, ("model_serving",))
+        self.assertEqual(metrics.blocked_briefing_count, 1)
+        self.assertEqual(
+            metrics.human_review_reason_counts,
+            (
+                ("recommendation_hypothesis_requires_human_review", 1),
+                ("missing_official_nvidia_citation", 1),
+            ),
+        )
+        self.assertEqual(metrics.corpus_expansion_targets, ("model_serving",))
+        self.assertEqual(metrics.evidence_collection_targets, ())
+
+    def test_missing_startup_evidence_metrics_target_evidence_collection(self) -> None:
+        profile_evidence = _startup_evidence(snippet="A VetAI usa inteligencia artificial no produto.")
+        gap = TechnicalGap(
+            gap_type="model_serving",
+            description="Needs lower latency inference and production model serving.",
+            severity="high",
+            confidence=0.86,
+            evidences=(),
+        )
+        corpus = load_nvidia_knowledge_corpus(_fixture_path())
+        retrieval = retrieve_nvidia_knowledge_by_gap(
+            corpus,
+            run_id="run-issue-14",
+            gap_type=gap.gap_type,
+            description=gap.description,
+            startup_signals=("inference", "latency"),
+            top_k=1,
+        )
+
+        recommendation_set = build_nvidia_recommendations(
+            profile=_profile(profile_evidence),
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=_assessment(gap),
+            retrievals=(retrieval,),
+        )
+
+        self.assertEqual(recommendation_set.quality.states, ("blocked", "human_review_requested"))
+        self.assertIn("blocked_recommendation_requires_human_review", recommendation_set.quality.reasons)
+
+        metrics = recommendation_set.quality.metrics
+        self.assertEqual(metrics.supported_recommendation_count, 0)
+        self.assertEqual(metrics.hypothesis_recommendation_count, 0)
+        self.assertEqual(metrics.blocked_recommendation_count, 1)
+        self.assertEqual(metrics.recommendations_with_official_nvidia_citation_count, 1)
+        self.assertEqual(metrics.recommendations_with_startup_evidence_count, 0)
+        self.assertEqual(metrics.gaps_without_recommendation, ("model_serving",))
+        self.assertEqual(metrics.corpus_expansion_targets, ())
+        self.assertEqual(metrics.evidence_collection_targets, ("model_serving",))
+
+    def test_high_wrapper_risk_routes_supported_fit_to_human_review(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI usa OpenAI API sem evidencias de dados proprietarios."
+        )
+        gap = TechnicalGap(
+            gap_type="model_serving",
+            description="Needs lower latency inference and production model serving.",
+            severity="high",
+            confidence=0.86,
+            evidences=(startup_evidence,),
+        )
+        risk = WrapperDependencyRisk(
+            risk_type="external_api_only",
+            severity="high",
+            confidence=0.84,
+            rationale="Evidence suggests dependency on external APIs without defensibility.",
+            evidences=(startup_evidence,),
+        )
+        corpus = load_nvidia_knowledge_corpus(_fixture_path())
+        retrieval = retrieve_nvidia_knowledge_by_gap(
+            corpus,
+            run_id="run-issue-14",
+            gap_type=gap.gap_type,
+            description=gap.description,
+            startup_signals=("inference", "latency"),
+            top_k=1,
+        )
+
+        recommendation_set = build_nvidia_recommendations(
+            profile=_profile(startup_evidence),
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=_assessment(gap, wrapper_dependency_risks=(risk,)),
+            retrievals=(retrieval,),
+        )
+
+        self.assertEqual(recommendation_set.technical_recommendations, ())
+        self.assertEqual(recommendation_set.quality.states, ("blocked", "human_review_requested"))
+        self.assertIn("high_wrapper_risk", recommendation_set.quality.reasons)
+
+        metrics = recommendation_set.quality.metrics
+        self.assertEqual(metrics.blocked_recommendation_count, 1)
+        self.assertEqual(metrics.recommendations_with_official_nvidia_citation_count, 1)
+        self.assertEqual(metrics.recommendations_with_startup_evidence_count, 1)
+        self.assertIn(("high_wrapper_risk", 1), metrics.human_review_reason_counts)
+        self.assertEqual(metrics.gaps_without_recommendation, ("model_serving",))
+
+    def test_excessive_unknowns_route_to_human_review_with_collection_targets(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao."
+        )
+        gap = TechnicalGap(
+            gap_type="model_serving",
+            description="Needs lower latency inference and production model serving.",
+            severity="high",
+            confidence=0.86,
+            evidences=(startup_evidence,),
+        )
+        corpus = load_nvidia_knowledge_corpus(_fixture_path())
+        retrieval = retrieve_nvidia_knowledge_by_gap(
+            corpus,
+            run_id="run-issue-14",
+            gap_type=gap.gap_type,
+            description=gap.description,
+            startup_signals=("inference", "latency"),
+            top_k=1,
+        )
+
+        recommendation_set = build_nvidia_recommendations(
+            profile=_profile(startup_evidence),
+            evidence_groups=(),
+            collection_quality=_collection_quality(
+                unknown_fields=(("funding", 1), ("customers", 1), ("founders", 1))
+            ),
+            assessment=_assessment(gap),
+            retrievals=(retrieval,),
+        )
+
+        self.assertEqual(recommendation_set.technical_recommendations, ())
+        self.assertEqual(recommendation_set.quality.states, ("blocked", "human_review_requested"))
+        self.assertIn("excessive_unknown_fields", recommendation_set.quality.reasons)
+
+        metrics = recommendation_set.quality.metrics
+        self.assertEqual(metrics.blocked_briefing_count, 1)
+        self.assertIn(("excessive_unknown_fields", 1), metrics.human_review_reason_counts)
+        self.assertEqual(metrics.evidence_collection_targets, ("funding", "customers", "founders"))
+
+    def test_conflicting_evidence_routes_to_human_review_with_reason_metrics(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao."
+        )
+        conflicting_evidence = _startup_evidence(
+            snippet="Outra pagina descreve a VetAI como consultoria sem produto de IA."
+        )
+        gap = TechnicalGap(
+            gap_type="model_serving",
+            description="Needs lower latency inference and production model serving.",
+            severity="high",
+            confidence=0.86,
+            evidences=(startup_evidence,),
+        )
+        corpus = load_nvidia_knowledge_corpus(_fixture_path())
+        retrieval = retrieve_nvidia_knowledge_by_gap(
+            corpus,
+            run_id="run-issue-14",
+            gap_type=gap.gap_type,
+            description=gap.description,
+            startup_signals=("inference", "latency"),
+            top_k=1,
+        )
+
+        recommendation_set = build_nvidia_recommendations(
+            profile=_profile(startup_evidence),
+            evidence_groups=(
+                FieldEvidenceGroup(
+                    field_name="product",
+                    value="AI product",
+                    evidences=(startup_evidence, conflicting_evidence),
+                    has_conflict=True,
+                    conflicting_values=("AI product", "consulting"),
+                ),
+            ),
+            collection_quality=_collection_quality(),
+            assessment=_assessment(gap),
+            retrievals=(retrieval,),
+        )
+
+        self.assertEqual(recommendation_set.technical_recommendations, ())
+        self.assertEqual(recommendation_set.quality.states, ("blocked", "human_review_requested"))
+        self.assertIn("conflicting_startup_evidence", recommendation_set.quality.reasons)
+        self.assertIn(
+            ("conflicting_startup_evidence", 1),
+            recommendation_set.quality.metrics.human_review_reason_counts,
+        )
+
     def test_inception_program_recommendation_requires_specific_opportunity_and_citation(self) -> None:
         startup_evidence = _startup_evidence(
             snippet=(
@@ -116,7 +390,10 @@ class NVIDIARecommendationTests(unittest.TestCase):
         self.assertFalse(recommendation_set.quality.ready_for_briefing)
         self.assertEqual(
             recommendation_set.quality.reasons,
-            ("blocked_recommendation_requires_human_review",),
+            (
+                "blocked_recommendation_requires_human_review",
+                "generic_inception_without_specific_gap_or_opportunity",
+            ),
         )
 
         blocked = recommendation_set.blocked_recommendations[0]
@@ -450,7 +727,7 @@ class NVIDIARecommendationTests(unittest.TestCase):
         self.assertTrue(recommendation_set.quality.human_review_requested)
         self.assertEqual(
             recommendation_set.quality.reasons,
-            ("recommendation_hypothesis_requires_human_review",),
+            ("recommendation_hypothesis_requires_human_review", "missing_official_nvidia_citation"),
         )
 
         hypothesis = recommendation_set.hypotheses[0]
@@ -675,7 +952,7 @@ class NVIDIARecommendationTests(unittest.TestCase):
         self.assertFalse(recommendation_set.quality.ready_for_briefing)
         self.assertEqual(
             recommendation_set.quality.reasons,
-            ("blocked_recommendation_requires_human_review",),
+            ("blocked_recommendation_requires_human_review", "missing_startup_gap_evidence"),
         )
 
         blocked = recommendation_set.blocked_recommendations[0]
@@ -701,8 +978,18 @@ def _startup_evidence(*, snippet: str) -> FieldEvidence:
     )
 
 
-def _assessment(*gaps: TechnicalGap) -> AINativeAssessment:
-    evidences = tuple(evidence for gap in gaps for evidence in gap.evidences)
+def _assessment(
+    *gaps: TechnicalGap,
+    wrapper_dependency_risks: tuple[WrapperDependencyRisk, ...] = (),
+) -> AINativeAssessment:
+    evidences = tuple(
+        dict.fromkeys(
+            (
+                *(evidence for gap in gaps for evidence in gap.evidences),
+                *(evidence for risk in wrapper_dependency_risks for evidence in risk.evidences),
+            )
+        )
+    )
     return AINativeAssessment(
         schema_version="ai_native_assessment.v1",
         run_id="run-issue-12" if len(gaps) > 1 else "run-issue-7",
@@ -713,7 +1000,7 @@ def _assessment(*gaps: TechnicalGap) -> AINativeAssessment:
         criteria_results=(),
         positive_signals=(),
         technical_gaps=gaps,
-        wrapper_dependency_risks=(),
+        wrapper_dependency_risks=wrapper_dependency_risks,
         insufficient_evidence_fields=(),
         evidences=evidences,
         diagnostic_quality=DiagnosticQuality(
@@ -725,7 +1012,10 @@ def _assessment(*gaps: TechnicalGap) -> AINativeAssessment:
     )
 
 
-def _collection_quality() -> CollectionQualitySummary:
+def _collection_quality(
+    *,
+    unknown_fields: tuple[tuple[str, int], ...] = (),
+) -> CollectionQualitySummary:
     return CollectionQualitySummary(
         candidate_count=1,
         official_site_found_count=1,
@@ -733,7 +1023,7 @@ def _collection_quality() -> CollectionQualitySummary:
         minimum_profile_complete_count=1,
         minimum_profile_complete_rate=1.0,
         average_evidences_per_startup=4.0,
-        unknown_fields=(),
+        unknown_fields=unknown_fields,
         source_success_rates=(),
         ready_for_evaluation=True,
         readiness_reasons=("ready_for_ai_native_evaluation",),
