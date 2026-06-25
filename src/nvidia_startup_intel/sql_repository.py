@@ -235,7 +235,7 @@ class SqlPipelineRepository:
                     _dumps(assessment),
                 ),
             )
-        self.connection.commit()
+        self._commit()
 
     def save_pipeline_result(
         self,
@@ -321,6 +321,12 @@ class SqlPipelineRepository:
                 run_id,
                 columns=("ready_for_evaluation",),
                 order_by="id",
+            ),
+            ai_native_assessments=self._payloads(
+                "ai_native_assessments",
+                run_id,
+                columns=("company_name", "classification", "ready_for_recommendation"),
+                order_by="company_name",
             ),
         )
 
@@ -479,6 +485,16 @@ def _schema_statements(id_column_type: str) -> tuple[str, ...]:
             payload_json TEXT NOT NULL
         )
         """,
+        f"""
+        CREATE TABLE IF NOT EXISTS ai_native_assessments (
+            id {id_column_type},
+            run_id TEXT NOT NULL {run_fk},
+            company_name TEXT NOT NULL,
+            classification TEXT NOT NULL,
+            ready_for_recommendation INTEGER NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """,
         "CREATE INDEX IF NOT EXISTS idx_search_plan_items_run_id ON search_plan_items(run_id)",
         "CREATE INDEX IF NOT EXISTS idx_raw_discovery_results_run_id ON raw_discovery_results(run_id)",
         "CREATE INDEX IF NOT EXISTS idx_candidate_startups_run_id ON candidate_startups(run_id)",
@@ -489,6 +505,7 @@ def _schema_statements(id_column_type: str) -> tuple[str, ...]:
         "CREATE INDEX IF NOT EXISTS idx_field_evidences_run_id ON field_evidences(run_id)",
         "CREATE INDEX IF NOT EXISTS idx_field_evidences_run_profile_key ON field_evidences(run_id, profile_key)",
         "CREATE INDEX IF NOT EXISTS idx_collection_quality_summaries_run_id ON collection_quality_summaries(run_id)",
+        "CREATE INDEX IF NOT EXISTS idx_ai_native_assessments_run_id ON ai_native_assessments(run_id)",
     )
 
 
@@ -507,7 +524,7 @@ def _loads_optional(value: str | None) -> dict[str, Any] | None:
 
 
 def _column_value(column: str, value: Any) -> Any:
-    if column in {"is_error", "ready_for_evaluation"}:
+    if column in {"is_error", "ready_for_evaluation", "ready_for_recommendation"}:
         return bool(value)
     return value
 

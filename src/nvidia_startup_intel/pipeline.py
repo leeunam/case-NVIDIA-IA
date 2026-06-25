@@ -153,6 +153,30 @@ def structure_profile_evidence(
     }
 
 
+def assess_profiles_ai_native(
+    profiles: list[StartupProfile] | tuple[StartupProfile, ...],
+    evidence_groups_by_profile: Mapping[str, tuple[FieldEvidenceGroup, ...]],
+    quality_summary: CollectionQualitySummary,
+    *,
+    run_id: str,
+) -> dict[str, AINativeAssessment]:
+    """Assess profiles that are ready for AI-native evaluation."""
+
+    if not quality_summary.ready_for_evaluation:
+        return {}
+
+    assessments: dict[str, AINativeAssessment] = {}
+    for profile in profiles:
+        profile_key = profile_result_key(profile)
+        assessments[profile.company_name.value] = assess_ai_native_maturity(
+            profile,
+            evidence_groups_by_profile.get(profile_key, ()),
+            quality_summary,
+            run_id=run_id,
+        )
+    return assessments
+
+
 def _build_pipeline_result(
     *,
     params: SearchParams,

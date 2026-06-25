@@ -189,13 +189,10 @@ def assess_ai_native_node(state: ScrapingGraphState, runtime: ScrapingGraphRunti
 
 def decide_next_action_node(state: ScrapingGraphState, runtime: ScrapingGraphRuntime) -> ScrapingGraphState:
     summary = state["quality_summary"]
-    assessments = state.get("ai_native_assessments_by_profile", {})
     if not summary.ready_for_evaluation:
         next_action = "needs_more_collection_or_human_review"
-    elif any(assessment.ready_for_recommendation for assessment in assessments.values()):
-        next_action = "ready_for_recommendation"
     else:
-        next_action = "needs_more_collection_or_human_review"
+        next_action = "proceed_to_ai_native_evaluation"
     return _merge(state, next_action=next_action)
 
 
