@@ -17,14 +17,244 @@ from nvidia_startup_intel.nvidia_knowledge import (
     RetrievedNVIDIAKnowledge,
     load_nvidia_knowledge_corpus,
     nvidia_citation_from_chunk,
+    retrieve_nvidia_knowledge,
     retrieve_nvidia_knowledge_by_gap,
 )
-from nvidia_startup_intel.nvidia_recommendation import build_nvidia_recommendations
+from nvidia_startup_intel.nvidia_recommendation import (
+    CommercialOpportunity,
+    build_nvidia_recommendations,
+)
 from nvidia_startup_intel.search_params import UNKNOWN
 from nvidia_startup_intel.startup_profile import ClaimSource, FieldEvidence, ProfileField, StartupProfile
 
 
 class NVIDIARecommendationTests(unittest.TestCase):
+    def test_inception_program_recommendation_requires_specific_opportunity_and_citation(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet=(
+                "A VetAI busca suporte tecnico, conexao com parceiros e go-to-market "
+                "para escalar a solucao de IA."
+            )
+        )
+        opportunity = CommercialOpportunity(
+            opportunity_type="inception_program_fit",
+            description="Needs startup program support, partner ecosystem, and go-to-market help.",
+            confidence=0.88,
+            evidences=(startup_evidence,),
+        )
+        corpus = load_nvidia_knowledge_corpus(_fixture_path())
+        retrieval = retrieve_nvidia_knowledge(
+            corpus,
+            run_id="run-issue-13",
+            opportunity_type=opportunity.opportunity_type,
+            description=opportunity.description,
+            startup_signals=("startup program", "partners", "go-to-market"),
+            top_k=1,
+        )
+
+        recommendation_set = build_nvidia_recommendations(
+            profile=_profile(startup_evidence),
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=_assessment(),
+            retrievals=(retrieval,),
+            commercial_opportunities=(opportunity,),
+        )
+
+        self.assertEqual(recommendation_set.technical_recommendations, ())
+        self.assertEqual(recommendation_set.hypotheses, ())
+        self.assertEqual(recommendation_set.blocked_recommendations, ())
+        self.assertTrue(recommendation_set.quality.ready_for_briefing)
+        self.assertEqual(recommendation_set.final_nvidia_opportunity_priority, "medium")
+        self.assertEqual(recommendation_set.next_action, "prepare_program_outreach")
+
+        recommendation = recommendation_set.program_recommendations[0]
+        self.assertEqual(recommendation.recommendation_type, "program")
+        self.assertEqual(recommendation.state, "supported")
+        self.assertEqual(recommendation.rank, 1)
+        self.assertEqual(recommendation.opportunity, opportunity)
+        self.assertEqual(recommendation.nvidia_program, "Inception Program for Startups")
+        self.assertIn("go-to-market", recommendation.commercial_rationale)
+        self.assertNotEqual(recommendation.technical_rationale, recommendation.commercial_rationale)
+        self.assertEqual(recommendation.startup_evidences, (startup_evidence,))
+        self.assertEqual(recommendation.nvidia_citations[0].document_id, "nvidia-inception")
+        self.assertEqual(
+            recommendation.selection_reasons,
+            (
+                "matched_opportunity_type:inception_program_fit",
+                "has_startup_opportunity_evidence",
+                "has_official_nvidia_citation",
+                "inception_gate_specific_opportunity",
+                "ranked_by_program_recommendation_score",
+                "top_recommendation_for_opportunity",
+            ),
+        )
+
+    def test_generic_inception_retrieval_without_gap_or_opportunity_is_blocked(self) -> None:
+        startup_evidence = _startup_evidence(snippet="A VetAI usa inteligencia artificial no produto.")
+        corpus = load_nvidia_knowledge_corpus(_fixture_path())
+        retrieval = retrieve_nvidia_knowledge(
+            corpus,
+            run_id="run-issue-13",
+            query_terms=("inception", "startup program"),
+            top_k=1,
+        )
+
+        recommendation_set = build_nvidia_recommendations(
+            profile=_profile(startup_evidence),
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=_assessment(),
+            retrievals=(retrieval,),
+        )
+
+        self.assertEqual(recommendation_set.technical_recommendations, ())
+        self.assertEqual(recommendation_set.program_recommendations, ())
+        self.assertEqual(recommendation_set.hypotheses, ())
+        self.assertEqual(recommendation_set.final_nvidia_opportunity_priority, "human_review")
+        self.assertEqual(recommendation_set.next_action, "resolve_blocking_evidence")
+        self.assertFalse(recommendation_set.quality.ready_for_briefing)
+        self.assertEqual(
+            recommendation_set.quality.reasons,
+            ("blocked_recommendation_requires_human_review",),
+        )
+
+        blocked = recommendation_set.blocked_recommendations[0]
+        self.assertEqual(blocked.recommendation_type, "program")
+        self.assertEqual(blocked.state, "blocked")
+        self.assertEqual(blocked.opportunity.opportunity_type, UNKNOWN)
+        self.assertEqual(blocked.nvidia_program, "Inception Program for Startups")
+        self.assertEqual(blocked.startup_evidences, ())
+        self.assertEqual(blocked.nvidia_citations[0].document_id, "nvidia-inception")
+        self.assertIn("generic_inception_without_specific_gap_or_opportunity", blocked.selection_reasons)
+
+    def test_partner_ecosystem_opportunity_can_produce_program_recommendation(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa de parceiros para integrar e distribuir a solucao de IA."
+        )
+        opportunity = CommercialOpportunity(
+            opportunity_type="partner_ecosystem",
+            description="Needs partner ecosystem support for integration and co-selling.",
+            confidence=0.81,
+            evidences=(startup_evidence,),
+        )
+        retrieval = _program_retrieval_with_results(
+            opportunity_type=opportunity.opportunity_type,
+            query=opportunity.description,
+            entries=(("nvidia-partner-network", "NVIDIA Partner Network", 0.88),),
+        )
+
+        recommendation_set = build_nvidia_recommendations(
+            profile=_profile(startup_evidence),
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=_assessment(),
+            retrievals=(retrieval,),
+            commercial_opportunities=(opportunity,),
+        )
+
+        self.assertEqual(recommendation_set.technical_recommendations, ())
+        self.assertEqual(recommendation_set.hypotheses, ())
+        self.assertEqual(recommendation_set.blocked_recommendations, ())
+        self.assertTrue(recommendation_set.quality.ready_for_briefing)
+
+        recommendation = recommendation_set.program_recommendations[0]
+        self.assertEqual(recommendation.recommendation_type, "program")
+        self.assertEqual(recommendation.state, "supported")
+        self.assertEqual(recommendation.opportunity.opportunity_type, "partner_ecosystem")
+        self.assertEqual(recommendation.nvidia_program, "NVIDIA Partner Network")
+        self.assertEqual(recommendation.nvidia_citations[0].document_id, "nvidia-partner-network")
+        self.assertIn("program_gate_specific_opportunity", recommendation.selection_reasons)
+        self.assertNotIn("inception_gate_specific_opportunity", recommendation.selection_reasons)
+
+    def test_program_opportunity_without_official_citation_becomes_hypothesis(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI busca comunidade e suporte para startups de IA."
+        )
+        opportunity = CommercialOpportunity(
+            opportunity_type="inception_program_fit",
+            description="Needs startup community and program support.",
+            confidence=0.86,
+            evidences=(startup_evidence,),
+        )
+        retrieval = _program_retrieval_with_results(
+            opportunity_type=opportunity.opportunity_type,
+            query=opportunity.description,
+            entries=(("blog-inception-summary", "Unofficial Inception Summary", 0.91),),
+            official=False,
+        )
+
+        recommendation_set = build_nvidia_recommendations(
+            profile=_profile(startup_evidence),
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=_assessment(),
+            retrievals=(retrieval,),
+            commercial_opportunities=(opportunity,),
+        )
+
+        self.assertEqual(recommendation_set.program_recommendations, ())
+        self.assertEqual(recommendation_set.blocked_recommendations, ())
+        self.assertEqual(recommendation_set.final_nvidia_opportunity_priority, "human_review")
+        self.assertEqual(recommendation_set.next_action, "validate_nvidia_program_fit_with_human")
+        self.assertFalse(recommendation_set.quality.ready_for_briefing)
+
+        hypothesis = recommendation_set.hypotheses[0]
+        self.assertEqual(hypothesis.recommendation_type, "program")
+        self.assertEqual(hypothesis.state, "hypothesis")
+        self.assertEqual(hypothesis.opportunity, opportunity)
+        self.assertEqual(hypothesis.nvidia_program, UNKNOWN)
+        self.assertEqual(hypothesis.nvidia_citations, ())
+        self.assertIn("missing_official_nvidia_citation", hypothesis.selection_reasons)
+
+    def test_inception_program_can_be_supported_by_specific_technical_gap(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao."
+        )
+        gap = TechnicalGap(
+            gap_type="model_serving",
+            description="Needs lower latency inference and production model serving.",
+            severity="high",
+            confidence=0.86,
+            evidences=(startup_evidence,),
+        )
+        corpus = load_nvidia_knowledge_corpus(_fixture_path())
+        technical_retrieval = retrieve_nvidia_knowledge_by_gap(
+            corpus,
+            run_id="run-issue-13",
+            gap_type=gap.gap_type,
+            description=gap.description,
+            startup_signals=("inference", "latency"),
+            top_k=1,
+        )
+        inception_retrieval = retrieve_nvidia_knowledge(
+            corpus,
+            run_id="run-issue-13",
+            query_terms=("inception", "startup program"),
+            top_k=1,
+        )
+
+        recommendation_set = build_nvidia_recommendations(
+            profile=_profile(startup_evidence),
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=_assessment(gap),
+            retrievals=(technical_retrieval, inception_retrieval),
+        )
+
+        self.assertTrue(recommendation_set.quality.ready_for_briefing)
+        self.assertEqual(recommendation_set.hypotheses, ())
+        self.assertEqual(recommendation_set.blocked_recommendations, ())
+
+        program_recommendation = recommendation_set.program_recommendations[0]
+        self.assertEqual(program_recommendation.recommendation_type, "program")
+        self.assertEqual(program_recommendation.state, "supported")
+        self.assertEqual(program_recommendation.opportunity.opportunity_type, "inception_program_fit")
+        self.assertEqual(program_recommendation.supporting_gap, gap)
+        self.assertEqual(program_recommendation.startup_evidences, (startup_evidence,))
+        self.assertEqual(program_recommendation.nvidia_citations[0].document_id, "nvidia-inception")
+        self.assertIn("inception_gate_specific_technical_gap", program_recommendation.selection_reasons)
+
     def test_supported_recommendations_cover_four_controlled_gap_types_and_rank_by_need(self) -> None:
         evidence_by_gap = {
             "model_serving": _startup_evidence(
@@ -583,6 +813,60 @@ def _retrieval_with_results(
     return NVIDIAKnowledgeRetrieval(
         schema_version="nvidia_knowledge.v1",
         run_id="run-issue-12",
+        corpus_version="official-nvidia-fixture.v1",
+        query=query,
+        results=tuple(results),
+        documents=tuple(documents),
+    )
+
+
+def _program_retrieval_with_results(
+    *,
+    opportunity_type: str,
+    query: str,
+    entries: tuple[tuple[str, str, float], ...],
+    official: bool = True,
+) -> NVIDIAKnowledgeRetrieval:
+    documents: list[NVIDIAKnowledgeDocument] = []
+    results: list[RetrievedNVIDIAKnowledge] = []
+    for rank, (document_id, title, score) in enumerate(entries, start=1):
+        document = NVIDIAKnowledgeDocument(
+            schema_version="nvidia_knowledge.v1",
+            corpus_version="official-nvidia-fixture.v1",
+            document_id=document_id,
+            title=title,
+            source_url=(
+                f"https://www.nvidia.com/en-us/{document_id}/"
+                if official
+                else f"https://example.com/{document_id}/"
+            ),
+            source_type="official_nvidia_program_page" if official else "third_party_blog",
+            ingested_at="2026-06-23T00:00:00Z",
+        )
+        chunk = NVIDIAKnowledgeChunk(
+            schema_version="nvidia_knowledge.v1",
+            corpus_version=document.corpus_version,
+            chunk_id=f"{document_id}:0",
+            document_id=document_id,
+            chunk_index=0,
+            topic=opportunity_type,
+            text=f"{title} supports {opportunity_type.replace('_', ' ')} commercial opportunities.",
+        )
+        documents.append(document)
+        results.append(
+            RetrievedNVIDIAKnowledge(
+                chunk=chunk,
+                citation=nvidia_citation_from_chunk(document, chunk),
+                score=score,
+                retrieval_strategy="bm25_lexical",
+                rationale="Fixture program retrieval result.",
+                rank=rank,
+                bm25_score=score,
+            )
+        )
+    return NVIDIAKnowledgeRetrieval(
+        schema_version="nvidia_knowledge.v1",
+        run_id="run-issue-13",
         corpus_version="official-nvidia-fixture.v1",
         query=query,
         results=tuple(results),
