@@ -1,0 +1,33 @@
+{
+  "items": [
+    {
+      "justification": "Busca ampla em portugues para encontrar candidatas e fontes brasileiras.",
+      "priority": 1,
+      "scope": "broad_web",
+      "target_source": "web",
+      "term": "startups AI-native Minas Gerais Brasil"
+    },
+    {
+      "justification": "Busca ampla em ingles para capturar startups que descrevem IA em ingles.",
+      "priority": 2,
+      "scope": "broad_web",
+      "target_source": "web",
+      "term": "AI-native startups Minas Gerais Brazil"
+    },
+    {
+      "justification": "Busca direcionada em fonte prioritaria para reduzir ruido da web ampla.",
+      "priority": 3,
+      "scope": "specific_source",
+      "target_source": "Distrito",
+      "term": "site:distrito.me startups AI-native Minas Gerais"
+    },
+    {
+      "justification": "Busca direcionada em fonte prioritaria para reduzir ruido da web ampla.",
+      "priority": 4,
+      "scope": "specific_source",
+      "target_source": "StartSe",
+      "term": "site:startse.com startups AI-native Minas Gerais"
+    }
+  ],
+  "raw_query": "startups AI-native de Minas Gerais"
+}

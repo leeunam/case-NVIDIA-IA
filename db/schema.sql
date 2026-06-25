@@ -80,6 +80,35 @@ CREATE TABLE IF NOT EXISTS ai_native_assessments (
     payload_json TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS downstream_retrievals (
+    id BIGSERIAL PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES pipeline_runs(run_id) ON DELETE CASCADE,
+    startup_identifier TEXT NOT NULL,
+    corpus_version TEXT NOT NULL,
+    retrieval_strategy TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    payload_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS downstream_recommendations (
+    id BIGSERIAL PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES pipeline_runs(run_id) ON DELETE CASCADE,
+    startup_identifier TEXT NOT NULL,
+    corpus_version TEXT NOT NULL,
+    final_nvidia_opportunity_priority TEXT NOT NULL,
+    ready_for_briefing INTEGER NOT NULL,
+    payload_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS downstream_briefings (
+    id BIGSERIAL PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES pipeline_runs(run_id) ON DELETE CASCADE,
+    startup_identifier TEXT NOT NULL,
+    briefing_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    payload_json TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_search_plan_items_run_id ON search_plan_items(run_id);
 CREATE INDEX IF NOT EXISTS idx_raw_discovery_results_run_id ON raw_discovery_results(run_id);
 CREATE INDEX IF NOT EXISTS idx_candidate_startups_run_id ON candidate_startups(run_id);
@@ -91,3 +120,6 @@ CREATE INDEX IF NOT EXISTS idx_field_evidences_run_id ON field_evidences(run_id)
 CREATE INDEX IF NOT EXISTS idx_field_evidences_run_profile_key ON field_evidences(run_id, profile_key);
 CREATE INDEX IF NOT EXISTS idx_collection_quality_summaries_run_id ON collection_quality_summaries(run_id);
 CREATE INDEX IF NOT EXISTS idx_ai_native_assessments_run_id ON ai_native_assessments(run_id);
+CREATE INDEX IF NOT EXISTS idx_downstream_retrievals_run_startup ON downstream_retrievals(run_id, startup_identifier);
+CREATE INDEX IF NOT EXISTS idx_downstream_recommendations_run_startup ON downstream_recommendations(run_id, startup_identifier);
+CREATE INDEX IF NOT EXISTS idx_downstream_briefings_run_startup ON downstream_briefings(run_id, startup_identifier);

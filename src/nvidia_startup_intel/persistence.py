@@ -15,6 +15,10 @@ import shutil
 from typing import Any
 from uuid import uuid4
 
+from nvidia_startup_intel.briefing import executive_briefing_to_dict, human_review_briefing_to_dict
+from nvidia_startup_intel.nvidia_knowledge import nvidia_knowledge_retrieval_to_dict
+from nvidia_startup_intel.nvidia_recommendation import nvidia_recommendation_set_to_dict
+
 
 @dataclass(frozen=True)
 class PipelineRun:
@@ -23,6 +27,37 @@ class PipelineRun:
     raw_dir: Path
     processed_dir: Path
     created_at: str
+
+
+class JsonDownstreamArtifactStore:
+    """Persist downstream workflow artifacts in a run's processed directory."""
+
+    def __init__(self, run: PipelineRun) -> None:
+        self.run = run
+
+    def save_downstream_state(self, state: dict[str, Any]) -> None:
+        retrievals = tuple(state.get("retrievals", ()))
+        recommendation_set = state.get("recommendation_set")
+        executive_briefing = state.get("executive_briefing")
+        human_review_briefing = state.get("human_review_briefing")
+        startup_identifier = _downstream_startup_identifier(
+            recommendation_set=recommendation_set,
+            executive_briefing=executive_briefing,
+            human_review_briefing=human_review_briefing,
+        )
+
+        if retrievals:
+            save_downstream_retrievals(
+                self.run,
+                retrievals,
+                startup_identifier=startup_identifier,
+            )
+        if recommendation_set is not None:
+            save_downstream_recommendation_set(self.run, recommendation_set)
+        if executive_briefing is not None:
+            save_downstream_briefing(self.run, executive_briefing)
+        if human_review_briefing is not None:
+            save_downstream_briefing(self.run, human_review_briefing)
 
 
 def create_pipeline_run(
@@ -90,6 +125,40 @@ def save_ai_native_assessments(run: PipelineRun, assessments: Any) -> Path:
     return _write_json(run.processed_dir / "ai_native_assessments.json", assessments)
 
 
+def save_downstream_retrievals(
+    run: PipelineRun,
+    retrievals: Any,
+    *,
+    startup_identifier: str,
+) -> Path:
+    retrieval_items = tuple(retrievals)
+    corpus_version = _downstream_corpus_version(retrieval_items)
+    return _write_json(
+        run.processed_dir / "downstream_retrievals.json",
+        {
+            "run_id": run.run_id,
+            "startup_identifier": startup_identifier,
+            "corpus_version": corpus_version,
+            "items": tuple(nvidia_knowledge_retrieval_to_dict(retrieval) for retrieval in retrieval_items),
+        },
+    )
+
+
+def save_downstream_recommendation_set(run: PipelineRun, recommendation_set: Any) -> Path:
+    return _write_json(
+        run.processed_dir / "downstream_recommendation_set.json",
+        nvidia_recommendation_set_to_dict(recommendation_set),
+    )
+
+
+def save_downstream_briefing(run: PipelineRun, briefing: Any) -> Path:
+    if getattr(briefing, "schema_version", "") == "human_review_briefing.v1":
+        payload = human_review_briefing_to_dict(briefing)
+    else:
+        payload = executive_briefing_to_dict(briefing)
+    return _write_json(run.processed_dir / "downstream_briefing.json", payload)
+
+
 def load_collected_pages(run: PipelineRun) -> dict[str, Any]:
     """Load raw collected pages for extraction reprocessing."""
 
@@ -108,6 +177,25 @@ def _write_json(path: Path, payload: Any) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _downstream_startup_identifier(
+    *,
+    recommendation_set: Any,
+    executive_briefing: Any,
+    human_review_briefing: Any,
+) -> str:
+    for artifact in (recommendation_set, executive_briefing, human_review_briefing):
+        startup_identifier = getattr(artifact, "startup_identifier", None)
+        if startup_identifier:
+            return startup_identifier
+    return "unknown"
+
+
+def _downstream_corpus_version(retrievals: tuple[Any, ...]) -> str:
+    if not retrievals:
+        return "unknown"
+    return str(getattr(retrievals[0], "corpus_version", "unknown"))
 
 
 def _to_jsonable(value: Any) -> Any:
