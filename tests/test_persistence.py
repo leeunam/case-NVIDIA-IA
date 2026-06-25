@@ -1,4 +1,7 @@
 from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
 
 from nvidia_startup_intel.discovery import (
     RawDiscoveryResult,
@@ -93,3 +96,19 @@ def test_loads_raw_collected_pages_for_reprocessing_without_new_collection(tmp_p
     assert loaded_pages[0]["main_text"] == "Resumo: Plataforma de IA. Setor: fintech."
     assert not (run.raw_dir / "search_params.json").exists()
     assert not (run.processed_dir / "collected_pages.json").exists()
+
+
+def test_create_pipeline_run_cleans_partial_directory_on_failure(tmp_path, monkeypatch) -> None:
+    original_mkdir = Path.mkdir
+
+    def fail_processed_mkdir(self, *args, **kwargs):
+        if self.name == "processed":
+            raise OSError("cannot create processed dir")
+        return original_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", fail_processed_mkdir)
+
+    with pytest.raises(OSError, match="cannot create processed dir"):
+        create_pipeline_run(tmp_path, run_id="run-partial", created_at=CREATED_AT)
+
+    assert not (tmp_path / "run-partial").exists()

@@ -81,6 +81,84 @@ def test_extract_profile_infers_sector_and_ai_signals_when_labels_are_absent() -
     assert len(profile.ai_signals.evidences) == 2
 
 
+def test_labeled_field_scans_later_pages_after_unknown_match() -> None:
+    pages = (
+        CollectedPage(
+            url="https://startup.ai",
+            title="Startup AI",
+            main_text="Resumo: Startup brasileira de IA.",
+            collected_at=COLLECTED_AT,
+            status_code=200,
+        ),
+        CollectedPage(
+            url="https://startup.ai/produto",
+            title="Produto | Startup AI",
+            main_text="Produto: Plataforma de IA para atendimento.",
+            collected_at=COLLECTED_AT,
+            status_code=200,
+        ),
+    )
+
+    profile = extract_startup_profile(pages)
+
+    assert profile.product.value == "Plataforma de IA para atendimento"
+    assert profile.product.evidences[0].url == "https://startup.ai/produto"
+
+
+def test_company_name_fallback_is_inferred_without_evidence() -> None:
+    profile = extract_startup_profile((), fallback_company_name="Nome Descoberto")
+
+    assert profile.company_name.value == "Nome Descoberto"
+    assert profile.company_name.claim_source is ClaimSource.INFERRED
+    assert profile.company_name.evidences == ()
+
+
+def test_company_name_prefers_observed_title_over_fallback() -> None:
+    profile = extract_startup_profile(
+        (
+            CollectedPage(
+                url="https://neuralmind.ai",
+                title="NeuralMind | Inteligencia Artificial",
+                main_text="Resumo: IA para documentos.",
+                collected_at=COLLECTED_AT,
+                status_code=200,
+            ),
+        ),
+        fallback_company_name="10 startups brasileiras de IA para acompanhar",
+    )
+
+    assert profile.company_name.value == "NeuralMind"
+    assert profile.company_name.claim_source is ClaimSource.OBSERVED
+    assert profile.company_name.evidences[0].url == "https://neuralmind.ai"
+
+
+def test_official_site_without_collected_pages_is_inferred_without_evidence() -> None:
+    profile = extract_startup_profile((), official_site="https://startup.ai")
+
+    assert profile.official_site.value == "https://startup.ai"
+    assert profile.official_site.claim_source is ClaimSource.INFERRED
+    assert profile.official_site.evidences == ()
+
+
+def test_snippet_around_matches_accented_text_with_normalized_keyword() -> None:
+    profile = extract_startup_profile(
+        (
+            CollectedPage(
+                url="https://vision.ai",
+                title="Vision AI",
+                main_text=(
+                    "Contexto inicial sem termo relevante. " * 8
+                    + "A empresa usa visão computacional em inspeção industrial."
+                ),
+                collected_at=COLLECTED_AT,
+                status_code=200,
+            ),
+        )
+    )
+
+    assert "visão computacional" in profile.ai_signals.evidences[0].snippet
+
+
 def test_missing_fields_return_unknown_without_evidence() -> None:
     pages = (
         CollectedPage(

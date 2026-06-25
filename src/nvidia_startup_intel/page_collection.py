@@ -191,7 +191,7 @@ def collect_public_pages(
         main_text = normalize_whitespace(" ".join(parser.text_parts))
         pages.append(
             CollectedPage(
-                url=response.url,
+                url=normalize_url(response.url),
                 title=parser.title or UNKNOWN,
                 main_text=main_text or UNKNOWN,
                 collected_at=collected_at,
@@ -253,8 +253,10 @@ class _ReadableHTMLParser(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         if tag == "title":
             self._in_title = False
-        if tag in self._tag_stack:
-            self._tag_stack.remove(tag)
+        for index in range(len(self._tag_stack) - 1, -1, -1):
+            if self._tag_stack[index] == tag:
+                del self._tag_stack[index]
+                break
 
     def handle_data(self, data: str) -> None:
         text = data.strip()

@@ -1,5 +1,6 @@
 from nvidia_startup_intel.page_collection import FetchResponse
 from nvidia_startup_intel.pipeline import fixture_fetcher
+from nvidia_startup_intel.robots import RobotsCache
 from nvidia_startup_intel.search_execution import SearchProviderResult
 from nvidia_startup_intel.scraping_graph import ScrapingGraphRuntime, build_local_scraping_graph
 
@@ -12,6 +13,10 @@ class FakeSearchClient:
 
     def search(self, query: str, *, limit: int) -> tuple[SearchProviderResult, ...]:
         return self.results[:limit]
+
+
+def allow_robots() -> RobotsCache:
+    return RobotsCache(fetcher=lambda url: "User-agent: *\nAllow: /\n")
 
 
 def test_scraping_graph_runs_happy_path_with_fixture_data() -> None:
@@ -43,14 +48,17 @@ def test_scraping_graph_runs_happy_path_with_fixture_data() -> None:
                 )
             }
         ),
+        robots_cache=allow_robots(),
         per_term_limit=1,
         max_pages_per_candidate=1,
     )
     graph = build_local_scraping_graph(runtime)
 
     state = graph.invoke({"query": "startups AI-native do Brasil", "limit": 1})
+    second_state = graph.invoke({"query": "startups AI-native do Brasil", "limit": 1})
 
     assert state["next_action"] == "proceed_to_ai_native_evaluation"
+    assert second_state["next_action"] == "proceed_to_ai_native_evaluation"
     assert state["quality_summary"].ready_for_evaluation is True
     assert state["evidence_groups_by_profile"]
     assert len(runtime.checkpoints) == 8
