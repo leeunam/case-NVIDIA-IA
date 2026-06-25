@@ -84,6 +84,8 @@ Já existe walking skeleton implementado para:
 - persistência JSON/SQL;
 - runner local compatível com LangGraph;
 - contrato local de `NVIDIA Knowledge` com corpus fixture oficial e BM25 lexical;
+- contrato de embeddings com fake determinístico, busca vetorial local e retrieval híbrido reprodutível;
+- caminho opcional de persistência de embeddings em Postgres/pgvector;
 - `nvidia_recommendation.v1` para recomendação técnica citada, hipótese e bloqueio;
 - `executive_briefing.v1` determinístico para recommendation set suportado.
 
@@ -91,7 +93,7 @@ Ainda não está implementado:
 
 - `Human Review Briefing`;
 - workflow completo `ready_for_briefing` / `human_review_requested`;
-- busca vetorial, retrieval híbrido e pgvector;
+- validação de integração real com Postgres/pgvector fora do caminho local padrão;
 - recomendações de programa/Inception;
 - persistência downstream de knowledge, recommendations e briefings;
 - suíte ampla de regressão para scraping e assessment.
@@ -142,3 +144,15 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 ```
 
 Ruff e mypy ainda não estão configurados.
+
+## Validação Opcional Pgvector
+
+A persistência de embeddings em Postgres/pgvector é um caminho de integração, não uma dependência da suíte local padrão. Para validar quando Docker e Postgres estiverem disponíveis:
+
+```bash
+docker compose up -d postgres
+docker compose exec postgres psql -U nvidia_startup_intel -d nvidia_startup_intel -c "SELECT extname FROM pg_extension WHERE extname = 'vector';"
+docker compose exec postgres psql -U nvidia_startup_intel -d nvidia_startup_intel -c "\\d nvidia_chunk_embeddings"
+```
+
+O schema em `db/schema.sql` cria `CREATE EXTENSION IF NOT EXISTS vector`, persiste documentos, chunks e embeddings auditáveis, e usa busca exata por similaridade SQL. Índices HNSW/IVFFlat continuam fora até haver volume ou latência medidos que justifiquem a troca.

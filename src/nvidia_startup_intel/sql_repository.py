@@ -714,8 +714,81 @@ def _schema_statements(id_column_type: str) -> tuple[str, ...]:
     )
 
 
+def _pgvector_schema_statements(id_column_type: str) -> tuple[str, ...]:
+    return (
+        f"""
+        CREATE TABLE IF NOT EXISTS nvidia_knowledge_documents (
+            id {id_column_type},
+            corpus_version TEXT NOT NULL,
+            document_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            source_url TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            ingested_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            UNIQUE (corpus_version, document_id)
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS nvidia_knowledge_chunks (
+            id {id_column_type},
+            corpus_version TEXT NOT NULL,
+            chunk_id TEXT NOT NULL,
+            document_id TEXT NOT NULL,
+            chunk_index INTEGER NOT NULL,
+            topic TEXT NOT NULL,
+            text TEXT NOT NULL,
+            metadata_json TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            UNIQUE (corpus_version, chunk_id),
+            FOREIGN KEY (corpus_version, document_id)
+                REFERENCES nvidia_knowledge_documents(corpus_version, document_id)
+                ON DELETE CASCADE
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS nvidia_chunk_embeddings (
+            id {id_column_type},
+            corpus_version TEXT NOT NULL,
+            chunk_id TEXT NOT NULL,
+            embedding_provider TEXT NOT NULL,
+            embedding_model TEXT NOT NULL,
+            embedding_version TEXT NOT NULL,
+            vector_dimension INTEGER NOT NULL,
+            distance_metric TEXT NOT NULL,
+            index_parameters_json TEXT NOT NULL,
+            metadata_json TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            embedding vector NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CHECK (vector_dims(embedding) = vector_dimension),
+            UNIQUE (
+                corpus_version,
+                chunk_id,
+                embedding_provider,
+                embedding_model,
+                embedding_version,
+                vector_dimension
+            ),
+            FOREIGN KEY (corpus_version, chunk_id)
+                REFERENCES nvidia_knowledge_chunks(corpus_version, chunk_id)
+                ON DELETE CASCADE
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_nvidia_knowledge_documents_corpus ON nvidia_knowledge_documents(corpus_version)",
+        "CREATE INDEX IF NOT EXISTS idx_nvidia_knowledge_chunks_corpus_topic ON nvidia_knowledge_chunks(corpus_version, topic)",
+        "CREATE INDEX IF NOT EXISTS idx_nvidia_chunk_embeddings_lookup ON nvidia_chunk_embeddings(corpus_version, embedding_model, embedding_version, vector_dimension)",
+        "CREATE INDEX IF NOT EXISTS idx_nvidia_chunk_embeddings_chunk ON nvidia_chunk_embeddings(corpus_version, chunk_id)",
+    )
+
+
 SQLITE_SCHEMA_STATEMENTS = _schema_statements("INTEGER PRIMARY KEY AUTOINCREMENT")
-POSTGRES_SCHEMA_STATEMENTS = _schema_statements("BIGSERIAL PRIMARY KEY")
+POSTGRES_SCHEMA_STATEMENTS = (
+    "CREATE EXTENSION IF NOT EXISTS vector",
+    *_schema_statements("BIGSERIAL PRIMARY KEY"),
+    *_pgvector_schema_statements("BIGSERIAL PRIMARY KEY"),
+)
 
 
 def _dumps(value: Any) -> str:

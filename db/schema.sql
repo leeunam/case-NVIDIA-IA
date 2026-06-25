@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS vector;
+
 CREATE TABLE IF NOT EXISTS pipeline_runs (
     run_id TEXT PRIMARY KEY,
     created_at TEXT NOT NULL,
@@ -123,3 +125,65 @@ CREATE INDEX IF NOT EXISTS idx_ai_native_assessments_run_id ON ai_native_assessm
 CREATE INDEX IF NOT EXISTS idx_downstream_retrievals_run_startup ON downstream_retrievals(run_id, startup_identifier);
 CREATE INDEX IF NOT EXISTS idx_downstream_recommendations_run_startup ON downstream_recommendations(run_id, startup_identifier);
 CREATE INDEX IF NOT EXISTS idx_downstream_briefings_run_startup ON downstream_briefings(run_id, startup_identifier);
+
+CREATE TABLE IF NOT EXISTS nvidia_knowledge_documents (
+    id BIGSERIAL PRIMARY KEY,
+    corpus_version TEXT NOT NULL,
+    document_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    ingested_at TEXT NOT NULL,
+    metadata_json TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    UNIQUE (corpus_version, document_id)
+);
+
+CREATE TABLE IF NOT EXISTS nvidia_knowledge_chunks (
+    id BIGSERIAL PRIMARY KEY,
+    corpus_version TEXT NOT NULL,
+    chunk_id TEXT NOT NULL,
+    document_id TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    topic TEXT NOT NULL,
+    text TEXT NOT NULL,
+    metadata_json TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    UNIQUE (corpus_version, chunk_id),
+    FOREIGN KEY (corpus_version, document_id)
+        REFERENCES nvidia_knowledge_documents(corpus_version, document_id)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS nvidia_chunk_embeddings (
+    id BIGSERIAL PRIMARY KEY,
+    corpus_version TEXT NOT NULL,
+    chunk_id TEXT NOT NULL,
+    embedding_provider TEXT NOT NULL,
+    embedding_model TEXT NOT NULL,
+    embedding_version TEXT NOT NULL,
+    vector_dimension INTEGER NOT NULL,
+    distance_metric TEXT NOT NULL,
+    index_parameters_json TEXT NOT NULL,
+    metadata_json TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    embedding vector NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (vector_dims(embedding) = vector_dimension),
+    UNIQUE (
+        corpus_version,
+        chunk_id,
+        embedding_provider,
+        embedding_model,
+        embedding_version,
+        vector_dimension
+    ),
+    FOREIGN KEY (corpus_version, chunk_id)
+        REFERENCES nvidia_knowledge_chunks(corpus_version, chunk_id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_nvidia_knowledge_documents_corpus ON nvidia_knowledge_documents(corpus_version);
+CREATE INDEX IF NOT EXISTS idx_nvidia_knowledge_chunks_corpus_topic ON nvidia_knowledge_chunks(corpus_version, topic);
+CREATE INDEX IF NOT EXISTS idx_nvidia_chunk_embeddings_lookup ON nvidia_chunk_embeddings(corpus_version, embedding_model, embedding_version, vector_dimension);
+CREATE INDEX IF NOT EXISTS idx_nvidia_chunk_embeddings_chunk ON nvidia_chunk_embeddings(corpus_version, chunk_id);
