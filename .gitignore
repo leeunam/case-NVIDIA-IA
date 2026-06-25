@@ -1,5 +1,4 @@
 ### AL ###
-#Template for AL projects for Dynamics 365 Business Central
 #launch.json folder
 .vscode/
 #Cache folder
@@ -21,3 +20,39 @@ rad.json
 *.flf
 #Test results file
 TestResults.xml
+
+### Python ###
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+### Virtual environments ###
+.venv/
+venv/
+env/
+
+### Build/package artifacts ###
+build/
+dist/
+*.egg-info/
+
+### Local environment/secrets ###
+.env
+.env.*
+!.env.example
+
+### Local run outputs ###
+.tools/
+outputs/
+runs/
+tmp/
+postgres_data/
+pgdata/
+data/postgres/
+*.db
+*.sqlite
+*.sqlite3
