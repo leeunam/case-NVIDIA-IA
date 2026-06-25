@@ -49,6 +49,7 @@ class SearchParams:
     stage: StartupStage = StartupStage.UNKNOWN
     limit: int = 10
     source_priorities: tuple[str, ...] = field(default_factory=tuple)
+    use_default_sources: bool = True
 
 
 STATE_ALIASES = {
@@ -134,6 +135,11 @@ STAGE_ALIASES = {
 LOCATION_PREPOSITIONS = ("de", "do", "da", "dos", "das", "em", "no", "na", "nos", "nas")
 STATE_QUALIFIERS = ("estado", "uf")
 CITY_QUALIFIERS = ("cidade", "municipio")
+NON_REGION_CANDIDATE_PATTERNS = (
+    r"^(?:ia|ai)\b",
+    r"^inteligencia artificial\b",
+    r"^artificial intelligence\b",
+)
 
 
 def parse_search_params(
@@ -145,6 +151,9 @@ def parse_search_params(
     """Parse a free-text startup search request into structured parameters."""
 
     clean_query = " ".join(query.split())
+    if not clean_query:
+        raise ValueError("query must not be empty")
+
     normalized_query = normalize_text(clean_query)
 
     return SearchParams(
@@ -154,6 +163,7 @@ def parse_search_params(
         stage=_extract_stage(normalized_query),
         limit=_normalize_limit(limit),
         source_priorities=tuple(source_priorities or ()),
+        use_default_sources=source_priorities is None,
     )
 
 
@@ -326,8 +336,16 @@ def _extract_raw_match(raw_query: str, normalized_match: str) -> str:
 def _extract_unknown_region_candidate(raw_query: str, normalized_query: str) -> str:
     match = re.search(r"\b(?:de|do|da|em|no|na)\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s-]{1,40})", raw_query)
     if match:
-        return match.group(1).strip(" ,.;:")
+        candidate = match.group(1).strip(" ,.;:")
+        if _is_non_region_candidate(candidate):
+            return UNKNOWN
+        return candidate
 
     if normalized_query:
         return raw_query
     return UNKNOWN
+
+
+def _is_non_region_candidate(candidate: str) -> bool:
+    normalized_candidate = normalize_text(candidate)
+    return any(re.search(pattern, normalized_candidate) for pattern in NON_REGION_CANDIDATE_PATTERNS)

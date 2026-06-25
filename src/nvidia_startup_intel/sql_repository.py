@@ -9,6 +9,7 @@ and development can use Postgres through the Docker Compose service.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import UTC, datetime
 from enum import Enum
@@ -24,7 +25,7 @@ from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.discovery import CandidateStartup, RawDiscoveryResult
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
 from nvidia_startup_intel.page_collection import PageCollectionResult
-from nvidia_startup_intel.pipeline import ScrapingPipelineResult
+from nvidia_startup_intel.pipeline import ScrapingPipelineResult, candidate_result_key, profile_result_key
 from nvidia_startup_intel.search_params import SearchParams
 from nvidia_startup_intel.search_plan import SearchPlan
 from nvidia_startup_intel.startup_profile import StartupProfile
@@ -51,9 +52,12 @@ class SqlPipelineRepository:
     def __init__(self, connection: Any) -> None:
         self.connection = connection
         self._postgres = "psycopg" in type(connection).__module__
+        self._transaction_depth = 0
 
     def initialize_schema(self) -> None:
         statements = POSTGRES_SCHEMA_STATEMENTS if self._postgres else SQLITE_SCHEMA_STATEMENTS
+        if not self._postgres:
+            self.connection.execute("PRAGMA foreign_keys = ON")
         for statement in statements:
             self.connection.execute(statement)
         self.connection.commit()
@@ -71,7 +75,7 @@ class SqlPipelineRepository:
             "INSERT INTO pipeline_runs (run_id, created_at, search_params_json) VALUES (?, ?, ?)",
             (resolved_run_id, created, _dumps(search_params) if search_params is not None else None),
         )
-        self.connection.commit()
+        self._commit()
         return resolved_run_id
 
     def save_search_plan(self, run_id: str, plan: SearchPlan) -> None:
@@ -85,7 +89,7 @@ class SqlPipelineRepository:
                 """,
                 (run_id, item.priority, item.term, item.target_source, item.scope.value, _dumps(item)),
             )
-        self.connection.commit()
+        self._commit()
 
     def save_raw_discovery_results(self, run_id: str, results: Sequence[RawDiscoveryResult]) -> None:
         self._execute("DELETE FROM raw_discovery_results WHERE run_id = ?", (run_id,))
@@ -98,75 +102,105 @@ class SqlPipelineRepository:
                 """,
                 (run_id, position, result.title, result.url, result.source_name, _dumps(result)),
             )
-        self.connection.commit()
+        self._commit()
 
     def save_candidate_startups(self, run_id: str, candidates: Sequence[CandidateStartup]) -> None:
         self._execute("DELETE FROM candidate_startups WHERE run_id = ?", (run_id,))
         for candidate in candidates:
+            candidate_key = candidate_result_key(candidate)
             self._execute(
                 """
                 INSERT INTO candidate_startups
-                (run_id, name, normalized_name, primary_url, payload_json)
-                VALUES (?, ?, ?, ?, ?)
+                (run_id, candidate_key, name, normalized_name, primary_url, payload_json)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (run_id, candidate.name, candidate.normalized_name, candidate.primary_url, _dumps(candidate)),
+                (
+                    run_id,
+                    candidate_key,
+                    candidate.name,
+                    candidate.normalized_name,
+                    candidate.primary_url,
+                    _dumps(candidate),
+                ),
             )
-        self.connection.commit()
+        self._commit()
 
-    def save_collected_pages(self, run_id: str, results_by_candidate: Mapping[str, PageCollectionResult]) -> None:
+    def save_collected_pages(
+        self,
+        run_id: str,
+        results_by_candidate: Mapping[str, PageCollectionResult],
+        *,
+        candidate_keys: Mapping[str, str] | None = None,
+        candidate_names: Mapping[str, str] | None = None,
+    ) -> None:
         self._execute("DELETE FROM collected_pages WHERE run_id = ?", (run_id,))
-        for candidate_name, result in results_by_candidate.items():
+        for candidate_ref, result in results_by_candidate.items():
+            candidate_key = _lookup_key(candidate_keys, candidate_ref)
+            candidate_name = _lookup_key(candidate_names, candidate_key)
             for page in result.pages:
                 self._execute(
                     """
                     INSERT INTO collected_pages
-                    (run_id, candidate_name, url, status_code, payload_json, is_error)
-                    VALUES (?, ?, ?, ?, ?, 0)
+                    (run_id, candidate_key, candidate_name, url, status_code, payload_json, is_error)
+                    VALUES (?, ?, ?, ?, ?, ?, 0)
                     """,
-                    (run_id, candidate_name, page.url, page.status_code, _dumps(page)),
+                    (run_id, candidate_key, candidate_name, page.url, page.status_code, _dumps(page)),
                 )
             for error in result.errors:
                 self._execute(
                     """
                     INSERT INTO collected_pages
-                    (run_id, candidate_name, url, status_code, payload_json, is_error)
-                    VALUES (?, ?, ?, ?, ?, 1)
+                    (run_id, candidate_key, candidate_name, url, status_code, payload_json, is_error)
+                    VALUES (?, ?, ?, ?, ?, ?, 1)
                     """,
-                    (run_id, candidate_name, error.url, error.status_code, _dumps(error)),
+                    (run_id, candidate_key, candidate_name, error.url, error.status_code, _dumps(error)),
                 )
-        self.connection.commit()
+        self._commit()
 
     def save_startup_profiles(self, run_id: str, profiles: Sequence[StartupProfile]) -> None:
         self._execute("DELETE FROM startup_profiles WHERE run_id = ?", (run_id,))
         for profile in profiles:
+            profile_key = profile_result_key(profile)
             self._execute(
                 """
                 INSERT INTO startup_profiles
-                (run_id, company_name, schema_version, payload_json)
-                VALUES (?, ?, ?, ?)
+                (run_id, profile_key, company_name, schema_version, payload_json)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (run_id, profile.company_name.value, profile.schema_version, _dumps(profile)),
+                (run_id, profile_key, profile.company_name.value, profile.schema_version, _dumps(profile)),
             )
-        self.connection.commit()
+        self._commit()
 
     def save_field_evidences(
         self,
         run_id: str,
         evidences_by_profile: Mapping[str, Sequence[FieldEvidenceGroup]],
+        *,
+        profile_keys: Mapping[str, str] | None = None,
+        profile_names: Mapping[str, str] | None = None,
     ) -> None:
         self._execute("DELETE FROM field_evidences WHERE run_id = ?", (run_id,))
-        for company_name, groups in evidences_by_profile.items():
+        for profile_ref, groups in evidences_by_profile.items():
+            profile_key = _lookup_key(profile_keys, profile_ref)
+            company_name = _lookup_key(profile_names, profile_key)
             for group in groups:
                 for evidence in group.evidences:
                     self._execute(
                         """
                         INSERT INTO field_evidences
-                        (run_id, company_name, field_name, evidence_url, payload_json)
-                        VALUES (?, ?, ?, ?, ?)
+                        (run_id, profile_key, company_name, field_name, evidence_url, payload_json)
+                        VALUES (?, ?, ?, ?, ?, ?)
                         """,
-                        (run_id, company_name, group.field_name, evidence.url, _dumps({"group": group, "evidence": evidence})),
+                        (
+                            run_id,
+                            profile_key,
+                            company_name,
+                            group.field_name,
+                            evidence.url,
+                            _dumps({"group": group, "evidence": evidence}),
+                        ),
                     )
-        self.connection.commit()
+        self._commit()
 
     def save_collection_quality(self, run_id: str, summary: CollectionQualitySummary) -> None:
         self._execute("DELETE FROM collection_quality_summaries WHERE run_id = ?", (run_id,))
@@ -178,7 +212,7 @@ class SqlPipelineRepository:
             """,
             (run_id, int(summary.ready_for_evaluation), _dumps(summary)),
         )
-        self.connection.commit()
+        self._commit()
 
     def save_ai_native_assessments(
         self,
@@ -201,7 +235,7 @@ class SqlPipelineRepository:
                     _dumps(assessment),
                 ),
             )
-        self.connection.commit()
+        self._commit()
 
     def save_pipeline_result(
         self,
@@ -210,17 +244,29 @@ class SqlPipelineRepository:
         *,
         raw_discovery_results: Sequence[RawDiscoveryResult] = (),
     ) -> None:
-        self._execute(
-            "UPDATE pipeline_runs SET search_params_json = ? WHERE run_id = ?",
-            (_dumps(result.search_params), run_id),
-        )
-        self.save_search_plan(run_id, result.search_plan)
-        self.save_raw_discovery_results(run_id, raw_discovery_results)
-        self.save_candidate_startups(run_id, result.candidates)
-        self.save_collected_pages(run_id, result.collected_pages_by_candidate)
-        self.save_startup_profiles(run_id, result.profiles)
-        self.save_field_evidences(run_id, result.evidence_groups_by_profile)
-        self.save_collection_quality(run_id, result.quality_summary)
+        raw_results_to_save = tuple(raw_discovery_results) if raw_discovery_results else result.raw_results
+        candidate_names = {candidate_result_key(candidate): candidate.name for candidate in result.candidates}
+        profile_names = {profile_result_key(profile): profile.company_name.value for profile in result.profiles}
+        with self._transaction():
+            self._execute(
+                "UPDATE pipeline_runs SET search_params_json = ? WHERE run_id = ?",
+                (_dumps(result.search_params), run_id),
+            )
+            self.save_search_plan(run_id, result.search_plan)
+            self.save_raw_discovery_results(run_id, raw_results_to_save)
+            self.save_candidate_startups(run_id, result.candidates)
+            self.save_collected_pages(
+                run_id,
+                result.collected_pages_by_candidate,
+                candidate_names=candidate_names,
+            )
+            self.save_startup_profiles(run_id, result.profiles)
+            self.save_field_evidences(
+                run_id,
+                result.evidence_groups_by_profile,
+                profile_names=profile_names,
+            )
+            self.save_collection_quality(run_id, result.quality_summary)
 
     def load_run(self, run_id: str) -> StoredPipelineRun:
         run_row = self._execute(
@@ -234,27 +280,102 @@ class SqlPipelineRepository:
             run_id=run_id,
             created_at=run_row[0],
             search_params=_loads_optional(run_row[1]),
-            search_plan_items=self._payloads("search_plan_items", run_id, order_by="priority"),
-            raw_discovery_results=self._payloads("raw_discovery_results", run_id, order_by="position"),
-            candidate_startups=self._payloads("candidate_startups", run_id, order_by="name"),
-            collected_pages=self._payloads("collected_pages", run_id, order_by="id"),
-            startup_profiles=self._payloads("startup_profiles", run_id, order_by="company_name"),
-            field_evidences=self._payloads("field_evidences", run_id, order_by="id"),
-            collection_quality_summaries=self._payloads("collection_quality_summaries", run_id, order_by="id"),
-            ai_native_assessments=self._payloads("ai_native_assessments", run_id, order_by="company_name"),
+            search_plan_items=self._payloads(
+                "search_plan_items",
+                run_id,
+                columns=("priority", "term", "target_source", "scope"),
+                order_by="priority",
+            ),
+            raw_discovery_results=self._payloads(
+                "raw_discovery_results",
+                run_id,
+                columns=("position", "title", "url", "source_name"),
+                order_by="position",
+            ),
+            candidate_startups=self._payloads(
+                "candidate_startups",
+                run_id,
+                columns=("candidate_key", "name", "normalized_name", "primary_url"),
+                order_by="name",
+            ),
+            collected_pages=self._payloads(
+                "collected_pages",
+                run_id,
+                columns=("candidate_key", "candidate_name", "url", "status_code", "is_error"),
+                order_by="id",
+            ),
+            startup_profiles=self._payloads(
+                "startup_profiles",
+                run_id,
+                columns=("profile_key", "company_name", "schema_version"),
+                order_by="company_name",
+            ),
+            field_evidences=self._payloads(
+                "field_evidences",
+                run_id,
+                columns=("profile_key", "company_name", "field_name", "evidence_url"),
+                order_by="id",
+            ),
+            collection_quality_summaries=self._payloads(
+                "collection_quality_summaries",
+                run_id,
+                columns=("ready_for_evaluation",),
+                order_by="id",
+            ),
+            ai_native_assessments=self._payloads(
+                "ai_native_assessments",
+                run_id,
+                columns=("company_name", "classification", "ready_for_recommendation"),
+                order_by="company_name",
+            ),
         )
 
-    def _payloads(self, table: str, run_id: str, *, order_by: str) -> tuple[dict[str, Any], ...]:
+    def _payloads(
+        self,
+        table: str,
+        run_id: str,
+        *,
+        columns: tuple[str, ...],
+        order_by: str,
+    ) -> tuple[dict[str, Any], ...]:
+        selected_columns = ", ".join((*columns, "payload_json"))
         rows = self._execute(
-            f"SELECT payload_json FROM {table} WHERE run_id = ? ORDER BY {order_by}",
+            f"SELECT {selected_columns} FROM {table} WHERE run_id = ? ORDER BY {order_by}",
             (run_id,),
         ).fetchall()
-        return tuple(json.loads(row[0]) for row in rows)
+        payload_index = len(columns)
+        loaded_payloads: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row[payload_index])
+            for index, column in enumerate(columns):
+                payload[column] = _column_value(column, row[index])
+            loaded_payloads.append(payload)
+        return tuple(loaded_payloads)
 
     def _execute(self, sql: str, params: tuple[Any, ...]) -> Any:
         if self._postgres:
             sql = sql.replace("?", "%s")
         return self.connection.execute(sql, params)
+
+    def _commit(self) -> None:
+        if self._transaction_depth == 0:
+            self.connection.commit()
+
+    @contextmanager
+    def _transaction(self) -> Any:
+        nested = self._transaction_depth > 0
+        self._transaction_depth += 1
+        try:
+            yield
+        except Exception:
+            if not nested:
+                self.connection.rollback()
+            raise
+        else:
+            if not nested:
+                self.connection.commit()
+        finally:
+            self._transaction_depth -= 1
 
 
 def sqlite_repository(path: str | Path = ":memory:") -> SqlPipelineRepository:
@@ -280,100 +401,116 @@ def postgres_repository_from_env() -> SqlPipelineRepository:
     return repository
 
 
-SQLITE_SCHEMA_STATEMENTS = (
-    """
-    CREATE TABLE IF NOT EXISTS pipeline_runs (
-        run_id TEXT PRIMARY KEY,
-        created_at TEXT NOT NULL,
-        search_params_json TEXT
+def _schema_statements(id_column_type: str) -> tuple[str, ...]:
+    run_fk = "REFERENCES pipeline_runs(run_id) ON DELETE CASCADE"
+    return (
+        """
+        CREATE TABLE IF NOT EXISTS pipeline_runs (
+            run_id TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            search_params_json TEXT
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS search_plan_items (
+            id {id_column_type},
+            run_id TEXT NOT NULL {run_fk},
+            priority INTEGER NOT NULL,
+            term TEXT NOT NULL,
+            target_source TEXT NOT NULL,
+            scope TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS raw_discovery_results (
+            id {id_column_type},
+            run_id TEXT NOT NULL {run_fk},
+            position INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            url TEXT NOT NULL,
+            source_name TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS candidate_startups (
+            id {id_column_type},
+            run_id TEXT NOT NULL {run_fk},
+            candidate_key TEXT NOT NULL,
+            name TEXT NOT NULL,
+            normalized_name TEXT NOT NULL,
+            primary_url TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS collected_pages (
+            id {id_column_type},
+            run_id TEXT NOT NULL {run_fk},
+            candidate_key TEXT NOT NULL,
+            candidate_name TEXT NOT NULL,
+            url TEXT NOT NULL,
+            status_code INTEGER,
+            is_error INTEGER NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS startup_profiles (
+            id {id_column_type},
+            run_id TEXT NOT NULL {run_fk},
+            profile_key TEXT NOT NULL,
+            company_name TEXT NOT NULL,
+            schema_version TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS field_evidences (
+            id {id_column_type},
+            run_id TEXT NOT NULL {run_fk},
+            profile_key TEXT NOT NULL,
+            company_name TEXT NOT NULL,
+            field_name TEXT NOT NULL,
+            evidence_url TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS collection_quality_summaries (
+            id {id_column_type},
+            run_id TEXT NOT NULL {run_fk},
+            ready_for_evaluation INTEGER NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS ai_native_assessments (
+            id {id_column_type},
+            run_id TEXT NOT NULL {run_fk},
+            company_name TEXT NOT NULL,
+            classification TEXT NOT NULL,
+            ready_for_recommendation INTEGER NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_search_plan_items_run_id ON search_plan_items(run_id)",
+        "CREATE INDEX IF NOT EXISTS idx_raw_discovery_results_run_id ON raw_discovery_results(run_id)",
+        "CREATE INDEX IF NOT EXISTS idx_candidate_startups_run_id ON candidate_startups(run_id)",
+        "CREATE INDEX IF NOT EXISTS idx_collected_pages_run_id ON collected_pages(run_id)",
+        "CREATE INDEX IF NOT EXISTS idx_collected_pages_run_candidate_key ON collected_pages(run_id, candidate_key)",
+        "CREATE INDEX IF NOT EXISTS idx_startup_profiles_run_id ON startup_profiles(run_id)",
+        "CREATE INDEX IF NOT EXISTS idx_startup_profiles_run_profile_key ON startup_profiles(run_id, profile_key)",
+        "CREATE INDEX IF NOT EXISTS idx_field_evidences_run_id ON field_evidences(run_id)",
+        "CREATE INDEX IF NOT EXISTS idx_field_evidences_run_profile_key ON field_evidences(run_id, profile_key)",
+        "CREATE INDEX IF NOT EXISTS idx_collection_quality_summaries_run_id ON collection_quality_summaries(run_id)",
+        "CREATE INDEX IF NOT EXISTS idx_ai_native_assessments_run_id ON ai_native_assessments(run_id)",
     )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS search_plan_items (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        run_id TEXT NOT NULL,
-        priority INTEGER NOT NULL,
-        term TEXT NOT NULL,
-        target_source TEXT NOT NULL,
-        scope TEXT NOT NULL,
-        payload_json TEXT NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS raw_discovery_results (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        run_id TEXT NOT NULL,
-        position INTEGER NOT NULL,
-        title TEXT NOT NULL,
-        url TEXT NOT NULL,
-        source_name TEXT NOT NULL,
-        payload_json TEXT NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS candidate_startups (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        run_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        normalized_name TEXT NOT NULL,
-        primary_url TEXT NOT NULL,
-        payload_json TEXT NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS collected_pages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        run_id TEXT NOT NULL,
-        candidate_name TEXT NOT NULL,
-        url TEXT NOT NULL,
-        status_code INTEGER,
-        is_error INTEGER NOT NULL,
-        payload_json TEXT NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS startup_profiles (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        run_id TEXT NOT NULL,
-        company_name TEXT NOT NULL,
-        schema_version TEXT NOT NULL,
-        payload_json TEXT NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS field_evidences (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        run_id TEXT NOT NULL,
-        company_name TEXT NOT NULL,
-        field_name TEXT NOT NULL,
-        evidence_url TEXT NOT NULL,
-        payload_json TEXT NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS collection_quality_summaries (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        run_id TEXT NOT NULL,
-        ready_for_evaluation INTEGER NOT NULL,
-        payload_json TEXT NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS ai_native_assessments (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        run_id TEXT NOT NULL,
-        company_name TEXT NOT NULL,
-        classification TEXT NOT NULL,
-        ready_for_recommendation INTEGER NOT NULL,
-        payload_json TEXT NOT NULL
-    )
-    """,
-)
 
-POSTGRES_SCHEMA_STATEMENTS = tuple(
-    statement.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "BIGSERIAL PRIMARY KEY")
-    for statement in SQLITE_SCHEMA_STATEMENTS
-)
+
+SQLITE_SCHEMA_STATEMENTS = _schema_statements("INTEGER PRIMARY KEY AUTOINCREMENT")
+POSTGRES_SCHEMA_STATEMENTS = _schema_statements("BIGSERIAL PRIMARY KEY")
 
 
 def _dumps(value: Any) -> str:
@@ -384,6 +521,18 @@ def _loads_optional(value: str | None) -> dict[str, Any] | None:
     if value is None:
         return None
     return json.loads(value)
+
+
+def _column_value(column: str, value: Any) -> Any:
+    if column in {"is_error", "ready_for_evaluation", "ready_for_recommendation"}:
+        return bool(value)
+    return value
+
+
+def _lookup_key(keys: Mapping[str, str] | None, name: str) -> str:
+    if keys is None:
+        return name
+    return keys.get(name, name)
 
 
 def _to_jsonable(value: Any) -> Any:

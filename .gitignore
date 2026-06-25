@@ -46,6 +46,7 @@ dist/
 !.env.example
 
 ### Local run outputs ###
+.tools/
 outputs/
 runs/
 tmp/

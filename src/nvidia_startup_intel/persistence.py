@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from enum import Enum
 import json
 from pathlib import Path
+import shutil
 from typing import Any
 from uuid import uuid4
 
@@ -38,18 +39,23 @@ def create_pipeline_run(
     raw_dir = root_dir / "raw"
     processed_dir = root_dir / "processed"
 
-    raw_dir.mkdir(parents=True, exist_ok=False)
-    processed_dir.mkdir(parents=True, exist_ok=False)
+    root_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        raw_dir.mkdir()
+        processed_dir.mkdir()
 
-    run = PipelineRun(
-        run_id=resolved_run_id,
-        root_dir=root_dir,
-        raw_dir=raw_dir,
-        processed_dir=processed_dir,
-        created_at=_format_time(created),
-    )
-    _write_json(root_dir / "manifest.json", {"run_id": run.run_id, "created_at": run.created_at})
-    return run
+        run = PipelineRun(
+            run_id=resolved_run_id,
+            root_dir=root_dir,
+            raw_dir=raw_dir,
+            processed_dir=processed_dir,
+            created_at=_format_time(created),
+        )
+        _write_json(root_dir / "manifest.json", {"run_id": run.run_id, "created_at": run.created_at})
+        return run
+    except Exception:
+        shutil.rmtree(root_dir, ignore_errors=True)
+        raise
 
 
 def save_search_params(run: PipelineRun, params: Any) -> Path:

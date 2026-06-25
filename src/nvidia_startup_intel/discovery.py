@@ -8,11 +8,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+import re
 from urllib.parse import urlparse
 
 from nvidia_startup_intel.normalization import (
     normalize_domain,
     normalize_startup_name,
+    normalize_text,
+    normalize_url,
     origin_url,
 )
 from nvidia_startup_intel.search_params import UNKNOWN
@@ -92,6 +95,25 @@ PERSONAL_PROFILE_DOMAINS = {
     "x.com",
 }
 
+ARTICLE_OR_LIST_TITLE_PATTERNS = (
+    r"^\d+\b",
+    r"\b\d+\s+startups?\b",
+    r"\bstartups?\s+(?:brasileiras?|de ia|para acompanhar|promissoras?)\b",
+    r"\b(?:lista|ranking|melhores|conheca|top)\b",
+    r"\bpara acompanhar\b",
+)
+
+TITLE_GENERIC_SEGMENTS = {
+    "artificial intelligence",
+    "blog",
+    "home",
+    "ia",
+    "inicio",
+    "inteligencia artificial",
+    "produtos",
+    "sobre",
+}
+
 
 def discover_candidate_startups(
     results: list[RawDiscoveryResult] | tuple[RawDiscoveryResult, ...],
@@ -163,16 +185,23 @@ def normalize_company_name(name: str) -> str:
 
 
 def _candidate_name(result: RawDiscoveryResult, source_type: DiscoverySourceType) -> str:
-    if result.discovered_name != UNKNOWN and result.discovered_name.strip():
-        return result.discovered_name.strip()
+    discovered_name = _clean_discovered_name(result.discovered_name)
     if source_type is DiscoverySourceType.COMPANY:
-        return _name_from_domain(result.url)
+        domain_name = _name_from_domain(result.url)
+        if _matches_company_domain(discovered_name, domain_name):
+            return discovered_name
+        return domain_name
+    if source_type in {DiscoverySourceType.DIRECTORY, DiscoverySourceType.NEWS}:
+        if _is_plausible_discovered_name(discovered_name):
+            return discovered_name
     return UNKNOWN
 
 
 def _primary_url(url: str, source_type: DiscoverySourceType) -> str:
     if source_type is DiscoverySourceType.COMPANY:
         return origin_url(url)
+    if source_type in {DiscoverySourceType.DIRECTORY, DiscoverySourceType.NEWS}:
+        return normalize_url(url)
     return UNKNOWN
 
 
@@ -192,3 +221,46 @@ def _name_from_domain(url: str) -> str:
     if domain == UNKNOWN:
         return UNKNOWN
     return domain.split(".")[0].replace("-", " ").title()
+
+
+def _clean_discovered_name(discovered_name: str) -> str:
+    name = discovered_name.strip()
+    if not name or name == UNKNOWN:
+        return UNKNOWN
+
+    segments = [
+        segment.strip(" \t\n\r,.;:")
+        for segment in re.split(r"\s+(?:\||-|::)\s+", name)
+        if segment.strip(" \t\n\r,.;:")
+    ]
+    for segment in segments:
+        if normalize_text(segment) not in TITLE_GENERIC_SEGMENTS:
+            return segment
+    return segments[0] if segments else UNKNOWN
+
+
+def _matches_company_domain(discovered_name: str, domain_name: str) -> bool:
+    if discovered_name == UNKNOWN or domain_name == UNKNOWN:
+        return False
+    discovered_key = normalize_startup_name(discovered_name)
+    domain_key = normalize_startup_name(domain_name)
+    compact_discovered_key = discovered_key.replace(" ", "")
+    compact_domain_key = domain_key.replace(" ", "")
+    return (
+        discovered_key == domain_key
+        or discovered_key.startswith(f"{domain_key} ")
+        or compact_discovered_key == compact_domain_key
+        or compact_discovered_key.startswith(compact_domain_key)
+    )
+
+
+def _is_plausible_discovered_name(discovered_name: str) -> bool:
+    if discovered_name == UNKNOWN:
+        return False
+
+    normalized = normalize_text(discovered_name)
+    if any(re.search(pattern, normalized) for pattern in ARTICLE_OR_LIST_TITLE_PATTERNS):
+        return False
+    if len(normalized.split()) > 7:
+        return False
+    return normalize_startup_name(discovered_name) != UNKNOWN
