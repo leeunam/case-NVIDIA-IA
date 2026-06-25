@@ -273,7 +273,8 @@ def _supported_recommendation(
             f"matched_gap_type:{gap.gap_type}",
             "has_startup_gap_evidence",
             "has_official_nvidia_citation",
-            "highest_retrieval_score_for_gap",
+            "ranked_by_recommendation_score",
+            "top_recommendation_for_gap" if rank == 1 else "alternative_recommendation_for_gap",
             *extra_selection_reasons,
         ),
     )
@@ -298,7 +299,7 @@ def _hypothesis_recommendation(
         rank=0,
         gap=gap,
         nvidia_technology=technology,
-        technical_rationale=f"The {gap.gap_type} gap is plausible, but NVIDIA citation support is insufficient.",
+        technical_rationale=_hypothesis_technical_rationale(gap, reasons),
         commercial_rationale="Human validation is required before this can become a supported recommendation.",
         complexity=_complexity(gap),
         nvidia_opportunity_priority="human_review",
@@ -311,6 +312,22 @@ def _hypothesis_recommendation(
             *reasons,
         ),
     )
+
+
+def _hypothesis_technical_rationale(gap: TechnicalGap, reasons: tuple[str, ...]) -> str:
+    if "low_gap_confidence" in reasons:
+        return (
+            f"The {gap.gap_type} gap has startup evidence and possible NVIDIA citation support, "
+            "but gap confidence is below the supported recommendation threshold."
+        )
+    if "gap_type_not_covered_by_recommendation_rules" in reasons:
+        return (
+            f"The {gap.gap_type} gap is plausible, but it is not covered by "
+            "deterministic recommendation rules in this slice."
+        )
+    if "missing_official_nvidia_citation" in reasons:
+        return f"The {gap.gap_type} gap is plausible, but NVIDIA citation support is insufficient."
+    return f"The {gap.gap_type} gap is plausible, but human validation is required before recommendation."
 
 
 def _blocked_recommendation(

@@ -177,7 +177,8 @@ class NVIDIARecommendationTests(unittest.TestCase):
                 "matched_gap_type:model_serving",
                 "has_startup_gap_evidence",
                 "has_official_nvidia_citation",
-                "highest_retrieval_score_for_gap",
+                "ranked_by_recommendation_score",
+                "top_recommendation_for_gap",
             ),
         )
         self.assertEqual(recommendation_set.top_recommendations_by_gap, (recommendation,))
@@ -269,6 +270,8 @@ class NVIDIARecommendationTests(unittest.TestCase):
         self.assertEqual(hypothesis.state, "hypothesis")
         self.assertEqual(hypothesis.gap.gap_type, "model_serving")
         self.assertEqual(hypothesis.nvidia_citations[0].document_id, "nvidia-nim-developers")
+        self.assertIn("confidence is below", hypothesis.technical_rationale)
+        self.assertNotIn("citation support is insufficient", hypothesis.technical_rationale)
         self.assertIn("low_gap_confidence", hypothesis.selection_reasons)
 
     def test_close_alternative_is_preserved_without_displacing_top_recommendation(self) -> None:
@@ -308,6 +311,8 @@ class NVIDIARecommendationTests(unittest.TestCase):
         self.assertEqual(alternative.nvidia_citations[0].document_id, "nvidia-triton-inference")
         self.assertEqual(alternative.gap.gap_type, "model_serving")
         self.assertEqual(alternative.rank, 2)
+        self.assertIn("ranked_by_recommendation_score", alternative.selection_reasons)
+        self.assertNotIn("highest_retrieval_score_for_gap", alternative.selection_reasons)
         self.assertIn("close_alternative_for_gap", alternative.selection_reasons)
 
     def test_uncovered_gap_type_becomes_hypothesis_even_with_official_citation(self) -> None:
@@ -340,6 +345,8 @@ class NVIDIARecommendationTests(unittest.TestCase):
         hypothesis = recommendation_set.hypotheses[0]
         self.assertEqual(hypothesis.gap.gap_type, "voice_ai")
         self.assertEqual(hypothesis.nvidia_citations[0].document_id, "nvidia-riva")
+        self.assertIn("not covered by deterministic recommendation rules", hypothesis.technical_rationale)
+        self.assertNotIn("citation support is insufficient", hypothesis.technical_rationale)
         self.assertIn("gap_type_not_covered_by_recommendation_rules", hypothesis.selection_reasons)
 
     def test_unknown_gap_produces_no_recommendation_candidate(self) -> None:
