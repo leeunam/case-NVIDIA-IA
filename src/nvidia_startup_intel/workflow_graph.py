@@ -20,10 +20,13 @@ from nvidia_startup_intel.briefing import (
 )
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
+from nvidia_startup_intel.framework_adapters import (
+    LocalBM25NVIDIAKnowledgeRetriever,
+    NVIDIAKnowledgeRetriever,
+)
 from nvidia_startup_intel.nvidia_knowledge import (
     NVIDIAKnowledgeCorpus,
     NVIDIAKnowledgeRetrieval,
-    retrieve_nvidia_knowledge_by_gap,
 )
 from nvidia_startup_intel.nvidia_recommendation import (
     NVIDIARecommendationSet,
@@ -73,6 +76,7 @@ class DownstreamArtifactStore(Protocol):
 class DownstreamWorkflowRuntime:
     corpus: NVIDIAKnowledgeCorpus | None = None
     retrievals: tuple[NVIDIAKnowledgeRetrieval, ...] = ()
+    knowledge_retriever: NVIDIAKnowledgeRetriever | None = None
     artifact_store: DownstreamArtifactStore | None = None
     checkpoints: list[DownstreamWorkflowState] = field(default_factory=list)
 
@@ -143,7 +147,10 @@ def retrieve_nvidia_knowledge_node(
         return _merge(state, retrievals=runtime.retrievals)
 
     corpus = state.get("corpus") or runtime.corpus
-    if corpus is None:
+    retriever = runtime.knowledge_retriever
+    if retriever is None and corpus is not None:
+        retriever = LocalBM25NVIDIAKnowledgeRetriever(corpus)
+    if retriever is None:
         return _merge(
             _append_error(
                 state,
@@ -163,11 +170,9 @@ def retrieve_nvidia_knowledge_node(
             if gap.gap_type == UNKNOWN:
                 continue
             retrievals.append(
-                retrieve_nvidia_knowledge_by_gap(
-                    corpus,
+                retriever.retrieve_for_gap(
                     run_id=state.get("run_id", assessment.run_id),
-                    gap_type=gap.gap_type,
-                    description=gap.description,
+                    gap=gap,
                     startup_signals=_startup_signals(profile),
                     top_k=1,
                 )
