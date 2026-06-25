@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields, is_dataclass
 import re
+from urllib.parse import urlparse
 
 from nvidia_startup_intel.ai_native_assessment import AINativeAssessment, TechnicalGap
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
@@ -25,6 +26,16 @@ from nvidia_startup_intel.startup_profile import FieldEvidence, StartupProfile
 
 
 SCHEMA_VERSION = "nvidia_recommendation.v1"
+MIN_SUPPORTED_GAP_CONFIDENCE = 0.60
+CLOSE_ALTERNATIVE_RELATIVE_DELTA = 0.15
+SUPPORTED_TECHNICAL_GAP_TYPES = frozenset(
+    {
+        "model_serving",
+        "llm_customization",
+        "data_acceleration",
+        "computer_vision",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -86,7 +97,8 @@ def build_nvidia_recommendations(
         assessment=assessment,
         evidence_groups=evidence_groups,
     )
-    supported: list[NVIDIATechnicalRecommendation] = []
+    supported_candidates: list[tuple[float, NVIDIATechnicalRecommendation]] = []
+    alternative_candidates: list[tuple[float, NVIDIATechnicalRecommendation]] = []
     hypotheses: list[NVIDIATechnicalRecommendation] = []
     blocked: list[NVIDIATechnicalRecommendation] = []
 
@@ -110,6 +122,19 @@ def build_nvidia_recommendations(
             )
             continue
 
+        if gap.gap_type not in SUPPORTED_TECHNICAL_GAP_TYPES:
+            hypotheses.append(
+                _hypothesis_recommendation(
+                    run_id=assessment.run_id,
+                    startup_identifier=startup_identifier,
+                    gap=gap,
+                    retrieval=retrieval,
+                    startup_evidences=startup_evidences,
+                    reasons=("gap_type_not_covered_by_recommendation_rules",),
+                )
+            )
+            continue
+
         if retrieval is None or not summarize_nvidia_retrieval_quality(retrieval).has_sufficient_citation:
             hypotheses.append(
                 _hypothesis_recommendation(
@@ -122,17 +147,67 @@ def build_nvidia_recommendations(
             )
             continue
 
-        supported.append(
-            _supported_recommendation(
+        if gap.confidence < MIN_SUPPORTED_GAP_CONFIDENCE:
+            hypotheses.append(
+                _hypothesis_recommendation(
+                    run_id=assessment.run_id,
+                    startup_identifier=startup_identifier,
+                    gap=gap,
+                    retrieval=retrieval,
+                    startup_evidences=startup_evidences,
+                    reasons=("low_gap_confidence",),
+                )
+            )
+            continue
+
+        ranked_results = _rank_results_for_gap(
+            gap=gap,
+            retrieval=retrieval,
+            assessment_confidence=assessment.confidence,
+        )
+        recommendation = _supported_recommendation(
+            run_id=assessment.run_id,
+            startup_identifier=startup_identifier,
+            gap=gap,
+            result=ranked_results[0],
+            startup_evidences=startup_evidences,
+            rank=1,
+        )
+        supported_candidates.append(
+            (
+                _recommendation_score(
+                    gap=gap,
+                    result=ranked_results[0],
+                    assessment_confidence=assessment.confidence,
+                ),
+                recommendation,
+            )
+        )
+        for alternative_rank, alternative_result in enumerate(ranked_results[1:], start=2):
+            if not _is_close_alternative(ranked_results[0], alternative_result):
+                continue
+            alternative = _supported_recommendation(
                 run_id=assessment.run_id,
                 startup_identifier=startup_identifier,
                 gap=gap,
-                retrieval=retrieval,
+                result=alternative_result,
                 startup_evidences=startup_evidences,
-                rank=_next_rank_for_gap(gap.gap_type, supported),
+                rank=alternative_rank,
+                extra_selection_reasons=("close_alternative_for_gap",),
             )
-        )
+            alternative_candidates.append(
+                (
+                    _recommendation_score(
+                        gap=gap,
+                        result=alternative_result,
+                        assessment_confidence=assessment.confidence,
+                    ),
+                    alternative,
+                )
+            )
 
+    supported = _rank_supported_recommendations(supported_candidates)
+    alternatives = tuple(_rank_supported_recommendations(alternative_candidates))
     top_recommendations = _top_recommendations_by_gap(tuple(supported))
     final_priority = _final_priority(tuple(supported), tuple(hypotheses), tuple(blocked))
     next_action = _next_action(final_priority, tuple(supported), tuple(hypotheses), tuple(blocked))
@@ -146,7 +221,7 @@ def build_nvidia_recommendations(
         technical_recommendations=tuple(supported),
         program_recommendations=(),
         top_recommendations_by_gap=top_recommendations,
-        alternatives=(),
+        alternatives=alternatives,
         hypotheses=tuple(hypotheses),
         blocked_recommendations=tuple(blocked),
         final_nvidia_opportunity_priority=final_priority,
@@ -169,11 +244,11 @@ def _supported_recommendation(
     run_id: str,
     startup_identifier: str,
     gap: TechnicalGap,
-    retrieval: NVIDIAKnowledgeRetrieval,
+    result: RetrievedNVIDIAKnowledge,
     startup_evidences: tuple[FieldEvidence, ...],
     rank: int,
+    extra_selection_reasons: tuple[str, ...] = (),
 ) -> NVIDIATechnicalRecommendation:
-    result = retrieval.results[0]
     citation = result.citation
     priority = _supported_priority(gap)
     return NVIDIATechnicalRecommendation(
@@ -199,6 +274,7 @@ def _supported_recommendation(
             "has_startup_gap_evidence",
             "has_official_nvidia_citation",
             "highest_retrieval_score_for_gap",
+            *extra_selection_reasons,
         ),
     )
 
@@ -210,6 +286,7 @@ def _hypothesis_recommendation(
     gap: TechnicalGap,
     retrieval: NVIDIAKnowledgeRetrieval | None,
     startup_evidences: tuple[FieldEvidence, ...],
+    reasons: tuple[str, ...] = ("missing_official_nvidia_citation",),
 ) -> NVIDIATechnicalRecommendation:
     result = _top_result(retrieval)
     citations = (result.citation,) if result is not None else ()
@@ -231,7 +308,7 @@ def _hypothesis_recommendation(
         selection_reasons=(
             f"matched_gap_type:{gap.gap_type}",
             "has_startup_gap_evidence",
-            "missing_official_nvidia_citation",
+            *reasons,
         ),
     )
 
@@ -306,6 +383,96 @@ def _top_recommendations_by_gap(
     return tuple(top_by_gap[gap_type] for gap_type in sorted(top_by_gap))
 
 
+def _rank_supported_recommendations(
+    candidates: list[tuple[float, NVIDIATechnicalRecommendation]],
+) -> list[NVIDIATechnicalRecommendation]:
+    return [
+        recommendation
+        for _, recommendation in sorted(
+            candidates,
+            key=lambda item: (
+                -item[0],
+                item[1].gap.gap_type,
+                item[1].nvidia_citations[0].document_id if item[1].nvidia_citations else UNKNOWN,
+                item[1].nvidia_citations[0].chunk_index if item[1].nvidia_citations else 0,
+            ),
+        )
+    ]
+
+
+def _rank_results_for_gap(
+    *,
+    gap: TechnicalGap,
+    retrieval: NVIDIAKnowledgeRetrieval,
+    assessment_confidence: float,
+) -> tuple[RetrievedNVIDIAKnowledge, ...]:
+    official_results = tuple(
+        result for result in retrieval.results if _is_official_nvidia_url(result.citation.source_url)
+    )
+    topic_matches = tuple(result for result in official_results if result.chunk.topic == gap.gap_type)
+    candidates = topic_matches or official_results
+    return tuple(
+        sorted(
+            candidates,
+            key=lambda result: (
+                -_recommendation_score(
+                    gap=gap,
+                    result=result,
+                    assessment_confidence=assessment_confidence,
+                ),
+                result.citation.document_id,
+                result.citation.chunk_index,
+            ),
+        )
+    )
+
+
+def _is_close_alternative(
+    top_result: RetrievedNVIDIAKnowledge,
+    candidate_result: RetrievedNVIDIAKnowledge,
+) -> bool:
+    baseline = max(abs(top_result.score), 1.0)
+    return (top_result.score - candidate_result.score) / baseline <= CLOSE_ALTERNATIVE_RELATIVE_DELTA
+
+
+def _recommendation_score(
+    *,
+    gap: TechnicalGap,
+    result: RetrievedNVIDIAKnowledge,
+    assessment_confidence: float,
+) -> float:
+    severity = _severity_score(gap.severity)
+    source_quality = _source_quality_score(result.citation.source_type)
+    retrieval_score = min(max(result.score, 0.0), 10.0) / 10.0
+    confidence = (gap.confidence + assessment_confidence) / 2
+    return round((severity * 100) + (confidence * 10) + (source_quality * 5) + retrieval_score, 6)
+
+
+def _severity_score(severity: str) -> int:
+    if severity == "high":
+        return 3
+    if severity == "medium":
+        return 2
+    if severity == "low":
+        return 1
+    return 0
+
+
+def _source_quality_score(source_type: str) -> float:
+    if "documentation" in source_type:
+        return 1.0
+    if "developer" in source_type:
+        return 0.9
+    if "program" in source_type:
+        return 0.8
+    return 0.5
+
+
+def _is_official_nvidia_url(source_url: str) -> bool:
+    host = urlparse(source_url).hostname or ""
+    return host == "nvidia.com" or host.endswith(".nvidia.com")
+
+
 def _recommendation_quality(
     supported: tuple[NVIDIATechnicalRecommendation, ...],
     hypotheses: tuple[NVIDIATechnicalRecommendation, ...],
@@ -375,13 +542,6 @@ def _complexity(gap: TechnicalGap) -> str:
     if gap.gap_type == UNKNOWN:
         return UNKNOWN
     return "medium"
-
-
-def _next_rank_for_gap(
-    gap_type: str,
-    recommendations: list[NVIDIATechnicalRecommendation],
-) -> int:
-    return 1 + sum(1 for recommendation in recommendations if recommendation.gap.gap_type == gap_type)
 
 
 def _top_result(retrieval: NVIDIAKnowledgeRetrieval | None) -> RetrievedNVIDIAKnowledge | None:
