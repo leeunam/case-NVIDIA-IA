@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-nvidia_startup_intel}
       POSTGRES_USER: ${POSTGRES_USER:-nvidia_startup_intel}
