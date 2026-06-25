@@ -132,10 +132,10 @@ def generate_executive_briefing(
         evidence_references=evidence_references,
         citation_references=citation_references,
         next_action=recommendation_set.next_action,
-        audit_reasons=(
-            *recommendation_set.quality.reasons,
-            *_collection_audit_reasons(collection_quality),
-            *_conflict_audit_reasons(evidence_groups),
+        audit_reasons=_dedupe_reasons(
+            recommendation_set.quality.reasons,
+            _collection_audit_reasons(collection_quality),
+            _conflict_audit_reasons(evidence_groups),
         ),
     )
 
@@ -217,11 +217,11 @@ def generate_human_review_briefing(
         evidence_references=evidence_references,
         citation_references=citation_references,
         next_action=recommendation_set.next_action,
-        audit_reasons=(
-            *review_reasons,
-            *_collection_audit_reasons(collection_quality),
-            *_conflict_audit_reasons(evidence_groups),
-            *recommendation_set.audit_reasons,
+        audit_reasons=_dedupe_reasons(
+            review_reasons,
+            _collection_audit_reasons(collection_quality),
+            _conflict_audit_reasons(evidence_groups),
+            recommendation_set.audit_reasons,
         ),
     )
 
@@ -557,6 +557,10 @@ def _dedupe_citations(citations: tuple[NVIDIACitation, ...]) -> tuple[NVIDIACita
     for citation in citations:
         unique[(citation.document_id, citation.chunk_id, citation.source_url)] = citation
     return tuple(unique.values())
+
+
+def _dedupe_reasons(*reason_groups: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(reason for group in reason_groups for reason in group))
 
 
 def _to_plain_data(value: object) -> object:

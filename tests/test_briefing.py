@@ -151,6 +151,7 @@ class ExecutiveBriefingTests(unittest.TestCase):
         self.assertIn("blocked_recommendation_requires_human_review", briefing.review_reasons)
         self.assertTrue(any(question.priority == "critical" for question in briefing.pending_questions))
         self.assertTrue(any(question.priority == "complementary" for question in briefing.pending_questions))
+        self.assertEqual(len(briefing.audit_reasons), len(set(briefing.audit_reasons)))
         self.assertEqual(briefing.evidence_references, (profile_evidence,))
         self.assertEqual(briefing.citation_references[0].document_id, "nvidia-nim-developers")
         self.assertEqual(briefing.next_action, "resolve_blocking_evidence")
