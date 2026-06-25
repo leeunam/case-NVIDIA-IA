@@ -111,6 +111,12 @@ class NVIDIAKnowledgeSchemaTests(unittest.TestCase):
                         "rationale": "Program support matched the commercial opportunity.",
                         "rank": 1,
                         "bm25_score": 1.25,
+                        "vector_score": 0.0,
+                        "hybrid_score": 0.0,
+                        "embedding_metadata": {},
+                        "index_parameters": {},
+                        "ranking_strategy": "",
+                        "tie_breakers": [],
                     }
                 ],
                 "documents": [

@@ -68,6 +68,12 @@ class RetrievedNVIDIAKnowledge:
     rationale: str
     rank: int = 0
     bm25_score: float = 0.0
+    vector_score: float = 0.0
+    hybrid_score: float = 0.0
+    embedding_metadata: dict[str, object] = field(default_factory=dict)
+    index_parameters: dict[str, object] = field(default_factory=dict)
+    ranking_strategy: str = ""
+    tie_breakers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -186,7 +192,7 @@ def retrieve_nvidia_knowledge(
 ) -> NVIDIAKnowledgeRetrieval:
     """Retrieve citable NVIDIA chunks from gap, opportunity, or normalized terms."""
 
-    query = _retrieval_query(
+    query = build_nvidia_knowledge_query(
         gap_type=gap_type,
         opportunity_type=opportunity_type,
         description=description,
@@ -245,6 +251,25 @@ def retrieve_nvidia_knowledge_by_gap(
         description=description,
         startup_signals=startup_signals,
         top_k=top_k,
+    )
+
+
+def build_nvidia_knowledge_query(
+    *,
+    gap_type: str = "",
+    opportunity_type: str = "",
+    description: str = "",
+    startup_signals: tuple[str, ...] = (),
+    query_terms: tuple[str, ...] = (),
+) -> str:
+    """Build the shared query text for NVIDIA Knowledge retrieval paths."""
+
+    return _retrieval_query(
+        gap_type=gap_type,
+        opportunity_type=opportunity_type,
+        description=description,
+        startup_signals=startup_signals,
+        query_terms=query_terms,
     )
 
 
