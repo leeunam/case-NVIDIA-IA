@@ -39,9 +39,10 @@ class DownstreamPersistenceTests(unittest.TestCase):
                 }
             )
 
-            retrievals = load_json(run.processed_dir / "downstream_retrievals.json")
-            recommendation_set = load_json(run.processed_dir / "downstream_recommendation_set.json")
-            briefing = load_json(run.processed_dir / "downstream_briefing.json")
+            startup_dir = run.processed_dir / "downstream" / "VetAI"
+            retrievals = load_json(startup_dir / "retrievals.json")
+            recommendation_set = load_json(startup_dir / "recommendation_set.json")
+            briefing = load_json(startup_dir / "briefing.json")
 
             self.assertEqual(state["errors"], ())
             self.assertEqual(retrievals["run_id"], "run-issue-11")
@@ -65,6 +66,73 @@ class DownstreamPersistenceTests(unittest.TestCase):
             self.assertEqual(
                 briefing["citation_references"][0]["chunk_id"],
                 recommendation_set["technical_recommendations"][0]["nvidia_citations"][0]["chunk_id"],
+            )
+            self.assertFalse((run.processed_dir / "downstream_retrievals.json").exists())
+            self.assertFalse((run.processed_dir / "downstream_recommendation_set.json").exists())
+            self.assertFalse((run.processed_dir / "downstream_briefing.json").exists())
+
+    def test_json_downstream_snapshots_are_namespaced_by_startup(self) -> None:
+        with TemporaryDirectory() as base_dir:
+            run = create_pipeline_run(base_dir, run_id="run-json-multi-startup")
+            workflow = build_local_downstream_workflow(
+                DownstreamWorkflowRuntime(
+                    corpus=load_nvidia_knowledge_corpus(_fixture_path()),
+                    artifact_store=JsonDownstreamArtifactStore(run),
+                )
+            )
+
+            vetai_evidence = _startup_evidence(
+                snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem.",
+                company_name="VetAI",
+            )
+            medai_evidence = _startup_evidence(
+                snippet="A MedAI precisa reduzir latencia de inferencia em producao para modelos de imagens medicas.",
+                company_name="MedAI",
+            )
+
+            workflow.invoke(
+                {
+                    "run_id": run.run_id,
+                    "profile": _profile(vetai_evidence, company_name="VetAI"),
+                    "evidence_groups": (_evidence_group(vetai_evidence),),
+                    "collection_quality": _collection_quality(),
+                    "assessment": _assessment(
+                        _model_serving_gap(vetai_evidence),
+                        run_id=run.run_id,
+                        company_name="VetAI",
+                    ),
+                }
+            )
+            workflow.invoke(
+                {
+                    "run_id": run.run_id,
+                    "profile": _profile(medai_evidence, company_name="MedAI"),
+                    "evidence_groups": (_evidence_group(medai_evidence),),
+                    "collection_quality": _collection_quality(),
+                    "assessment": _assessment(
+                        _model_serving_gap(medai_evidence),
+                        run_id=run.run_id,
+                        company_name="MedAI",
+                    ),
+                }
+            )
+
+            vetai_recommendation_set = load_json(
+                run.processed_dir / "downstream" / "VetAI" / "recommendation_set.json"
+            )
+            medai_recommendation_set = load_json(
+                run.processed_dir / "downstream" / "MedAI" / "recommendation_set.json"
+            )
+            vetai_briefing = load_json(run.processed_dir / "downstream" / "VetAI" / "briefing.json")
+            medai_briefing = load_json(run.processed_dir / "downstream" / "MedAI" / "briefing.json")
+
+            self.assertEqual(vetai_recommendation_set["startup_identifier"], "VetAI")
+            self.assertEqual(medai_recommendation_set["startup_identifier"], "MedAI")
+            self.assertEqual(vetai_briefing["startup_identifier"], "VetAI")
+            self.assertEqual(medai_briefing["startup_identifier"], "MedAI")
+            self.assertNotEqual(
+                vetai_recommendation_set["technical_recommendations"][0]["recommendation_id"],
+                medai_recommendation_set["technical_recommendations"][0]["recommendation_id"],
             )
 
     def test_sql_repository_persists_downstream_payloads_by_run_and_startup(self) -> None:
@@ -148,10 +216,11 @@ def _fixture_path() -> Path:
     return Path(__file__).parent / "fixtures" / "nvidia_knowledge_official_fixture.json"
 
 
-def _startup_evidence(*, snippet: str) -> FieldEvidence:
+def _startup_evidence(*, snippet: str, company_name: str = "VetAI") -> FieldEvidence:
+    hostname = company_name.lower()
     return FieldEvidence(
-        url="https://vetai.example/product",
-        title="VetAI Product",
+        url=f"https://{hostname}.example/product",
+        title=f"{company_name} Product",
         snippet=snippet,
         collected_at="2026-06-23T00:00:00Z",
         source_type="official_site",
@@ -178,11 +247,11 @@ def _model_serving_gap(evidence: FieldEvidence) -> TechnicalGap:
     )
 
 
-def _assessment(gap: TechnicalGap, *, run_id: str) -> AINativeAssessment:
+def _assessment(gap: TechnicalGap, *, run_id: str, company_name: str = "VetAI") -> AINativeAssessment:
     return AINativeAssessment(
         schema_version="ai_native_assessment.v1",
         run_id=run_id,
-        company_name="VetAI",
+        company_name=company_name,
         classification="ai_native",
         confidence=0.82,
         nvidia_opportunity_urgency="urgent",
@@ -216,13 +285,14 @@ def _collection_quality() -> CollectionQualitySummary:
     )
 
 
-def _profile(evidence: FieldEvidence) -> StartupProfile:
+def _profile(evidence: FieldEvidence, *, company_name: str = "VetAI") -> StartupProfile:
     unknown = ProfileField(value=UNKNOWN, claim_source=ClaimSource.UNKNOWN, evidences=())
+    hostname = company_name.lower()
     return StartupProfile(
         schema_version="startup_profile.v1",
-        company_name=ProfileField(value="VetAI", claim_source=ClaimSource.OBSERVED, evidences=(evidence,)),
+        company_name=ProfileField(value=company_name, claim_source=ClaimSource.OBSERVED, evidences=(evidence,)),
         official_site=ProfileField(
-            value="https://vetai.example",
+            value=f"https://{hostname}.example",
             claim_source=ClaimSource.OBSERVED,
             evidences=(evidence,),
         ),
