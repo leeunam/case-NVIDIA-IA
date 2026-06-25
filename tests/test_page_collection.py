@@ -4,6 +4,7 @@ import pytest
 
 from nvidia_startup_intel.page_collection import (
     FetchResponse,
+    _ReadableHTMLParser,
     collect_public_pages,
 )
 
@@ -28,7 +29,7 @@ def make_fetcher(pages: dict[str, FetchResponse], errors: dict[str, Exception] |
 
 def test_collect_simple_html_page_and_relevant_links() -> None:
     pages = {
-        "https://startup.ai/": FetchResponse(
+        "https://startup.ai": FetchResponse(
             url="https://startup.ai/",
             status_code=200,
             body="""
@@ -67,7 +68,7 @@ def test_collect_simple_html_page_and_relevant_links() -> None:
 
     assert result.errors == ()
     assert [page.url for page in result.pages] == [
-        "https://startup.ai/",
+        "https://startup.ai",
         "https://startup.ai/produtos",
         "https://startup.ai/sobre",
     ]
@@ -79,7 +80,7 @@ def test_collect_simple_html_page_and_relevant_links() -> None:
 
 def test_collect_page_with_missing_content_as_unknown() -> None:
     pages = {
-        "https://empty.ai/": FetchResponse(
+        "https://empty.ai": FetchResponse(
             url="https://empty.ai/",
             status_code=200,
             body="<html><head></head><body><script>ignored()</script></body></html>",
@@ -97,9 +98,20 @@ def test_collect_page_with_missing_content_as_unknown() -> None:
     assert result.pages[0].main_text == "unknown"
 
 
+def test_html_parser_closes_most_recent_matching_tag() -> None:
+    parser = _ReadableHTMLParser()
+
+    parser.handle_starttag("div", [])
+    parser.handle_starttag("section", [])
+    parser.handle_starttag("div", [])
+    parser.handle_endtag("div")
+
+    assert parser._tag_stack == ["div", "section"]
+
+
 def test_records_fetch_failure_without_stopping_collection() -> None:
     pages = {
-        "https://startup.ai/": FetchResponse(
+        "https://startup.ai": FetchResponse(
             url="https://startup.ai/",
             status_code=200,
             body="""
@@ -130,7 +142,7 @@ def test_records_fetch_failure_without_stopping_collection() -> None:
     )
 
     assert [page.url for page in result.pages] == [
-        "https://startup.ai/",
+        "https://startup.ai",
         "https://startup.ai/blog",
     ]
     assert len(result.errors) == 1
@@ -141,7 +153,7 @@ def test_records_fetch_failure_without_stopping_collection() -> None:
 
 def test_avoids_repeated_urls_and_respects_max_pages() -> None:
     pages = {
-        "https://startup.ai/": FetchResponse(
+        "https://startup.ai": FetchResponse(
             url="https://startup.ai/",
             status_code=200,
             body="""
@@ -178,14 +190,14 @@ def test_avoids_repeated_urls_and_respects_max_pages() -> None:
     )
 
     assert [page.url for page in result.pages] == [
-        "https://startup.ai/",
+        "https://startup.ai",
         "https://startup.ai/carreiras",
     ]
 
 
 def test_respects_max_depth() -> None:
     pages = {
-        "https://startup.ai/": FetchResponse(
+        "https://startup.ai": FetchResponse(
             url="https://startup.ai/",
             status_code=200,
             body="<html><body>Home <a href='/blog'>Blog</a></body></html>",
@@ -211,7 +223,7 @@ def test_respects_max_depth() -> None:
     )
 
     assert [page.url for page in result.pages] == [
-        "https://startup.ai/",
+        "https://startup.ai",
         "https://startup.ai/blog",
     ]
 

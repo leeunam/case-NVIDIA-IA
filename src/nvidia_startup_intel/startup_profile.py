@@ -105,11 +105,14 @@ def extract_startup_profile(
 
     pages_tuple = tuple(pages)
     site_value = official_site if official_site != UNKNOWN else _official_site_from_pages(pages_tuple)
+    site_evidences = _site_evidence(pages_tuple, site_value)
 
     return StartupProfile(
         schema_version=SCHEMA_VERSION,
         company_name=_extract_company_name(pages_tuple, fallback_company_name),
-        official_site=_observed_field(site_value, _site_evidence(pages_tuple, site_value)),
+        official_site=_observed_field(site_value, site_evidences)
+        if site_evidences
+        else _inferred_field(site_value, ()),
         company_summary=_extract_labeled_field(pages_tuple, "company_summary"),
         sector=_extract_sector(pages_tuple),
         product=_extract_labeled_field(pages_tuple, "product"),
@@ -133,14 +136,14 @@ def startup_profile_to_dict(profile: StartupProfile) -> dict[str, object]:
 
 
 def _extract_company_name(pages: tuple[CollectedPage, ...], fallback_company_name: str) -> ProfileField:
-    if fallback_company_name != UNKNOWN:
-        return _observed_field(fallback_company_name, ())
-
     for page in pages:
         if page.title != UNKNOWN:
             value = re.split(r"\s+[|-]\s+", page.title, maxsplit=1)[0].strip()
             if value:
                 return _observed_field(value, (_evidence(page, value),))
+
+    if fallback_company_name != UNKNOWN:
+        return _inferred_field(fallback_company_name, ())
 
     return _unknown_field()
 
@@ -149,7 +152,7 @@ def _extract_labeled_field(pages: tuple[CollectedPage, ...], field_name: str) ->
     labels = FIELD_LABELS[field_name]
     for page in pages:
         match = _find_labeled_value(page.main_text, labels)
-        if match:
+        if match != UNKNOWN:
             return _observed_field(match, (_evidence(page, match),))
     return _unknown_field()
 
@@ -228,6 +231,12 @@ def _observed_field(value: str, evidences: tuple[FieldEvidence, ...]) -> Profile
     return ProfileField(value=value, claim_source=ClaimSource.OBSERVED, evidences=evidences)
 
 
+def _inferred_field(value: str, evidences: tuple[FieldEvidence, ...]) -> ProfileField:
+    if value == UNKNOWN:
+        return _unknown_field()
+    return ProfileField(value=value, claim_source=ClaimSource.INFERRED, evidences=evidences)
+
+
 def _unknown_field() -> ProfileField:
     return ProfileField(value=UNKNOWN, claim_source=ClaimSource.UNKNOWN, evidences=())
 
@@ -246,9 +255,9 @@ def _snippet_around(text: str, value: str, *, window: int = 160) -> str:
     if text == UNKNOWN:
         return UNKNOWN
 
-    lower_text = text.lower()
-    lower_value = value.lower()
-    index = lower_text.find(lower_value)
+    normalized_text = normalize_text(text)
+    normalized_value = normalize_text(value)
+    index = normalized_text.find(normalized_value)
     if index == -1:
         return text[:window].strip()
 

@@ -129,7 +129,7 @@ def search_plan_to_dict(plan: SearchPlan) -> dict[str, object]:
 
 
 def _source_priorities(params: SearchParams) -> tuple[str, ...]:
-    if params.source_priorities:
+    if params.source_priorities or not params.use_default_sources:
         return params.source_priorities
     return DEFAULT_SOURCE_PRIORITIES
 
@@ -137,7 +137,7 @@ def _source_priorities(params: SearchParams) -> tuple[str, ...]:
 def _region_label(params: SearchParams) -> str:
     region = params.region
     if region.normalized == UNKNOWN:
-        return region.raw
+        return UNKNOWN
     if region.city != UNKNOWN:
         return _join_terms(region.city, region.state)
     if region.raw != UNKNOWN:

@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from nvidia_startup_intel.discovery import (
     CandidateStartup,
     DiscoveryEvidence,
@@ -43,7 +45,12 @@ def candidate(
 
 def test_normalizes_name_domain_and_url() -> None:
     assert normalize_startup_name("Exemplo AI Ltda.") == "exemplo ai"
+    assert normalize_startup_name("Empresa S.A.") == "empresa"
+    assert normalize_startup_name("Me Poupe") == "me poupe"
     assert normalize_url("https://www.Exemplo.com.br/produto/?utm=x#top") == "https://exemplo.com.br/produto"
+    assert normalize_url("example.com/path") == "https://example.com/path"
+    assert normalize_url("https://aquare.la/") == "https://aquare.la"
+    assert normalize_domain("example.com/path") == "example.com"
     assert normalize_domain("https://www.Exemplo.com.br/produto/?utm=x#top") == "exemplo.com.br"
 
 
@@ -57,7 +64,7 @@ def test_deduplicates_by_same_domain_and_preserves_all_sources() -> None:
 
     assert len(candidates) == 1
     assert candidates[0].name == "Aquarela"
-    assert candidates[0].primary_url == "https://aquare.la/"
+    assert candidates[0].primary_url == "https://aquare.la"
     assert candidates[0].normalized_name == "aquarela"
     assert len(candidates[0].evidences) == 2
     assert {evidence.source_name for evidence in candidates[0].evidences} == {"web", "blog"}
@@ -105,3 +112,56 @@ def test_does_not_merge_false_positive_similar_names_with_different_domains() ->
         "https://datamind.ai",
         "https://datamindhealth.com.br",
     }
+
+
+def test_does_not_merge_same_normalized_name_with_different_company_domains() -> None:
+    candidates = deduplicate_startups(
+        (
+            candidate("Atlas AI", "https://atlas.ai", "Atlas AI para dados."),
+            candidate("Atlas AI", "https://atlashealth.ai", "Atlas AI para saude."),
+        )
+    )
+
+    assert len(candidates) == 2
+    assert {item.primary_url for item in candidates} == {
+        "https://atlas.ai",
+        "https://atlashealth.ai",
+    }
+
+
+def test_merge_score_bonus_does_not_compound_across_successive_merges() -> None:
+    candidates = deduplicate_startups(
+        (
+            candidate("Alpha AI", "https://alpha.ai/home", "Home.", score=0.65),
+            candidate("Alpha AI", "https://alpha.ai/produto", "Produto.", score=0.65),
+            candidate("Alpha AI", "https://alpha.ai/sobre", "Sobre.", score=0.65),
+            candidate("Alpha AI", "https://alpha.ai/blog", "Blog.", score=0.65),
+        )
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].confidence_score == 0.75
+    assert len(candidates[0].evidences) == 4
+
+
+def test_does_not_merge_different_candidates_from_same_non_company_domain() -> None:
+    left = candidate("Alpha AI", "https://neofeed.com.br/startups/alpha-ai", "Alpha captou.", source_name="NeoFeed")
+    right = candidate("Beta AI", "https://neofeed.com.br/startups/beta-ai", "Beta captou.", source_name="NeoFeed")
+    left = replace(left, source_types=(DiscoverySourceType.NEWS,))
+    right = replace(right, source_types=(DiscoverySourceType.NEWS,))
+
+    candidates = deduplicate_startups((left, right))
+
+    assert len(candidates) == 2
+    assert {item.name for item in candidates} == {"Alpha AI", "Beta AI"}
+
+
+def test_prefers_company_url_when_merging_non_company_with_official_source() -> None:
+    news = candidate("Aquarela", "https://neofeed.com.br/startups/aquarela", "Aquarela captou.", source_name="NeoFeed")
+    news = replace(news, source_types=(DiscoverySourceType.NEWS,))
+    official = candidate("Aquarela", "https://aquare.la/", "Home oficial.")
+
+    candidates = deduplicate_startups((news, official))
+
+    assert len(candidates) == 1
+    assert candidates[0].primary_url == "https://aquare.la"

@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from nvidia_startup_intel.search_params import parse_search_params
+from nvidia_startup_intel.search_params import Region, RegionType, SearchParams, parse_search_params
 from nvidia_startup_intel.search_plan import (
     SearchScope,
     build_search_plan,
@@ -45,6 +45,17 @@ def test_build_search_plan_differentiates_broad_web_and_specific_sources() -> No
     assert any(item.target_source == "Distrito" for item in plan.items)
 
 
+def test_empty_source_priorities_disable_specific_sources() -> None:
+    params = parse_search_params(
+        "startups de IA no Brasil",
+        source_priorities=[],
+    )
+
+    plan = build_search_plan(params)
+
+    assert [item.scope for item in plan.items] == [SearchScope.BROAD_WEB, SearchScope.BROAD_WEB]
+
+
 def test_build_search_plan_avoids_repeated_equivalent_terms() -> None:
     params = parse_search_params(
         "startups de IA no Brasil",
@@ -55,6 +66,24 @@ def test_build_search_plan_avoids_repeated_equivalent_terms() -> None:
     keys = {(item.term.lower(), item.target_source.lower()) for item in plan.items}
 
     assert len(keys) == len(plan.items)
+
+
+def test_build_search_plan_ignores_unknown_region_raw_text() -> None:
+    params = SearchParams(
+        raw_query="startups de IA",
+        region=Region(raw="IA", type=RegionType.UNKNOWN),
+        theme="artificial_intelligence",
+        source_priorities=("Distrito",),
+    )
+
+    plan = build_search_plan(params)
+    terms = [item.term for item in plan.items]
+
+    assert terms == [
+        "startups de inteligencia artificial Brasil",
+        "artificial intelligence startups Brazil",
+        "site:distrito.me startups de inteligencia artificial",
+    ]
 
 
 def test_unknown_source_priority_is_preserved_without_site_filter() -> None:

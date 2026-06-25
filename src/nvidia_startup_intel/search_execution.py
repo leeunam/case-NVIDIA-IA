@@ -105,12 +105,18 @@ def execute_search_plan(
     raw_results: list[RawDiscoveryResult] = []
     errors: list[SearchExecutionError] = []
 
-    for item in sorted(plan.items, key=lambda search_item: search_item.priority):
+    sorted_items = tuple(sorted(plan.items, key=lambda search_item: search_item.priority))
+    for index, item in enumerate(sorted_items):
         remaining = None if total_limit is None else total_limit - len(raw_results)
         if remaining is not None and remaining <= 0:
             break
 
-        query_limit = per_term_limit if remaining is None else min(per_term_limit, remaining)
+        remaining_items = len(sorted_items) - index - 1
+        query_limit = _query_limit(
+            per_term_limit=per_term_limit,
+            remaining=remaining,
+            remaining_items=remaining_items,
+        )
         try:
             provider_results = client.search(item.term, limit=query_limit)
         except Exception as exc:  # noqa: BLE001 - failures are pipeline data.
@@ -129,7 +135,6 @@ def execute_search_plan(
                         position=provider_result.position,
                     ),
                     source_name=item.target_source,
-                    discovered_name=provider_result.title.strip() or "unknown",
                 )
             )
             if total_limit is not None and len(raw_results) >= total_limit:
@@ -158,7 +163,7 @@ def normalize_brave_response(payload: dict[str, Any], *, limit: int) -> tuple[Se
 def search_client_from_env(environ: dict[str, str] | None = None) -> SearchClient:
     """Build a real search client from environment configuration."""
 
-    env = environ or os.environ
+    env = os.environ if environ is None else environ
     provider = env.get("NVIDIA_STARTUP_INTEL_SEARCH_PROVIDER", "brave").lower()
     if provider != "brave":
         raise ValueError(f"Unsupported search provider: {provider}")
@@ -170,6 +175,15 @@ def search_client_from_env(environ: dict[str, str] | None = None) -> SearchClien
 
 def _traceable_snippet(snippet: str, *, term: str, source: str, position: int) -> str:
     return f"{snippet} [search_term={term}; source={source}; position={position}]"
+
+
+def _query_limit(*, per_term_limit: int, remaining: int | None, remaining_items: int) -> int:
+    if remaining is None:
+        return per_term_limit
+
+    reserved_for_later = min(remaining_items, max(remaining - 1, 0))
+    usable_now = max(remaining - reserved_for_later, 1)
+    return min(per_term_limit, usable_now)
 
 
 def _execution_error(item: SearchPlanItem, provider: str, exc: Exception) -> SearchExecutionError:

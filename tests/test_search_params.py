@@ -93,9 +93,24 @@ def test_unknown_region_preserves_original_text() -> None:
     assert region.type is RegionType.UNKNOWN
 
 
+def test_ai_theme_is_not_parsed_as_unknown_region() -> None:
+    params = parse_search_params("startups de IA")
+
+    assert params.theme == "artificial_intelligence"
+    assert params.region.raw == "unknown"
+    assert params.region.normalized == "unknown"
+    assert params.region.type is RegionType.UNKNOWN
+
+
 def test_limit_must_be_positive() -> None:
     with pytest.raises(ValueError, match="limit must be greater than zero"):
         parse_search_params("startups de IA no Brasil", limit=0)
+
+
+@pytest.mark.parametrize("query", ["", "   \n\t  "])
+def test_query_must_not_be_empty(query: str) -> None:
+    with pytest.raises(ValueError, match="query must not be empty"):
+        parse_search_params(query)
 
 
 def test_source_priorities_are_preserved_for_next_story() -> None:
@@ -105,3 +120,14 @@ def test_source_priorities_are_preserved_for_next_story() -> None:
     )
 
     assert params.source_priorities == ("Distrito", "StartSe")
+    assert params.use_default_sources is False
+
+
+def test_empty_source_priorities_are_distinct_from_defaults() -> None:
+    explicit_empty = parse_search_params("startups de IA no Brasil", source_priorities=[])
+    omitted = parse_search_params("startups de IA no Brasil")
+
+    assert explicit_empty.source_priorities == ()
+    assert explicit_empty.use_default_sources is False
+    assert omitted.source_priorities == ()
+    assert omitted.use_default_sources is True

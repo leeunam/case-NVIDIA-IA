@@ -44,8 +44,29 @@ def test_executes_search_plan_with_limits_and_preserves_traceability() -> None:
     assert result.errors == ()
     assert client.calls == [(plan.items[0].term, 1), (plan.items[1].term, 1)]
     assert result.raw_results[0].source_name == "web"
+    assert result.raw_results[0].discovered_name == "unknown"
     assert "search_term=" in result.raw_results[0].snippet
     assert "position=1" in result.raw_results[0].snippet
+
+
+def test_total_limit_preserves_capacity_for_specific_sources() -> None:
+    params = parse_search_params(
+        "startups AI-native do Brasil",
+        limit=3,
+        source_priorities=["Distrito"],
+    )
+    plan = build_search_plan(params)
+    client = FakeSearchClient()
+
+    result = execute_search_plan(plan, client, per_term_limit=5, total_limit=3)
+
+    assert len(result.raw_results) == 3
+    assert client.calls == [
+        (plan.items[0].term, 1),
+        (plan.items[1].term, 1),
+        (plan.items[2].term, 1),
+    ]
+    assert result.raw_results[-1].source_name == "Distrito"
 
 
 def test_records_search_errors_without_stopping_execution() -> None:
@@ -110,3 +131,10 @@ def test_brave_client_uses_configured_transport_without_exposing_key() -> None:
 def test_search_client_from_env_requires_api_key_for_real_provider() -> None:
     with pytest.raises(ValueError, match="api_key is required"):
         search_client_from_env({"NVIDIA_STARTUP_INTEL_SEARCH_PROVIDER": "brave"})
+
+
+def test_search_client_from_env_does_not_fall_back_from_empty_mapping(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "secret")
+
+    with pytest.raises(ValueError, match="api_key is required"):
+        search_client_from_env({})

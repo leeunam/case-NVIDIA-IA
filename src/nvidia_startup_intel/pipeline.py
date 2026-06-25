@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from nvidia_startup_intel.ai_native_assessment import AINativeAssessment, assess_ai_native_maturity
 from nvidia_startup_intel.collection_quality import (
@@ -16,10 +17,12 @@ from nvidia_startup_intel.collection_quality import (
 )
 from nvidia_startup_intel.discovery import CandidateStartup, RawDiscoveryResult, discover_candidate_startups
 from nvidia_startup_intel.evidence import FieldEvidenceGroup, claims_from_profile, structure_evidence_by_field
+from nvidia_startup_intel.normalization import normalize_startup_name, normalize_url
 from nvidia_startup_intel.page_collection import (
     CollectedPage,
     FetchResponse,
     Fetcher,
+    PageCollectionError,
     PageCollectionResult,
     collect_public_pages,
 )
@@ -35,6 +38,7 @@ from nvidia_startup_intel.startup_profile import StartupProfile, extract_startup
 class ScrapingPipelineResult:
     search_params: SearchParams
     search_plan: SearchPlan
+    raw_results: tuple[RawDiscoveryResult, ...]
     candidates: tuple[CandidateStartup, ...]
     collected_pages_by_candidate: Mapping[str, PageCollectionResult]
     profiles: tuple[StartupProfile, ...]
@@ -60,6 +64,22 @@ def build_candidates(
     return tuple(discover_candidate_startups(raw_results, limit=limit))
 
 
+def candidate_result_key(candidate: CandidateStartup) -> str:
+    """Stable key for candidate-indexed pipeline maps."""
+
+    if candidate.primary_url != UNKNOWN:
+        return f"url:{normalize_url(candidate.primary_url)}"
+    return f"name:{candidate.normalized_name or normalize_startup_name(candidate.name)}"
+
+
+def profile_result_key(profile: StartupProfile) -> str:
+    """Stable key for profile-indexed pipeline maps."""
+
+    if profile.official_site.value != UNKNOWN:
+        return f"url:{normalize_url(profile.official_site.value)}"
+    return f"name:{normalize_startup_name(profile.company_name.value)}"
+
+
 def collect_pages_for_candidates(
     candidates: list[CandidateStartup] | tuple[CandidateStartup, ...],
     *,
@@ -72,16 +92,30 @@ def collect_pages_for_candidates(
     """Collect public pages for candidates that have an official site."""
 
     collected: dict[str, PageCollectionResult] = {}
+    active_robots_cache = robots_cache or RobotsCache()
     for candidate in candidates:
+        candidate_key = candidate_result_key(candidate)
         if candidate.primary_url == UNKNOWN:
+            collected[candidate_key] = PageCollectionResult(
+                pages=(),
+                errors=(
+                    PageCollectionError(
+                        url=UNKNOWN,
+                        error_type="MissingPrimaryUrl",
+                        message="Candidate has no primary_url; collection skipped.",
+                        collected_at=_utc_now(),
+                        error_category="missing_primary_url",
+                    ),
+                ),
+            )
             continue
-        collected[candidate.name] = collect_public_pages(
+        collected[candidate_key] = collect_public_pages(
             candidate.primary_url,
             fetcher=fetcher,
             max_pages=max_pages_per_candidate,
             max_depth=max_depth,
             scraping_policy=scraping_policy,
-            robots_cache=robots_cache,
+            robots_cache=active_robots_cache,
         )
     return collected
 
@@ -94,7 +128,9 @@ def extract_profiles_for_candidates(
 
     profiles: list[StartupProfile] = []
     for candidate in candidates:
-        collection_result = collected_pages_by_candidate.get(candidate.name)
+        collection_result = collected_pages_by_candidate.get(candidate_result_key(candidate))
+        if collection_result is None:
+            collection_result = collected_pages_by_candidate.get(candidate.name)
         pages = collection_result.pages if collection_result else ()
         profiles.append(
             extract_startup_profile(
@@ -112,49 +148,23 @@ def structure_profile_evidence(
     """Group profile evidences by field for each startup profile."""
 
     return {
-        profile.company_name.value: structure_evidence_by_field(claims_from_profile(profile))
+        profile_result_key(profile): structure_evidence_by_field(claims_from_profile(profile))
         for profile in profiles
     }
 
 
-def assess_profiles_ai_native(
-    profiles: list[StartupProfile] | tuple[StartupProfile, ...],
-    evidence_groups_by_profile: Mapping[str, tuple[FieldEvidenceGroup, ...]],
-    quality_summary: CollectionQualitySummary,
+def _build_pipeline_result(
     *,
-    run_id: str,
-) -> dict[str, AINativeAssessment]:
-    """Assess profiles that are ready for AI-native evaluation."""
-
-    if not quality_summary.ready_for_evaluation:
-        return {}
-
-    assessments: dict[str, AINativeAssessment] = {}
-    for profile in profiles:
-        company_name = profile.company_name.value
-        assessments[company_name] = assess_ai_native_maturity(
-            profile,
-            evidence_groups_by_profile.get(company_name, ()),
-            quality_summary,
-            run_id=run_id,
-        )
-    return assessments
-
-
-def run_scraping_pipeline(
-    query: str,
-    raw_results: list[RawDiscoveryResult] | tuple[RawDiscoveryResult, ...],
-    *,
-    fetcher: Fetcher | None = None,
-    scraping_policy: ScrapingPolicy | None = None,
-    robots_cache: RobotsCache | None = None,
-    limit: int | None = None,
-    max_pages_per_candidate: int = 5,
-    max_depth: int = 1,
+    params: SearchParams,
+    plan: SearchPlan,
+    raw_results: tuple[RawDiscoveryResult, ...],
+    search_errors: tuple[SearchExecutionError, ...],
+    fetcher: Fetcher | None,
+    scraping_policy: ScrapingPolicy | None,
+    robots_cache: RobotsCache | None,
+    max_pages_per_candidate: int,
+    max_depth: int,
 ) -> ScrapingPipelineResult:
-    """Run the offline scraping pipeline after search results are available."""
-
-    params, plan = plan_startup_search(query, limit=limit)
     candidates = build_candidates(raw_results, limit=params.limit)
     collected_pages = collect_pages_for_candidates(
         candidates,
@@ -175,12 +185,40 @@ def run_scraping_pipeline(
     return ScrapingPipelineResult(
         search_params=params,
         search_plan=plan,
+        raw_results=raw_results,
         candidates=candidates,
-        search_errors=(),
+        search_errors=search_errors,
         collected_pages_by_candidate=collected_pages,
         profiles=profiles,
         evidence_groups_by_profile=evidence_groups,
         quality_summary=quality_summary,
+    )
+
+
+def run_scraping_pipeline(
+    query: str,
+    raw_results: list[RawDiscoveryResult] | tuple[RawDiscoveryResult, ...],
+    *,
+    fetcher: Fetcher | None = None,
+    scraping_policy: ScrapingPolicy | None = None,
+    robots_cache: RobotsCache | None = None,
+    limit: int | None = None,
+    max_pages_per_candidate: int = 5,
+    max_depth: int = 1,
+) -> ScrapingPipelineResult:
+    """Run the offline scraping pipeline after search results are available."""
+
+    params, plan = plan_startup_search(query, limit=limit)
+    return _build_pipeline_result(
+        params=params,
+        plan=plan,
+        raw_results=tuple(raw_results),
+        search_errors=(),
+        fetcher=fetcher,
+        scraping_policy=scraping_policy,
+        robots_cache=robots_cache,
+        max_pages_per_candidate=max_pages_per_candidate,
+        max_depth=max_depth,
     )
 
 
@@ -205,32 +243,16 @@ def run_scraping_pipeline_with_search(
         per_term_limit=per_term_limit,
         total_limit=params.limit,
     )
-    candidates = build_candidates(execution.raw_results, limit=params.limit)
-    collected_pages = collect_pages_for_candidates(
-        candidates,
+    return _build_pipeline_result(
+        params=params,
+        plan=plan,
+        raw_results=execution.raw_results,
+        search_errors=execution.errors,
         fetcher=fetcher,
         scraping_policy=scraping_policy,
         robots_cache=robots_cache,
         max_pages_per_candidate=max_pages_per_candidate,
         max_depth=max_depth,
-    )
-    profiles = extract_profiles_for_candidates(candidates, collected_pages)
-    evidence_groups = structure_profile_evidence(profiles)
-    quality_summary = summarize_collection_quality(
-        candidates,
-        profiles,
-        collection_results_by_source=collected_pages,
-    )
-
-    return ScrapingPipelineResult(
-        search_params=params,
-        search_plan=plan,
-        candidates=candidates,
-        search_errors=execution.errors,
-        collected_pages_by_candidate=collected_pages,
-        profiles=profiles,
-        evidence_groups_by_profile=evidence_groups,
-        quality_summary=quality_summary,
     )
 
 
@@ -241,3 +263,7 @@ def fixture_fetcher(pages: Mapping[str, FetchResponse]) -> Fetcher:
         return pages[url]
 
     return fetch
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat()

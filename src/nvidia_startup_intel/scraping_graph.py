@@ -68,6 +68,7 @@ class LocalScrapingGraph:
         self.runtime = runtime
 
     def invoke(self, state: ScrapingGraphState) -> ScrapingGraphState:
+        self.runtime.checkpoints.clear()
         current: ScrapingGraphState = dict(state)
         for node in (
             plan_search_node,

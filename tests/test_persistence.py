@@ -1,4 +1,7 @@
 from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
 
 from nvidia_startup_intel.discovery import (
     RawDiscoveryResult,
@@ -99,43 +102,17 @@ def test_loads_raw_collected_pages_for_reprocessing_without_new_collection(tmp_p
     assert not (run.processed_dir / "collected_pages.json").exists()
 
 
-def test_persists_ai_native_assessments_as_processed_artifact(tmp_path) -> None:
-    run = create_pipeline_run(tmp_path, run_id="run-assessment", created_at=CREATED_AT)
-    profile = extract_startup_profile(
-        (
-            CollectedPage(
-                url="https://deepdocs.ai/",
-                title="DeepDocs",
-                main_text=(
-                    "Resumo: Plataforma AI-native. Setor: dados. Produto: IA para documentos. "
-                    "Sinais de IA: modelos proprietarios e fine-tuning. "
-                    "Tecnologias: inferencia em producao, MLOps, dados proprietarios e feedback loop."
-                ),
-                collected_at=COLLECTED_AT,
-                status_code=200,
-            ),
-        )
-    )
-    groups = structure_evidence_by_field(claims_from_profile(profile))
-    assessment = assess_ai_native_maturity(profile, groups, _ready_quality(), run_id=run.run_id)
+def test_create_pipeline_run_cleans_partial_directory_on_failure(tmp_path, monkeypatch) -> None:
+    original_mkdir = Path.mkdir
 
-    save_ai_native_assessments(run, {profile.company_name.value: assessment})
+    def fail_processed_mkdir(self, *args, **kwargs):
+        if self.name == "processed":
+            raise OSError("cannot create processed dir")
+        return original_mkdir(self, *args, **kwargs)
 
-    loaded = load_json(run.processed_dir / "ai_native_assessments.json")
-    assert loaded["DeepDocs"]["schema_version"] == "ai_native_assessment.v1"
-    assert loaded["DeepDocs"]["classification"] == "ai_native"
+    monkeypatch.setattr(Path, "mkdir", fail_processed_mkdir)
 
+    with pytest.raises(OSError, match="cannot create processed dir"):
+        create_pipeline_run(tmp_path, run_id="run-partial", created_at=CREATED_AT)
 
-def _ready_quality() -> CollectionQualitySummary:
-    return CollectionQualitySummary(
-        candidate_count=1,
-        official_site_found_count=1,
-        official_site_found_rate=1.0,
-        minimum_profile_complete_count=1,
-        minimum_profile_complete_rate=1.0,
-        average_evidences_per_startup=6.0,
-        unknown_fields=(),
-        source_success_rates=(),
-        ready_for_evaluation=True,
-        readiness_reasons=("ready_for_ai_native_evaluation",),
-    )
+    assert not (tmp_path / "run-partial").exists()

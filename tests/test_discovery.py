@@ -37,6 +37,24 @@ def test_discover_candidate_from_company_website() -> None:
     assert candidates[0].evidences[0].url == "https://www.neuralmind.ai/produtos"
 
 
+def test_company_result_prefers_domain_when_discovered_name_is_seo_title() -> None:
+    candidates = discover_candidate_startups(
+        [
+            RawDiscoveryResult(
+                title="NeuralMind | Inteligencia Artificial",
+                url="https://www.neuralmind.ai/produtos",
+                snippet="A NeuralMind desenvolve solucoes de IA para documentos.",
+                source_name="web",
+                discovered_name="NeuralMind | Inteligencia Artificial",
+            )
+        ]
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].name == "NeuralMind"
+    assert candidates[0].primary_url == "https://neuralmind.ai"
+
+
 def test_classify_company_news_directory_and_personal_profile() -> None:
     assert classify_source_type("https://www.startup.com.br") is DiscoverySourceType.COMPANY
     assert classify_source_type("https://distrito.me/startups/exemplo") is DiscoverySourceType.DIRECTORY
@@ -93,7 +111,7 @@ def test_deduplicate_obvious_name_variations_without_official_domain() -> None:
     assert len(candidates) == 1
     assert candidates[0].name == "Exemplo AI"
     assert candidates[0].normalized_name == "exemplo ai"
-    assert candidates[0].primary_url == "unknown"
+    assert candidates[0].primary_url == "https://distrito.me/startups/exemplo-ai"
     assert candidates[0].confidence_score == 0.8
     assert set(candidates[0].source_types) == {
         DiscoverySourceType.DIRECTORY,
@@ -139,6 +157,36 @@ def test_skip_result_without_company_name_when_source_is_not_official_company() 
     ]
 
     assert discover_candidate_startups(results) == []
+
+
+def test_skip_news_title_when_discovered_name_is_article_headline() -> None:
+    results = [
+        RawDiscoveryResult(
+            title="10 startups brasileiras de IA para acompanhar",
+            url="https://neofeed.com.br/startups/10-startups-brasileiras-de-ia/",
+            snippet="Materia lista startups brasileiras de IA.",
+            source_name="NeoFeed",
+            discovered_name="10 startups brasileiras de IA para acompanhar",
+        )
+    ]
+
+    assert discover_candidate_startups(results) == []
+
+
+def test_news_and_directory_candidates_keep_source_url_for_collection() -> None:
+    candidates = discover_candidate_startups(
+        [
+            RawDiscoveryResult(
+                title="Exemplo AI capta rodada",
+                url="https://startups.com.br/negocios/exemplo-ai-capta/",
+                snippet="A Exemplo AI captou investimento.",
+                source_name="Startups.com.br",
+                discovered_name="Exemplo AI",
+            )
+        ]
+    )
+
+    assert candidates[0].primary_url == "https://startups.com.br/negocios/exemplo-ai-capta"
 
 
 def test_company_result_can_infer_candidate_name_from_domain() -> None:
