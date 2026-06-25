@@ -60,6 +60,7 @@ class DownstreamWorkflowState(TypedDict, total=False):
     executive_briefing: ExecutiveBriefing
     human_review_briefing: HumanReviewBriefing
     branch_decisions: tuple[DownstreamWorkflowBranch, ...]
+    workflow_outcome: str
     next_action: str
     errors: tuple[DownstreamWorkflowError, ...]
 
@@ -134,6 +135,8 @@ def retrieve_nvidia_knowledge_node(
     state: DownstreamWorkflowState,
     runtime: DownstreamWorkflowRuntime,
 ) -> DownstreamWorkflowState:
+    if _has_branch(state, "needs_more_collection_or_human_review"):
+        return _merge(state, retrievals=())
     if state.get("retrievals"):
         return state
     if runtime.retrievals:
@@ -266,14 +269,26 @@ def decide_final_next_action_node(
     state: DownstreamWorkflowState,
     runtime: DownstreamWorkflowRuntime,
 ) -> DownstreamWorkflowState:
-    branch_names = tuple(branch.branch_name for branch in state.get("branch_decisions", ()))
-    if "briefing_generated" in branch_names:
-        next_action = "briefing_generated"
-    elif "needs_more_collection_or_human_review" in branch_names:
-        next_action = "needs_more_collection_or_human_review"
-    else:
-        next_action = "human_review_requested"
-    return _merge(state, next_action=next_action)
+    if "executive_briefing" in state:
+        return _merge(
+            state,
+            workflow_outcome="briefing_generated",
+            next_action=state["executive_briefing"].next_action,
+        )
+
+    if "human_review_briefing" in state:
+        workflow_outcome = (
+            "needs_more_collection_or_human_review"
+            if _has_branch(state, "needs_more_collection_or_human_review")
+            else "human_review_requested"
+        )
+        return _merge(
+            state,
+            workflow_outcome=workflow_outcome,
+            next_action=state["human_review_briefing"].next_action,
+        )
+
+    return _merge(state, workflow_outcome="human_review_requested", next_action="review_workflow_errors")
 
 
 def _startup_signals(profile: StartupProfile) -> tuple[str, ...]:
@@ -298,6 +313,10 @@ def _append_branch(
         audit_reason=audit_reason,
     )
     return _merge(state, branch_decisions=(*state.get("branch_decisions", ()), branch))
+
+
+def _has_branch(state: DownstreamWorkflowState, branch_name: str) -> bool:
+    return any(branch.branch_name == branch_name for branch in state.get("branch_decisions", ()))
 
 
 def _append_error(

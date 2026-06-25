@@ -42,7 +42,8 @@ class DownstreamWorkflowTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(state["next_action"], "briefing_generated")
+        self.assertEqual(state["workflow_outcome"], "briefing_generated")
+        self.assertEqual(state["next_action"], "prepare_technical_outreach")
         self.assertEqual(state["errors"], ())
         self.assertEqual(state["retrievals"][0].schema_version, "nvidia_knowledge.v1")
         self.assertEqual(state["recommendation_set"].schema_version, "nvidia_recommendation.v1")
@@ -86,7 +87,8 @@ class DownstreamWorkflowTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(state["next_action"], "human_review_requested")
+        self.assertEqual(state["workflow_outcome"], "human_review_requested")
+        self.assertEqual(state["next_action"], "validate_nvidia_fit_with_human")
         self.assertNotIn("executive_briefing", state)
         self.assertEqual(state["human_review_briefing"].schema_version, "human_review_briefing.v1")
         self.assertEqual(
@@ -120,7 +122,8 @@ class DownstreamWorkflowTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(state["next_action"], "human_review_requested")
+        self.assertEqual(state["workflow_outcome"], "human_review_requested")
+        self.assertEqual(state["next_action"], "validate_nvidia_fit_with_human")
         self.assertEqual(state["profile"], profile)
         self.assertEqual(state["assessment"].evidences, (startup_evidence,))
         self.assertEqual(state["human_review_briefing"].main_evidence, (startup_evidence,))
@@ -139,9 +142,7 @@ class DownstreamWorkflowTests(unittest.TestCase):
             snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
         )
         profile = _profile(startup_evidence)
-        workflow = build_local_downstream_workflow(
-            DownstreamWorkflowRuntime(corpus=load_nvidia_knowledge_corpus(_fixture_path()))
-        )
+        workflow = build_local_downstream_workflow(DownstreamWorkflowRuntime())
 
         state = workflow.invoke(
             {
@@ -153,7 +154,10 @@ class DownstreamWorkflowTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(state["next_action"], "needs_more_collection_or_human_review")
+        self.assertEqual(state["workflow_outcome"], "needs_more_collection_or_human_review")
+        self.assertEqual(state["next_action"], "resolve_blocking_evidence")
+        self.assertEqual(state["retrievals"], ())
+        self.assertEqual(state["errors"], ())
         self.assertEqual(state["human_review_briefing"].status, "ready_for_human_review")
         needs_more_branch = state["branch_decisions"][0]
         self.assertEqual(needs_more_branch.branch_name, "needs_more_collection_or_human_review")
@@ -182,7 +186,8 @@ class DownstreamWorkflowTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(state["next_action"], "briefing_generated")
+        self.assertEqual(state["workflow_outcome"], "briefing_generated")
+        self.assertEqual(state["next_action"], "prepare_technical_outreach")
         self.assertEqual(state["executive_briefing"].schema_version, "executive_briefing.v1")
         self.assertEqual(state["profile"], profile)
         error = state["errors"][0]
