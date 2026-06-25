@@ -6,13 +6,55 @@ import unittest
 from nvidia_startup_intel.ai_native_assessment import AINativeAssessment, DiagnosticQuality, TechnicalGap
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
-from nvidia_startup_intel.nvidia_knowledge import NVIDIAKnowledgeRetrieval, load_nvidia_knowledge_corpus
+from nvidia_startup_intel.nvidia_knowledge import (
+    NVIDIAKnowledgeRetrieval,
+    load_nvidia_knowledge_corpus,
+    retrieve_nvidia_knowledge_by_gap,
+)
 from nvidia_startup_intel.search_params import UNKNOWN
 from nvidia_startup_intel.startup_profile import ClaimSource, FieldEvidence, ProfileField, StartupProfile
 from nvidia_startup_intel.workflow_graph import DownstreamWorkflowRuntime, build_local_downstream_workflow
 
 
 class DownstreamWorkflowTests(unittest.TestCase):
+    def test_injected_retriever_adapter_keeps_framework_objects_out_of_workflow_state(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
+        )
+        profile = _profile(startup_evidence)
+        gap = _model_serving_gap(startup_evidence)
+        retrieval = retrieve_nvidia_knowledge_by_gap(
+            load_nvidia_knowledge_corpus(_fixture_path()),
+            run_id="run-issue-10",
+            gap_type=gap.gap_type,
+            description=gap.description,
+            startup_signals=("inferencia em producao",),
+            top_k=1,
+        )
+        retriever = FakeFrameworkRetriever(retrieval)
+        workflow = build_local_downstream_workflow(DownstreamWorkflowRuntime(knowledge_retriever=retriever))
+
+        state = workflow.invoke(
+            {
+                "run_id": "run-issue-10",
+                "profile": profile,
+                "evidence_groups": (),
+                "collection_quality": _collection_quality(),
+                "assessment": _assessment(gap),
+            }
+        )
+
+        self.assertEqual(state["workflow_outcome"], "briefing_generated")
+        self.assertEqual(state["retrievals"], (retrieval,))
+        self.assertEqual(state["recommendation_set"].schema_version, "nvidia_recommendation.v1")
+        self.assertEqual(state["executive_briefing"].schema_version, "executive_briefing.v1")
+        self.assertEqual(
+            retriever.requests,
+            (("run-issue-10", "model_serving", "Needs lower latency inference and production model serving.", 1),),
+        )
+        self.assertNotIn("raw_framework_node", state)
+        self.assertFalse(hasattr(state["retrievals"][0].results[0], "raw_framework_node"))
+
     def test_supported_gap_generates_executive_briefing_without_langgraph(self) -> None:
         startup_evidence = _startup_evidence(
             snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
@@ -199,6 +241,24 @@ class DownstreamWorkflowTests(unittest.TestCase):
 class FailingArtifactStore:
     def save_downstream_state(self, state: dict[str, object]) -> None:
         raise RuntimeError("fixture storage failure")
+
+
+class FakeFrameworkRetriever:
+    def __init__(self, retrieval: NVIDIAKnowledgeRetrieval) -> None:
+        self.retrieval = retrieval
+        self.raw_framework_node = object()
+        self.requests: tuple[tuple[str, str, str, int], ...] = ()
+
+    def retrieve_for_gap(
+        self,
+        *,
+        run_id: str,
+        gap: TechnicalGap,
+        startup_signals: tuple[str, ...],
+        top_k: int,
+    ) -> NVIDIAKnowledgeRetrieval:
+        self.requests = (*self.requests, (run_id, gap.gap_type, gap.description, top_k))
+        return self.retrieval
 
 
 def _fixture_path() -> Path:

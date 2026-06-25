@@ -1,0 +1,176 @@
+from __future__ import annotations
+
+import json
+import unittest
+
+from nvidia_startup_intel.framework_adapters import (
+    DeterministicFakeLLMClient,
+    DeterministicTopKReranker,
+    LLMGenerationRequest,
+    llm_generation_response_to_dict,
+    nvidia_rerank_result_to_dict,
+    rerank_nvidia_retrieval,
+)
+from nvidia_startup_intel.nvidia_knowledge import (
+    NVIDIACitation,
+    NVIDIAKnowledgeChunk,
+    NVIDIAKnowledgeDocument,
+    NVIDIAKnowledgeRetrieval,
+    RetrievedNVIDIAKnowledge,
+)
+
+
+class FrameworkAdapterContractTests(unittest.TestCase):
+    def test_llm_client_response_is_swappable_and_decoupled_from_embedding_contracts(self) -> None:
+        request = LLMGenerationRequest(
+            schema_version="llm_generation_request.v1",
+            purpose="briefing_narrative",
+            system_prompt="Render only validated briefing claims.",
+            user_prompt="Summarize the executive briefing without adding facts.",
+            structured_output_schema="executive_briefing.v1",
+            metadata={"run_id": "run-issue-19"},
+        )
+        grok_like_client = DeterministicFakeLLMClient(
+            provider="local_fake_grok",
+            model="grok-compatible-fixture",
+            model_version="v1",
+        )
+        ollama_like_client = DeterministicFakeLLMClient(
+            provider="local_fake_ollama",
+            model="ollama-compatible-fixture",
+            model_version="v1",
+        )
+
+        first_response = grok_like_client.generate(request)
+        second_response = ollama_like_client.generate(request)
+
+        self.assertEqual(first_response.schema_version, "llm_generation_response.v1")
+        self.assertEqual(first_response.request_purpose, "briefing_narrative")
+        self.assertEqual(first_response.structured_output_schema, "executive_briefing.v1")
+        self.assertEqual(second_response.structured_output_schema, "executive_briefing.v1")
+        self.assertEqual(first_response.content, second_response.content)
+        self.assertNotEqual(first_response.provider, second_response.provider)
+        self.assertNotEqual(first_response.model, second_response.model)
+
+        serialized = llm_generation_response_to_dict(first_response)
+        json.dumps(serialized)
+        self.assertEqual(serialized["provider"], "local_fake_grok")
+        self.assertNotIn("embedding_model", serialized)
+        self.assertNotIn("embedding_version", serialized)
+
+    def test_reranker_operates_only_on_top_k_and_preserves_original_retrieval_contract(self) -> None:
+        retrieval = _retrieval_with_ranked_candidates()
+        reranker = DeterministicTopKReranker(
+            rerank_scores_by_chunk_id={
+                "doc-a:0": 0.2,
+                "doc-b:0": 0.9,
+                "doc-c:0": 10.0,
+            }
+        )
+
+        rerank_result = rerank_nvidia_retrieval(retrieval, reranker, candidate_top_k=2)
+
+        self.assertEqual(rerank_result.schema_version, "nvidia_rerank.v1")
+        self.assertEqual(rerank_result.run_id, "run-rerank-001")
+        self.assertEqual(rerank_result.query, "model serving inference")
+        self.assertEqual(rerank_result.candidate_top_k, 2)
+        self.assertEqual([result.chunk.chunk_id for result in rerank_result.results], ["doc-b:0", "doc-a:0"])
+        self.assertNotIn("doc-c:0", [result.chunk.chunk_id for result in rerank_result.results])
+
+        top_result = rerank_result.results[0]
+        original_second = retrieval.results[1]
+        self.assertEqual(top_result.chunk, original_second.chunk)
+        self.assertEqual(top_result.citation, original_second.citation)
+        self.assertEqual(top_result.original_retrieval_rank, 2)
+        self.assertEqual(top_result.original_score, original_second.score)
+        self.assertEqual(top_result.original_bm25_score, original_second.bm25_score)
+        self.assertEqual(top_result.original_vector_score, original_second.vector_score)
+        self.assertEqual(top_result.original_hybrid_score, original_second.hybrid_score)
+        self.assertEqual(top_result.original_rationale, original_second.rationale)
+        self.assertEqual(top_result.rerank_rank, 1)
+        self.assertEqual(top_result.rerank_score, 0.9)
+        self.assertEqual(top_result.rerank_rationale, "deterministic_fixture_rerank_score")
+
+        serialized = nvidia_rerank_result_to_dict(rerank_result)
+        json.dumps(serialized)
+        self.assertEqual(serialized["results"][0]["chunk"]["chunk_id"], "doc-b:0")
+        self.assertEqual(serialized["results"][0]["original_retrieval_rank"], 2)
+        self.assertNotIn("framework_node", serialized["results"][0])
+
+
+def _retrieval_with_ranked_candidates() -> NVIDIAKnowledgeRetrieval:
+    document = NVIDIAKnowledgeDocument(
+        schema_version="nvidia_knowledge.v1",
+        corpus_version="test-corpus.v1",
+        document_id="doc-a",
+        title="Document A",
+        source_url="https://developer.nvidia.com/doc-a",
+        source_type="official_nvidia_developer_page",
+        ingested_at="2026-06-23T00:00:00Z",
+    )
+    chunks = (
+        _chunk("doc-a:0", "doc-a", 0, "NVIDIA NIM inference microservices."),
+        _chunk("doc-b:0", "doc-a", 1, "NVIDIA TensorRT optimizes inference latency."),
+        _chunk("doc-c:0", "doc-a", 2, "NVIDIA Inception supports startup ecosystem access."),
+    )
+    return NVIDIAKnowledgeRetrieval(
+        schema_version="nvidia_knowledge.v1",
+        run_id="run-rerank-001",
+        corpus_version="test-corpus.v1",
+        query="model serving inference",
+        results=(
+            _retrieved(document, chunks[0], rank=1, score=0.7, vector_score=0.3),
+            _retrieved(document, chunks[1], rank=2, score=0.6, vector_score=0.4),
+            _retrieved(document, chunks[2], rank=3, score=0.5, vector_score=0.5),
+        ),
+        documents=(document,),
+    )
+
+
+def _chunk(chunk_id: str, document_id: str, chunk_index: int, text: str) -> NVIDIAKnowledgeChunk:
+    return NVIDIAKnowledgeChunk(
+        schema_version="nvidia_knowledge.v1",
+        corpus_version="test-corpus.v1",
+        chunk_id=chunk_id,
+        document_id=document_id,
+        chunk_index=chunk_index,
+        topic="model_serving",
+        text=text,
+    )
+
+
+def _retrieved(
+    document: NVIDIAKnowledgeDocument,
+    chunk: NVIDIAKnowledgeChunk,
+    *,
+    rank: int,
+    score: float,
+    vector_score: float,
+) -> RetrievedNVIDIAKnowledge:
+    citation = NVIDIACitation(
+        schema_version="nvidia_knowledge.v1",
+        corpus_version=document.corpus_version,
+        document_id=document.document_id,
+        document_title=document.title,
+        source_url=document.source_url,
+        source_type=document.source_type,
+        ingested_at=document.ingested_at,
+        chunk_id=chunk.chunk_id,
+        excerpt=chunk.text,
+        chunk_index=chunk.chunk_index,
+    )
+    return RetrievedNVIDIAKnowledge(
+        chunk=chunk,
+        citation=citation,
+        score=score,
+        retrieval_strategy="hybrid_bm25_vector",
+        rationale=f"original rationale rank {rank}",
+        rank=rank,
+        bm25_score=score,
+        vector_score=vector_score,
+        hybrid_score=score + vector_score,
+    )
+
+
+if __name__ == "__main__":
+    unittest.main()
