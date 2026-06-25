@@ -1,0 +1,138 @@
+{
+  "schema_version": "nvidia_knowledge.v1",
+  "corpus_version": "official-nvidia-fixture.v1",
+  "documents": [
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "document_id": "nvidia-nim-developers",
+      "title": "NVIDIA NIM for Developers",
+      "source_url": "https://developer.nvidia.com/nim",
+      "source_type": "official_nvidia_developer_page",
+      "ingested_at": "2026-06-23T00:00:00Z",
+      "metadata": {
+        "official_source": true,
+        "language": "en"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "document_id": "nvidia-nemo-framework",
+      "title": "NVIDIA NeMo Framework User Guide",
+      "source_url": "https://docs.nvidia.com/nemo-framework/user-guide/latest/overview.html",
+      "source_type": "official_nvidia_documentation",
+      "ingested_at": "2026-06-23T00:00:00Z",
+      "metadata": {
+        "official_source": true,
+        "language": "en"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "document_id": "nvidia-cuda-x-data-science",
+      "title": "CUDA-X Data Science Libraries",
+      "source_url": "https://developer.nvidia.com/topics/ai/data-science/cuda-x-data-science-libraries",
+      "source_type": "official_nvidia_developer_page",
+      "ingested_at": "2026-06-23T00:00:00Z",
+      "metadata": {
+        "official_source": true,
+        "language": "en"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "document_id": "nvidia-deepstream-sdk",
+      "title": "DeepStream SDK",
+      "source_url": "https://developer.nvidia.com/deepstream-sdk",
+      "source_type": "official_nvidia_developer_page",
+      "ingested_at": "2026-06-23T00:00:00Z",
+      "metadata": {
+        "official_source": true,
+        "language": "en"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "document_id": "nvidia-inception",
+      "title": "Inception Program for Startups",
+      "source_url": "https://www.nvidia.com/en-us/startups/",
+      "source_type": "official_nvidia_program_page",
+      "ingested_at": "2026-06-23T00:00:00Z",
+      "metadata": {
+        "official_source": true,
+        "language": "en"
+      }
+    }
+  ],
+  "chunks": [
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "chunk_id": "nvidia-nim-developers:0",
+      "document_id": "nvidia-nim-developers",
+      "chunk_index": 0,
+      "topic": "model_serving",
+      "text": "NVIDIA NIM provides containers to self-host GPU-accelerated inferencing microservices.",
+      "metadata": {
+        "source_type": "official_nvidia_developer_page",
+        "ingested_at": "2026-06-23T00:00:00Z"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "chunk_id": "nvidia-nemo-framework:0",
+      "document_id": "nvidia-nemo-framework",
+      "chunk_index": 0,
+      "topic": "llm_customization",
+      "text": "It enables users to efficiently create, customize, and deploy new generative AI models.",
+      "metadata": {
+        "source_type": "official_nvidia_documentation",
+        "ingested_at": "2026-06-23T00:00:00Z"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "chunk_id": "nvidia-cuda-x-data-science:0",
+      "document_id": "nvidia-cuda-x-data-science",
+      "chunk_index": 0,
+      "topic": "data_acceleration",
+      "text": "cuDF is a GPU-accelerated library that optimizes fundamental DataFrame operations.",
+      "metadata": {
+        "source_type": "official_nvidia_developer_page",
+        "ingested_at": "2026-06-23T00:00:00Z"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "chunk_id": "nvidia-deepstream-sdk:0",
+      "document_id": "nvidia-deepstream-sdk",
+      "chunk_index": 0,
+      "topic": "computer_vision",
+      "text": "DeepStream SDK can be used to build end-to-end AI-powered applications to analyze video and sensor data.",
+      "metadata": {
+        "source_type": "official_nvidia_developer_page",
+        "ingested_at": "2026-06-23T00:00:00Z"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "chunk_id": "nvidia-inception:0",
+      "document_id": "nvidia-inception",
+      "chunk_index": 0,
+      "topic": "startup_program",
+      "text": "There are no application fees, deadlines, or cohorts.",
+      "metadata": {
+        "source_type": "official_nvidia_program_page",
+        "ingested_at": "2026-06-23T00:00:00Z"
+      }
+    }
+  ]
+}
