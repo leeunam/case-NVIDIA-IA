@@ -6,16 +6,29 @@ LLMs, vector databases, or framework-specific retriever objects.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, fields, is_dataclass
-from hashlib import sha256
-from typing import Mapping, Protocol
+import math
+import re
+from typing import Protocol
 
-from nvidia_startup_intel.nvidia_knowledge import NVIDIAKnowledgeChunk, NVIDIAKnowledgeCorpus
+from nvidia_startup_intel.nvidia_knowledge import (
+    NVIDIAKnowledgeChunk,
+    NVIDIAKnowledgeCorpus,
+    NVIDIAKnowledgeDocument,
+    NVIDIAKnowledgeRetrieval,
+    RetrievedNVIDIAKnowledge,
+    build_nvidia_knowledge_query,
+    nvidia_citation_from_chunk,
+)
 from nvidia_startup_intel.normalization import normalize_text
 
 
 SCHEMA_VERSION = "nvidia_embedding.v1"
 EmbeddingVector = tuple[float, ...]
+VECTOR_RETRIEVAL_STRATEGY = "vector_semantic"
+VECTOR_RANKING_STRATEGY = "cosine_similarity_desc"
+VECTOR_TIE_BREAKERS = ("document_id", "chunk_index", "chunk_id")
 DEFAULT_INDEX_PARAMETERS: dict[str, object] = {
     "distance_metric": "cosine",
     "index_type": "exact_in_memory",
@@ -116,21 +129,15 @@ class DeterministicFakeEmbeddingClient:
         return tuple(self._embed_text(text) for text in texts)
 
     def _embed_text(self, text: str) -> EmbeddingVector:
-        normalized_text = normalize_text(text)
-        return tuple(
-            _stable_unit_float(
-                "|".join(
-                    (
-                        self.metadata.embedding_provider,
-                        self.metadata.embedding_model,
-                        self.metadata.embedding_version,
-                        normalized_text,
-                        str(index),
-                    )
-                )
-            )
-            for index in range(self.metadata.dimension)
-        )
+        vector = [0.0 for _ in range(self.metadata.dimension)]
+        tokens = set(_embedding_tokens(text))
+        for feature_index, keywords in enumerate(_SEMANTIC_FIXTURE_FEATURES):
+            if feature_index >= self.metadata.dimension:
+                break
+            matches = sum(1 for token in tokens if token in keywords)
+            if matches:
+                vector[feature_index] = float(matches)
+        return _normalize_vector(tuple(vector))
 
 
 def build_nvidia_embedding_index(
@@ -178,6 +185,90 @@ def embed_nvidia_query(query: str, embedding_client: EmbeddingClient) -> NVIDIAQ
         query=query,
         metadata=embedding_client.metadata,
         vector=vector,
+    )
+
+
+def retrieve_nvidia_knowledge_by_vector(
+    corpus: NVIDIAKnowledgeCorpus,
+    embedding_index: NVIDIAEmbeddingIndex,
+    embedding_client: EmbeddingClient,
+    *,
+    run_id: str,
+    gap_type: str = "",
+    opportunity_type: str = "",
+    description: str = "",
+    startup_signals: tuple[str, ...] = (),
+    query_terms: tuple[str, ...] = (),
+    normalized_query: str = "",
+    top_k: int = 3,
+    min_vector_score: float = 0.0,
+) -> NVIDIAKnowledgeRetrieval:
+    """Retrieve citable NVIDIA chunks with exact in-memory vector search."""
+
+    _validate_embedding_index_for_retrieval(corpus, embedding_index, embedding_client)
+    all_query_terms = (*query_terms, normalized_query) if normalized_query else query_terms
+    query = build_nvidia_knowledge_query(
+        gap_type=gap_type,
+        opportunity_type=opportunity_type,
+        description=description,
+        startup_signals=startup_signals,
+        query_terms=all_query_terms,
+    )
+    if not query:
+        return NVIDIAKnowledgeRetrieval(
+            schema_version="nvidia_knowledge.v1",
+            run_id=run_id,
+            corpus_version=corpus.corpus_version,
+            query=query,
+            results=(),
+            documents=(),
+        )
+
+    query_embedding = embed_nvidia_query(query, embedding_client)
+    documents_by_id = {document.document_id: document for document in corpus.documents}
+    scored_embeddings = _deduplicate_vector_scores(
+        (
+            (
+                chunk_embedding.chunk,
+                _cosine_similarity(query_embedding.vector, chunk_embedding.vector),
+            )
+            for chunk_embedding in embedding_index.chunk_embeddings
+        ),
+        min_vector_score=min_vector_score,
+    )
+    results: list[RetrievedNVIDIAKnowledge] = []
+    result_documents: dict[str, NVIDIAKnowledgeDocument] = {}
+
+    for chunk, score in scored_embeddings[:top_k]:
+        document = documents_by_id.get(chunk.document_id)
+        if document is None:
+            continue
+        result_documents[document.document_id] = document
+        vector_score = round(score, 6)
+        results.append(
+            RetrievedNVIDIAKnowledge(
+                chunk=chunk,
+                citation=nvidia_citation_from_chunk(document, chunk),
+                score=vector_score,
+                retrieval_strategy=VECTOR_RETRIEVAL_STRATEGY,
+                rationale="Chunk embedding was nearest to the vectorized NVIDIA Knowledge query.",
+                rank=len(results) + 1,
+                bm25_score=0.0,
+                vector_score=vector_score,
+                embedding_metadata=_embedding_result_metadata(embedding_index.metadata),
+                index_parameters=dict(embedding_index.metadata.index_parameters),
+                ranking_strategy=VECTOR_RANKING_STRATEGY,
+                tie_breakers=VECTOR_TIE_BREAKERS,
+            )
+        )
+
+    return NVIDIAKnowledgeRetrieval(
+        schema_version="nvidia_knowledge.v1",
+        run_id=run_id,
+        corpus_version=corpus.corpus_version,
+        query=query,
+        results=tuple(results),
+        documents=tuple(result_documents.values()),
     )
 
 
@@ -247,10 +338,112 @@ def nvidia_query_embedding_to_dict(query_embedding: NVIDIAQueryEmbedding) -> dic
     return _to_plain_data(query_embedding)
 
 
-def _stable_unit_float(value: str) -> float:
-    integer = int.from_bytes(sha256(value.encode("utf-8")).digest()[:8], byteorder="big")
-    scaled = (integer / ((1 << 64) - 1)) * 2 - 1
-    return round(scaled, 6)
+_SEMANTIC_FIXTURE_FEATURES: tuple[frozenset[str], ...] = (
+    frozenset(
+        {
+            "containers",
+            "deployment",
+            "hosted",
+            "inference",
+            "inferencing",
+            "latency",
+            "microservices",
+            "nim",
+            "serving",
+        }
+    ),
+    frozenset(
+        {
+            "customization",
+            "customize",
+            "generative",
+            "llm",
+            "models",
+            "nemo",
+        }
+    ),
+    frozenset({"cudf", "dataframe", "dataframes", "operations"}),
+    frozenset({"computer", "deepstream", "sensor", "video", "vision"}),
+    frozenset({"cohorts", "deadlines", "fees", "inception", "program", "startup", "startups"}),
+)
+
+
+def _embedding_tokens(value: str) -> tuple[str, ...]:
+    return tuple(re.findall(r"[a-z0-9]+", normalize_text(value)))
+
+
+def _normalize_vector(vector: EmbeddingVector) -> EmbeddingVector:
+    magnitude = math.sqrt(sum(component * component for component in vector))
+    if magnitude == 0:
+        return vector
+    return tuple(round(component / magnitude, 6) for component in vector)
+
+
+def _cosine_similarity(left: EmbeddingVector, right: EmbeddingVector) -> float:
+    left_magnitude = math.sqrt(sum(component * component for component in left))
+    right_magnitude = math.sqrt(sum(component * component for component in right))
+    if left_magnitude == 0 or right_magnitude == 0:
+        return 0.0
+    dot_product = sum(
+        left_component * right_component
+        for left_component, right_component in zip(left, right, strict=True)
+    )
+    return dot_product / (left_magnitude * right_magnitude)
+
+
+def _deduplicate_vector_scores(
+    scored_chunks: Iterable[tuple[NVIDIAKnowledgeChunk, float]],
+    *,
+    min_vector_score: float,
+) -> list[tuple[NVIDIAKnowledgeChunk, float]]:
+    best_scores_by_chunk_id: dict[str, tuple[NVIDIAKnowledgeChunk, float]] = {}
+    for chunk, score in scored_chunks:
+        if score <= min_vector_score:
+            continue
+        current = best_scores_by_chunk_id.get(chunk.chunk_id)
+        if current is None or score > current[1]:
+            best_scores_by_chunk_id[chunk.chunk_id] = (chunk, score)
+    return sorted(
+        best_scores_by_chunk_id.values(),
+        key=lambda item: (-item[1], item[0].document_id, item[0].chunk_index, item[0].chunk_id),
+    )
+
+
+def _embedding_result_metadata(metadata: NVIDIAEmbeddingIndexMetadata) -> dict[str, object]:
+    return {
+        "schema_version": metadata.schema_version,
+        "corpus_version": metadata.corpus_version,
+        "embedding_provider": metadata.embedding_provider,
+        "embedding_model": metadata.embedding_model,
+        "embedding_version": metadata.embedding_version,
+        "dimension": metadata.dimension,
+        "expected_language_behavior": metadata.expected_language_behavior,
+    }
+
+
+def _validate_embedding_index_for_retrieval(
+    corpus: NVIDIAKnowledgeCorpus,
+    embedding_index: NVIDIAEmbeddingIndex,
+    embedding_client: EmbeddingClient,
+) -> None:
+    if embedding_index.metadata.corpus_version != corpus.corpus_version:
+        raise ValueError(
+            "embedding_index_corpus_version_mismatch:"
+            f"index_{embedding_index.metadata.corpus_version}:corpus_{corpus.corpus_version}"
+        )
+    if embedding_index.metadata.embedding_provider != embedding_client.metadata.embedding_provider:
+        raise ValueError("embedding_index_provider_mismatch")
+    if embedding_index.metadata.embedding_model != embedding_client.metadata.embedding_model:
+        raise ValueError("embedding_index_model_mismatch")
+    if embedding_index.metadata.embedding_version != embedding_client.metadata.embedding_version:
+        raise ValueError("embedding_index_version_mismatch")
+    if embedding_index.metadata.dimension != embedding_client.metadata.dimension:
+        raise ValueError(
+            "embedding_index_dimension_mismatch:"
+            f"index_{embedding_index.metadata.dimension}:client_{embedding_client.metadata.dimension}"
+        )
+    if embedding_index.metadata.index_parameters.get("distance_metric") != "cosine":
+        raise ValueError("unsupported_vector_distance_metric")
 
 
 def _validate_embedding_vectors(

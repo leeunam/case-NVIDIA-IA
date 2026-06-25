@@ -13,8 +13,16 @@ from nvidia_startup_intel.nvidia_embeddings import (
     embed_nvidia_query,
     nvidia_embedding_index_to_dict,
     nvidia_query_embedding_to_dict,
+    retrieve_nvidia_knowledge_by_vector,
 )
-from nvidia_startup_intel.nvidia_knowledge import load_nvidia_knowledge_corpus
+from nvidia_startup_intel.nvidia_knowledge import (
+    NVIDIAKnowledgeChunk,
+    NVIDIAKnowledgeCorpus,
+    NVIDIAKnowledgeDocument,
+    load_nvidia_knowledge_corpus,
+    nvidia_knowledge_retrieval_to_dict,
+    summarize_nvidia_retrieval_quality,
+)
 
 
 class NVIDIAEmbeddingContractTests(unittest.TestCase):
@@ -126,6 +134,168 @@ class NVIDIAEmbeddingContractTests(unittest.TestCase):
                 "index_parameters_changed",
             ),
         )
+
+    def test_vector_retrieval_finds_semantic_citation_for_model_serving_gap(self) -> None:
+        corpus = load_nvidia_knowledge_corpus(_fixture_path())
+        client = DeterministicFakeEmbeddingClient(dimension=6)
+        index = build_nvidia_embedding_index(corpus, client)
+
+        retrieval = retrieve_nvidia_knowledge_by_vector(
+            corpus,
+            index,
+            client,
+            run_id="run-vector-001",
+            gap_type="model_serving",
+            description="Need lower latency inference deployment.",
+            startup_signals=("self-hosted inference",),
+            top_k=2,
+        )
+
+        self.assertEqual(retrieval.schema_version, "nvidia_knowledge.v1")
+        self.assertEqual(retrieval.run_id, "run-vector-001")
+        self.assertEqual(retrieval.corpus_version, "official-nvidia-fixture.v1")
+        self.assertEqual(retrieval.results[0].chunk.topic, "model_serving")
+        self.assertEqual(retrieval.results[0].citation.document_id, "nvidia-nim-developers")
+        self.assertEqual(retrieval.results[0].rank, 1)
+        self.assertEqual(retrieval.results[0].retrieval_strategy, "vector_semantic")
+        self.assertEqual(retrieval.results[0].bm25_score, 0.0)
+        self.assertEqual(retrieval.results[0].vector_score, retrieval.results[0].score)
+        self.assertGreater(retrieval.results[0].vector_score, 0.0)
+        self.assertEqual(
+            retrieval.results[0].embedding_metadata,
+            {
+                "schema_version": "nvidia_embedding.v1",
+                "corpus_version": "official-nvidia-fixture.v1",
+                "embedding_provider": "local_fake",
+                "embedding_model": "deterministic-fake-embedding",
+                "embedding_version": "v1",
+                "dimension": 6,
+                "expected_language_behavior": "deterministic multilingual fixture text",
+            },
+        )
+        self.assertEqual(
+            retrieval.results[0].index_parameters,
+            {"distance_metric": "cosine", "index_type": "exact_in_memory"},
+        )
+        self.assertEqual(retrieval.results[0].ranking_strategy, "cosine_similarity_desc")
+        self.assertEqual(retrieval.results[0].tie_breakers, ("document_id", "chunk_index", "chunk_id"))
+
+    def test_vector_retrieval_returns_no_results_for_unmatched_normalized_query(self) -> None:
+        corpus = load_nvidia_knowledge_corpus(_fixture_path())
+        client = DeterministicFakeEmbeddingClient(dimension=6)
+        index = build_nvidia_embedding_index(corpus, client)
+
+        retrieval = retrieve_nvidia_knowledge_by_vector(
+            corpus,
+            index,
+            client,
+            run_id="run-vector-002",
+            normalized_query="tax invoicing accounts payable workflow",
+            top_k=3,
+        )
+
+        self.assertEqual(retrieval.query, "tax invoicing accounts payable workflow")
+        self.assertEqual(retrieval.results, ())
+        self.assertEqual(retrieval.documents, ())
+
+        quality = summarize_nvidia_retrieval_quality(retrieval)
+        self.assertFalse(quality.has_sufficient_citation)
+        self.assertEqual(quality.reasons, ("no_retrieved_citation",))
+
+    def test_vector_retrieval_orders_ties_by_stable_chunk_metadata(self) -> None:
+        document_b = NVIDIAKnowledgeDocument(
+            schema_version="nvidia_knowledge.v1",
+            corpus_version="test-corpus.v1",
+            document_id="doc-b",
+            title="Document B",
+            source_url="https://developer.nvidia.com/doc-b",
+            source_type="official_nvidia_developer_page",
+            ingested_at="2026-06-23T00:00:00Z",
+        )
+        document_a = NVIDIAKnowledgeDocument(
+            schema_version="nvidia_knowledge.v1",
+            corpus_version="test-corpus.v1",
+            document_id="doc-a",
+            title="Document A",
+            source_url="https://developer.nvidia.com/doc-a",
+            source_type="official_nvidia_developer_page",
+            ingested_at="2026-06-23T00:00:00Z",
+        )
+        corpus = NVIDIAKnowledgeCorpus(
+            schema_version="nvidia_knowledge.v1",
+            corpus_version="test-corpus.v1",
+            documents=(document_b, document_a),
+            chunks=(
+                NVIDIAKnowledgeChunk(
+                    schema_version="nvidia_knowledge.v1",
+                    corpus_version="test-corpus.v1",
+                    chunk_id="doc-b:0",
+                    document_id="doc-b",
+                    chunk_index=0,
+                    topic="model_serving",
+                    text="NIM inference microservices.",
+                ),
+                NVIDIAKnowledgeChunk(
+                    schema_version="nvidia_knowledge.v1",
+                    corpus_version="test-corpus.v1",
+                    chunk_id="doc-a:0",
+                    document_id="doc-a",
+                    chunk_index=0,
+                    topic="model_serving",
+                    text="NIM inference microservices.",
+                ),
+            ),
+        )
+        client = DeterministicFakeEmbeddingClient(dimension=6)
+        index = build_nvidia_embedding_index(corpus, client)
+
+        retrieval = retrieve_nvidia_knowledge_by_vector(
+            corpus,
+            index,
+            client,
+            run_id="run-vector-003",
+            normalized_query="inference microservices",
+            top_k=2,
+        )
+
+        self.assertEqual([result.citation.document_id for result in retrieval.results], ["doc-a", "doc-b"])
+        self.assertEqual([result.rank for result in retrieval.results], [1, 2])
+        self.assertEqual(retrieval.results[0].vector_score, retrieval.results[1].vector_score)
+
+    def test_vector_retrieval_serializes_metadata_for_commercial_opportunity_query(self) -> None:
+        corpus = load_nvidia_knowledge_corpus(_fixture_path())
+        client = DeterministicFakeEmbeddingClient(dimension=6)
+        index = build_nvidia_embedding_index(corpus, client)
+
+        retrieval = retrieve_nvidia_knowledge_by_vector(
+            corpus,
+            index,
+            client,
+            run_id="run-vector-004",
+            opportunity_type="startup_program",
+            description="Need startup program support with no fees, deadlines, or cohorts.",
+            top_k=1,
+        )
+
+        serialized = nvidia_knowledge_retrieval_to_dict(retrieval)
+        json.dumps(serialized)
+        result = serialized["results"][0]
+
+        self.assertIn("startup program", serialized["query"])
+        self.assertEqual(result["chunk"]["chunk_id"], "nvidia-inception:0")
+        self.assertEqual(result["citation"]["document_id"], "nvidia-inception")
+        self.assertEqual(result["retrieval_strategy"], "vector_semantic")
+        self.assertEqual(result["vector_score"], result["score"])
+        self.assertEqual(result["embedding_metadata"]["embedding_model"], "deterministic-fake-embedding")
+        self.assertEqual(result["embedding_metadata"]["embedding_version"], "v1")
+        self.assertEqual(result["embedding_metadata"]["dimension"], 6)
+        self.assertEqual(result["embedding_metadata"]["corpus_version"], "official-nvidia-fixture.v1")
+        self.assertEqual(result["index_parameters"], {"distance_metric": "cosine", "index_type": "exact_in_memory"})
+        self.assertEqual(result["ranking_strategy"], "cosine_similarity_desc")
+
+        quality = summarize_nvidia_retrieval_quality(retrieval)
+        self.assertTrue(quality.has_sufficient_citation)
+        self.assertEqual(quality.reasons, ("citation_sufficient",))
 
 
 def _fixture_path() -> Path:
