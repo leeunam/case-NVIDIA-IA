@@ -5,6 +5,7 @@ import sqlite3
 
 import pytest
 
+from nvidia_startup_intel.ai_native_assessment import assess_ai_native_maturity
 from nvidia_startup_intel.discovery import RawDiscoveryResult
 from nvidia_startup_intel.page_collection import FetchResponse, PageCollectionError, PageCollectionResult
 from nvidia_startup_intel.pipeline import fixture_fetcher, run_scraping_pipeline
@@ -43,8 +44,9 @@ def test_sql_repository_saves_and_loads_complete_pipeline_run() -> None:
                         "<html><head><title>NeuralMind</title></head><body>"
                         "Resumo: IA para documentos. Setor: dados. "
                         "Produto: Plataforma de IA documental. "
-                        "Sinais de IA: modelos de IA proprietarios. "
-                        "Tecnologias: machine learning."
+                        "Sinais de IA: modelos proprietarios e fine-tuning. "
+                        "Tecnologias: inferencia em producao, MLOps, dados proprietarios e feedback loop. "
+                        "Clientes: bancos. Founders: Ana Silva. Localizacao: Campinas, SP."
                         "</body></html>"
                     ),
                 )

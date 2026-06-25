@@ -11,6 +11,7 @@ from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass, field
 from typing import Any, TypedDict
 
+from nvidia_startup_intel.ai_native_assessment import AINativeAssessment
 from nvidia_startup_intel.collection_quality import summarize_collection_quality
 from nvidia_startup_intel.discovery import CandidateStartup, RawDiscoveryResult
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
@@ -18,6 +19,7 @@ from nvidia_startup_intel.page_collection import Fetcher, PageCollectionResult
 from nvidia_startup_intel.pipeline import (
     build_candidates,
     collect_pages_for_candidates,
+    assess_profiles_ai_native,
     extract_profiles_for_candidates,
     plan_startup_search,
     structure_profile_evidence,
@@ -41,6 +43,7 @@ class ScrapingGraphState(TypedDict, total=False):
     collected_pages_by_candidate: Mapping[str, PageCollectionResult]
     profiles: tuple[StartupProfile, ...]
     evidence_groups_by_profile: Mapping[str, tuple[FieldEvidenceGroup, ...]]
+    ai_native_assessments_by_profile: Mapping[str, AINativeAssessment]
     quality_summary: Any
     next_action: str
     errors: tuple[str, ...]
@@ -75,6 +78,7 @@ class LocalScrapingGraph:
             extract_profiles_node,
             structure_evidence_node,
             measure_quality_node,
+            assess_ai_native_node,
             decide_next_action_node,
         ):
             current = node(current, self.runtime)
@@ -102,6 +106,7 @@ def build_langgraph(runtime: ScrapingGraphRuntime) -> Any:
     graph.add_node("extract_profiles", lambda state: extract_profiles_node(state, runtime))
     graph.add_node("structure_evidence", lambda state: structure_evidence_node(state, runtime))
     graph.add_node("measure_quality", lambda state: measure_quality_node(state, runtime))
+    graph.add_node("assess_ai_native", lambda state: assess_ai_native_node(state, runtime))
     graph.add_node("decide_next_action", lambda state: decide_next_action_node(state, runtime))
     graph.set_entry_point("plan_search")
     graph.add_edge("plan_search", "execute_search")
@@ -110,7 +115,8 @@ def build_langgraph(runtime: ScrapingGraphRuntime) -> Any:
     graph.add_edge("collect_pages", "extract_profiles")
     graph.add_edge("extract_profiles", "structure_evidence")
     graph.add_edge("structure_evidence", "measure_quality")
-    graph.add_edge("measure_quality", "decide_next_action")
+    graph.add_edge("measure_quality", "assess_ai_native")
+    graph.add_edge("assess_ai_native", "decide_next_action")
     graph.add_edge("decide_next_action", END)
     return graph.compile()
 
@@ -171,9 +177,22 @@ def measure_quality_node(state: ScrapingGraphState, runtime: ScrapingGraphRuntim
     return _merge(state, quality_summary=summary)
 
 
+def assess_ai_native_node(state: ScrapingGraphState, runtime: ScrapingGraphRuntime) -> ScrapingGraphState:
+    assessments = assess_profiles_ai_native(
+        state.get("profiles", ()),
+        state.get("evidence_groups_by_profile", {}),
+        state["quality_summary"],
+        run_id=state.get("run_id", "local-graph-run"),
+    )
+    return _merge(state, ai_native_assessments_by_profile=assessments)
+
+
 def decide_next_action_node(state: ScrapingGraphState, runtime: ScrapingGraphRuntime) -> ScrapingGraphState:
     summary = state["quality_summary"]
-    next_action = "proceed_to_ai_native_evaluation" if summary.ready_for_evaluation else "needs_more_collection_or_human_review"
+    if not summary.ready_for_evaluation:
+        next_action = "needs_more_collection_or_human_review"
+    else:
+        next_action = "proceed_to_ai_native_evaluation"
     return _merge(state, next_action=next_action)
 
 
