@@ -197,6 +197,12 @@ class DownstreamWorkflowTests(unittest.TestCase):
         self.assertEqual(state["workflow_outcome"], "briefing_generated")
         self.assertEqual(state["next_action"], "prepare_technical_outreach")
         self.assertEqual(state["errors"], ())
+        self.assertEqual(state["gap_space_assessment"].schema_version, "gap_space_assessment.v1")
+        self.assertTrue(state["gap_space_assessment"].quality.ready_for_recommendation)
+        self.assertEqual(
+            state["gap_space_assessment"].retrieval_queries,
+            (state["retrievals"][0].query,),
+        )
         self.assertEqual(state["retrievals"][0].schema_version, "nvidia_knowledge.v1")
         self.assertEqual(state["recommendation_set"].schema_version, "nvidia_recommendation.v1")
         self.assertEqual(state["executive_briefing"].schema_version, "executive_briefing.v1")
@@ -250,6 +256,36 @@ class DownstreamWorkflowTests(unittest.TestCase):
         self.assertEqual(retrieval.results[0].index_parameters["lexical_top_k"], 1)
         self.assertEqual(retrieval.results[0].index_parameters["vector_top_k"], 1)
         self.assertEqual(retrieval.results[0].index_parameters["top_k"], 2)
+
+    def test_gap_space_human_review_gate_blocks_final_recommendation_for_unknown_stack_field(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
+        )
+        workflow = build_local_downstream_workflow(
+            DownstreamWorkflowRuntime(corpus=load_nvidia_knowledge_corpus(_fixture_path()))
+        )
+
+        state = workflow.invoke(
+            {
+                "run_id": "run-issue-61",
+                "profile": _profile(startup_evidence),
+                "evidence_groups": (),
+                "collection_quality": _collection_quality(unknown_fields=(("technologies_used", 1),)),
+                "assessment": _assessment(_model_serving_gap(startup_evidence)),
+            }
+        )
+
+        self.assertEqual(state["workflow_outcome"], "human_review_requested")
+        self.assertNotIn("executive_briefing", state)
+        self.assertEqual(state["human_review_briefing"].schema_version, "human_review_briefing.v1")
+        self.assertFalse(state["gap_space_assessment"].quality.ready_for_recommendation)
+        self.assertIn("unknown_field:technologies_used", state["gap_space_assessment"].quality.reasons)
+
+        recommendation_set = state["recommendation_set"]
+        self.assertEqual(recommendation_set.technical_recommendations, ())
+        self.assertEqual(recommendation_set.blocked_recommendations[0].state, "blocked")
+        self.assertIn("gap_space_not_ready_for_recommendation", recommendation_set.quality.reasons)
+        self.assertIn("unknown_field:technologies_used", recommendation_set.quality.reasons)
 
     def test_missing_citation_fixture_requests_human_review(self) -> None:
         startup_evidence = _startup_evidence(
@@ -593,7 +629,10 @@ def _assessment(gap: TechnicalGap) -> AINativeAssessment:
     )
 
 
-def _collection_quality() -> CollectionQualitySummary:
+def _collection_quality(
+    *,
+    unknown_fields: tuple[tuple[str, int], ...] = (),
+) -> CollectionQualitySummary:
     return CollectionQualitySummary(
         candidate_count=1,
         official_site_found_count=1,
@@ -601,7 +640,7 @@ def _collection_quality() -> CollectionQualitySummary:
         minimum_profile_complete_count=1,
         minimum_profile_complete_rate=1.0,
         average_evidences_per_startup=4.0,
-        unknown_fields=(),
+        unknown_fields=unknown_fields,
         source_success_rates=(),
         ready_for_evaluation=True,
         readiness_reasons=("ready_for_ai_native_evaluation",),
