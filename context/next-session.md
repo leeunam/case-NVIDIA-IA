@@ -10,7 +10,7 @@ O épico local de avaliação AI-native também está implementado: schema `ai_n
 
 O primeiro walking skeleton downstream também está implementado: `nvidia_knowledge.v1` com corpus local oficial e BM25 lexical, `nvidia_recommendation.v1` para uma recomendação técnica citada, hipótese e bloqueio, e `executive_briefing.v1` determinístico para recommendation set suportado.
 
-Validação atual: a suíte antiga ampla foi removida por estar inválida para o escopo atual. Existe suíte local focada no downstream atual com `PYTHONPATH=src python3 -m unittest discover -s tests`.
+Validação atual: a suíte antiga ampla foi removida por estar inválida para o escopo anterior. Existe suíte local padrão com `python -m pytest -q`, sem `PYTHONPATH` manual, além de `python -m ruff check .` e `python -m mypy src`.
 
 ## Arquitetura Fechada Para o Próximo Ciclo
 

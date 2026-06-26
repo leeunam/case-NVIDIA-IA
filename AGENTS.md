@@ -109,14 +109,14 @@ Use `context/learning-path.md` como roteiro de estudo do projeto, especialmente 
 
 Estado atual da validação:
 
-- Não há suíte automatizada válida no estado atual.
-- A suíte antiga foi removida por estar inválida para o escopo atual.
-- Não trate `python -m pytest` como comando de validação disponível até uma nova suíte ser criada.
-- Ruff e mypy ainda não estão configurados no projeto.
+- Existe suíte local padrão em pytest, sem rede, credenciais, Postgres real, LangGraph obrigatório ou provedores externos.
+- A suíte antiga ampla foi removida por estar inválida para o escopo anterior; a suíte atual cobre os contratos locais reconstruídos.
+- Ruff e mypy estão configurados com baseline permissivo para a fase atual.
 
-Comandos esperados no futuro, quando as ferramentas forem configuradas:
+Comandos de validação local:
 
 ```bash
+python -m pytest -q
 python -m ruff check .
 python -m mypy src
 ```
