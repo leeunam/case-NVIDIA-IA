@@ -250,13 +250,13 @@ Os adapters opcionais ficam atrás do contrato `LLMClient` em `framework_adapter
 
 ```bash
 export NVIDIA_STARTUP_INTEL_LLM_PROVIDER=litellm
-export NVIDIA_STARTUP_INTEL_LLM_MODEL=<provider/model>
+export NVIDIA_STARTUP_INTEL_LLM_MODEL=groq/<modelo-disponivel-na-sua-conta>
 export NVIDIA_STARTUP_INTEL_LLM_MODEL_VERSION=<model-version>
-export NVIDIA_STARTUP_INTEL_LLM_API_KEY_ENV=OPENROUTER_API_KEY
-export OPENROUTER_API_KEY=<secret>
+export NVIDIA_STARTUP_INTEL_LLM_API_KEY_ENV=GROQ_API_KEY
+export GROQ_API_KEY=<secret>
 ```
 
-`NVIDIA_STARTUP_INTEL_LLM_API_KEY_ENV` guarda apenas o nome da variável que contém a credencial; a credencial não deve entrar em código, fixtures, payloads persistidos ou artefatos de briefing. Configurações opcionais aceitas pelo adapter incluem `NVIDIA_STARTUP_INTEL_LLM_API_BASE`, `NVIDIA_STARTUP_INTEL_LLM_TIMEOUT_SECONDS`, `NVIDIA_STARTUP_INTEL_LLM_TEMPERATURE` e `NVIDIA_STARTUP_INTEL_LLM_MAX_TOKENS`.
+`NVIDIA_STARTUP_INTEL_LLM_API_KEY_ENV` guarda apenas o nome da variável que contém a credencial; a credencial não deve entrar em código, fixtures, prompts, payloads persistidos ou artefatos de briefing. O workflow downstream pode usar esse adapter para gerar `briefing_narrative.v1` com narrativas separadas de gap técnico e abordagem comercial, sempre derivadas dos artefatos validados e com fallback determinístico quando a resposta do LLM não for segura. Configurações opcionais aceitas pelo adapter incluem `NVIDIA_STARTUP_INTEL_LLM_API_BASE`, `NVIDIA_STARTUP_INTEL_LLM_TIMEOUT_SECONDS`, `NVIDIA_STARTUP_INTEL_LLM_TEMPERATURE` e `NVIDIA_STARTUP_INTEL_LLM_MAX_TOKENS`.
 
 Para LangChain, configure `NVIDIA_STARTUP_INTEL_LLM_PROVIDER=langchain` e passe um chat model já instanciado para `LangChainLLMClient`. Objetos LiteLLM ou LangChain devem ser convertidos para `LLMGenerationResponse` antes de qualquer Recommendation, Briefing, workflow state ou payload de persistência.
 

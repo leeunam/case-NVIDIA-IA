@@ -13,8 +13,10 @@ from typing import Any, Protocol, TypedDict
 
 from nvidia_startup_intel.ai_native_assessment import AINativeAssessment
 from nvidia_startup_intel.briefing import (
+    BriefingNarrative,
     ExecutiveBriefing,
     HumanReviewBriefing,
+    generate_briefing_narrative,
     generate_executive_briefing,
     generate_human_review_briefing,
 )
@@ -22,6 +24,7 @@ from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
 from nvidia_startup_intel.framework_adapters import (
     HybridNVIDIAPgvectorKnowledgeRetriever,
+    LLMClient,
     LocalBM25NVIDIAKnowledgeRetriever,
     NVIDIAKnowledgeRetriever,
     NVIDIAVectorKnowledgeStore,
@@ -57,6 +60,7 @@ class DownstreamWorkflowError:
 
 class DownstreamWorkflowState(TypedDict, total=False):
     run_id: str
+    user_query: str
     profile: StartupProfile
     evidence_groups: tuple[FieldEvidenceGroup, ...]
     collection_quality: CollectionQualitySummary
@@ -67,6 +71,7 @@ class DownstreamWorkflowState(TypedDict, total=False):
     recommendation_set: NVIDIARecommendationSet
     executive_briefing: ExecutiveBriefing
     human_review_briefing: HumanReviewBriefing
+    briefing_narrative: BriefingNarrative
     branch_decisions: tuple[DownstreamWorkflowBranch, ...]
     workflow_outcome: str
     next_action: str
@@ -91,6 +96,7 @@ class DownstreamWorkflowRuntime:
     vector_weight: float = 1.0
     rrf_k: int = 60
     min_vector_score: float = 0.0
+    llm_client: LLMClient | None = None
     artifact_store: DownstreamArtifactStore | None = None
     checkpoints: list[DownstreamWorkflowState] = field(default_factory=list)
 
@@ -391,14 +397,37 @@ def generate_downstream_briefing_node(
     }
     if recommendation_set.quality.ready_for_briefing:
         briefing = generate_executive_briefing(**briefing_args)
+        updates: dict[str, object] = {"executive_briefing": briefing}
+        if runtime.llm_client is not None:
+            updates["briefing_narrative"] = generate_briefing_narrative(
+                briefing=briefing,
+                llm_client=runtime.llm_client,
+                user_query=str(state.get("user_query", "")),
+                profile=state["profile"],
+                assessment=state["assessment"],
+                recommendation_set=recommendation_set,
+                retrievals=state.get("retrievals", ()),
+            )
         return _append_branch(
-            _merge(state, executive_briefing=briefing),
+            _merge(state, **updates),
             branch_name="briefing_generated",
             next_action="prepare_technical_outreach",
             audit_reason="executive_briefing_ready_for_use",
         )
 
-    return _merge(state, human_review_briefing=generate_human_review_briefing(**briefing_args))
+    briefing = generate_human_review_briefing(**briefing_args)
+    updates = {"human_review_briefing": briefing}
+    if runtime.llm_client is not None:
+        updates["briefing_narrative"] = generate_briefing_narrative(
+            briefing=briefing,
+            llm_client=runtime.llm_client,
+            user_query=str(state.get("user_query", "")),
+            profile=state["profile"],
+            assessment=state["assessment"],
+            recommendation_set=recommendation_set,
+            retrievals=state.get("retrievals", ()),
+        )
+    return _merge(state, **updates)
 
 
 def persist_downstream_artifacts_node(

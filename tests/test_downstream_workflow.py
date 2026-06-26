@@ -9,6 +9,7 @@ from unittest.mock import patch
 from nvidia_startup_intel.ai_native_assessment import AINativeAssessment, DiagnosticQuality, TechnicalGap
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
+from nvidia_startup_intel.framework_adapters import LLMGenerationRequest, LLMGenerationResponse
 from nvidia_startup_intel.nvidia_embeddings import DeterministicFakeEmbeddingClient, EmbeddingClient
 from nvidia_startup_intel.nvidia_knowledge import (
     NVIDIAKnowledgeCorpus,
@@ -109,7 +110,7 @@ class DownstreamWorkflowTests(unittest.TestCase):
                 "profile": _profile(startup_evidence),
                 "evidence_groups": (),
                 "collection_quality": _low_collection_quality(),
-                "assessment": _assessment(_model_serving_gap(startup_evidence)),
+                "assessment": _assessment(_model_serving_gap(startup_evidence), run_id="run-issue-62"),
             }
         )
 
@@ -287,6 +288,60 @@ class DownstreamWorkflowTests(unittest.TestCase):
         self.assertIn("gap_space_not_ready_for_recommendation", recommendation_set.quality.reasons)
         self.assertIn("unknown_field:technologies_used", recommendation_set.quality.reasons)
 
+    def test_groq_briefing_workflow_generates_separated_narrative_from_validated_context(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
+        )
+        llm_client = CapturingGroqBriefingLLM()
+        workflow = build_local_downstream_workflow(
+            DownstreamWorkflowRuntime(
+                corpus=load_nvidia_knowledge_corpus(_fixture_path()),
+                llm_client=llm_client,
+            )
+        )
+
+        state = workflow.invoke(
+            {
+                "run_id": "run-issue-62",
+                "user_query": "priorizar healthtech AI-native no Brasil",
+                "profile": _profile(startup_evidence),
+                "evidence_groups": (),
+                "collection_quality": _collection_quality(),
+                "assessment": _assessment(_model_serving_gap(startup_evidence), run_id="run-issue-62"),
+            }
+        )
+
+        narrative = state["briefing_narrative"]
+        self.assertEqual(state["workflow_outcome"], "briefing_generated")
+        self.assertEqual(narrative.schema_version, "briefing_narrative.v1")
+        self.assertEqual(narrative.run_id, "run-issue-62")
+        self.assertEqual(narrative.startup_identifier, "VetAI")
+        self.assertEqual(narrative.source_briefing_schema_version, "executive_briefing.v1")
+        self.assertIn("NVIDIA NIM Microservices", narrative.technical_gap_narrative)
+        self.assertIn("model_serving", narrative.technical_gap_narrative)
+        self.assertIn("prepare_technical_outreach", narrative.commercial_approach_narrative)
+        self.assertNotIn("Series A", narrative.technical_gap_narrative)
+        self.assertNotIn("Fortune 500", narrative.commercial_approach_narrative)
+
+        self.assertEqual(len(llm_client.requests), 1)
+        request = llm_client.requests[0]
+        self.assertIn("original_user_query: priorizar healthtech AI-native no Brasil", request.user_prompt)
+        self.assertIn("validated_startup_profile_claims:", request.user_prompt)
+        self.assertIn("assessment:", request.user_prompt)
+        self.assertIn("recommendation_set:", request.user_prompt)
+        self.assertIn("evidence_refs:", request.user_prompt)
+        self.assertIn("nvidia_citation_references:", request.user_prompt)
+        self.assertIn("cited_nvidia_rag_chunks:", request.user_prompt)
+        self.assertIn("nvidia-nim-developers:0", request.user_prompt)
+        self.assertEqual(request.metadata["run_id"], "run-issue-62")
+        self.assertEqual(request.metadata["source_briefing_schema_version"], "executive_briefing.v1")
+
+        self.assertEqual(narrative.llm_response.provider, "litellm")
+        self.assertEqual(narrative.llm_response.model, "groq/llama-3.1-8b-instant")
+        self.assertEqual(narrative.llm_response.metadata["adapter"], "litellm")
+        self.assertEqual(narrative.llm_response.metadata["configured_api_key_env_var"], "GROQ_API_KEY")
+        self.assertNotIn("secret", str(narrative.llm_response.metadata).lower())
+
     def test_missing_citation_fixture_requests_human_review(self) -> None:
         startup_evidence = _startup_evidence(
             snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
@@ -427,6 +482,29 @@ class DownstreamWorkflowTests(unittest.TestCase):
 class FailingArtifactStore:
     def save_downstream_state(self, state: dict[str, object]) -> None:
         raise RuntimeError("fixture storage failure")
+
+
+class CapturingGroqBriefingLLM:
+    def __init__(self) -> None:
+        self.requests: tuple[LLMGenerationRequest, ...] = ()
+
+    def generate(self, request: LLMGenerationRequest) -> LLMGenerationResponse:
+        self.requests = (*self.requests, request)
+        return LLMGenerationResponse(
+            schema_version="llm_generation_response.v1",
+            request_purpose=request.purpose,
+            provider="litellm",
+            model="groq/llama-3.1-8b-instant",
+            model_version="2026-06-26",
+            content=(
+                "technical_gap_narrative: Recommend NVIDIA NIM Microservices for model_serving.\n"
+                "commercial_approach_narrative: next_action prepare_technical_outreach."
+            ),
+            structured_output_schema=request.structured_output_schema,
+            finish_reason="stop",
+            usage={"total_tokens": 34},
+            metadata={"adapter": "litellm", "configured_api_key_env_var": "GROQ_API_KEY"},
+        )
 
 
 class FakeFrameworkRetriever:
@@ -606,10 +684,10 @@ def _model_serving_gap(evidence: FieldEvidence) -> TechnicalGap:
     )
 
 
-def _assessment(gap: TechnicalGap) -> AINativeAssessment:
+def _assessment(gap: TechnicalGap, *, run_id: str = "run-issue-10") -> AINativeAssessment:
     return AINativeAssessment(
         schema_version="ai_native_assessment.v1",
-        run_id="run-issue-10",
+        run_id=run_id,
         company_name="VetAI",
         classification="ai_native",
         confidence=0.82,

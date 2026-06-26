@@ -20,6 +20,7 @@ from nvidia_startup_intel.framework_adapters import (
     LLM_REQUEST_SCHEMA_VERSION,
 )
 from nvidia_startup_intel.nvidia_knowledge import NVIDIACitation
+from nvidia_startup_intel.nvidia_knowledge import NVIDIAKnowledgeRetrieval
 from nvidia_startup_intel.nvidia_recommendation import NVIDIARecommendationSet, NVIDIATechnicalRecommendation
 from nvidia_startup_intel.search_params import UNKNOWN
 from nvidia_startup_intel.startup_profile import FieldEvidence, ProfileField, StartupProfile
@@ -101,6 +102,8 @@ class BriefingNarrative:
     startup_identifier: str
     source_briefing_schema_version: str
     source_briefing_status: str
+    technical_gap_narrative: str
+    commercial_approach_narrative: str
     narrative_text: str
     claims: tuple[BriefingClaim, ...]
     unknowns: tuple[str, ...]
@@ -260,6 +263,11 @@ def generate_briefing_narrative(
     *,
     briefing: ExecutiveBriefing | HumanReviewBriefing,
     llm_client: LLMClient,
+    user_query: str = "",
+    profile: StartupProfile | None = None,
+    assessment: AINativeAssessment | None = None,
+    recommendation_set: NVIDIARecommendationSet | None = None,
+    retrievals: tuple[NVIDIAKnowledgeRetrieval, ...] = (),
 ) -> BriefingNarrative:
     """Generate an optional narrative draft from an existing briefing contract."""
 
@@ -273,7 +281,15 @@ def generate_briefing_narrative(
             "founders, priorities, or recommendations that are not in the source briefing. "
             "Preserve unknowns, risks, source references, claim types, and next action."
         ),
-        user_prompt=_briefing_narrative_prompt(briefing, claims),
+        user_prompt=_briefing_narrative_prompt(
+            briefing,
+            claims,
+            user_query=user_query,
+            profile=profile,
+            assessment=assessment,
+            recommendation_set=recommendation_set,
+            retrievals=retrievals,
+        ),
         structured_output_schema=BRIEFING_NARRATIVE_SCHEMA_VERSION,
         metadata={
             "run_id": briefing.run_id,
@@ -286,7 +302,13 @@ def generate_briefing_narrative(
         },
     )
     response = llm_client.generate(request)
-    narrative_text, safe_response, narrative_audit_reasons = _safe_narrative_output(
+    (
+        technical_gap_narrative,
+        commercial_approach_narrative,
+        narrative_text,
+        safe_response,
+        narrative_audit_reasons,
+    ) = _safe_narrative_output(
         response=response,
         briefing=briefing,
         claims=claims,
@@ -299,6 +321,8 @@ def generate_briefing_narrative(
         startup_identifier=briefing.startup_identifier,
         source_briefing_schema_version=briefing.schema_version,
         source_briefing_status=briefing.status,
+        technical_gap_narrative=technical_gap_narrative,
+        commercial_approach_narrative=commercial_approach_narrative,
         narrative_text=narrative_text,
         claims=claims,
         unknowns=_source_briefing_unknowns(briefing, claims),
@@ -695,13 +719,33 @@ def _source_briefing_review_reasons(
 def _briefing_narrative_prompt(
     briefing: ExecutiveBriefing | HumanReviewBriefing,
     claims: tuple[BriefingClaim, ...],
+    *,
+    user_query: str = "",
+    profile: StartupProfile | None = None,
+    assessment: AINativeAssessment | None = None,
+    recommendation_set: NVIDIARecommendationSet | None = None,
+    retrievals: tuple[NVIDIAKnowledgeRetrieval, ...] = (),
 ) -> str:
     lines = [
         f"source_schema: {briefing.schema_version}",
         f"source_status: {briefing.status}",
         f"startup_identifier: {briefing.startup_identifier}",
         f"next_action: {briefing.next_action}",
-        "claims:",
+        f"original_user_query: {user_query.strip() or UNKNOWN}",
+        "required_output:",
+        "technical_gap_narrative: <technical gap narrative using only the context below>",
+        "commercial_approach_narrative: <commercial approach narrative using only the context below>",
+        "validated_startup_profile_claims:",
+        *_profile_prompt_lines(profile, claims),
+        "assessment:",
+        *_assessment_prompt_lines(assessment),
+        "recommendation_set:",
+        *_recommendation_prompt_lines(recommendation_set),
+        "nvidia_citation_references:",
+        *_citation_prompt_lines(briefing.citation_references),
+        "cited_nvidia_rag_chunks:",
+        *_cited_rag_chunk_prompt_lines(retrievals, briefing.citation_references),
+        "source_briefing_claims:",
     ]
     for index, claim in enumerate(claims, start=1):
         lines.append(
@@ -741,6 +785,163 @@ def _briefing_narrative_prompt(
         )
 
     return "\n".join(lines)
+
+
+def _profile_prompt_lines(
+    profile: StartupProfile | None,
+    claims: tuple[BriefingClaim, ...],
+) -> tuple[str, ...]:
+    if profile is None:
+        profile_claims = tuple(claim for claim in claims if claim.section == "profile")
+        if not profile_claims:
+            return ("- unknown",)
+        return tuple(
+            (
+                f"- {claim.claim_type}: {claim.text} | "
+                f"evidence_refs: {_evidence_reference_text(claim.evidence_references)}"
+            )
+            for claim in profile_claims
+        )
+
+    lines: list[str] = []
+    for field_name in (
+        "company_name",
+        "official_site",
+        "company_summary",
+        "sector",
+        "product",
+        "ai_signals",
+        "technologies_used",
+        "customers",
+        "funding",
+        "founders",
+    ):
+        field_value = getattr(profile, field_name)
+        if not isinstance(field_value, ProfileField):
+            continue
+        lines.append(
+            (
+                f"- {field_name}: {field_value.value} | "
+                f"claim_source: {field_value.claim_source.value} | "
+                f"evidence_refs: {_evidence_reference_text(field_value.evidences)}"
+            )
+        )
+    return tuple(lines) or ("- unknown",)
+
+
+def _assessment_prompt_lines(assessment: AINativeAssessment | None) -> tuple[str, ...]:
+    if assessment is None:
+        return ("- unknown",)
+
+    lines = [
+        f"- schema_version: {assessment.schema_version}",
+        f"- run_id: {assessment.run_id}",
+        f"- classification: {assessment.classification}",
+        f"- confidence: {assessment.confidence:.2f}",
+        f"- ready_for_recommendation: {assessment.ready_for_recommendation}",
+        f"- nvidia_opportunity_urgency: {assessment.nvidia_opportunity_urgency}",
+        f"- diagnostic_reasons: {','.join(assessment.diagnostic_quality.reasons) or 'none'}",
+    ]
+    for gap in assessment.technical_gaps:
+        lines.append(
+            (
+                f"- technical_gap: {gap.gap_type} | severity: {gap.severity} | "
+                f"confidence: {gap.confidence:.2f} | description: {gap.description} | "
+                f"evidence_refs: {_evidence_reference_text(gap.evidences)}"
+            )
+        )
+    for risk in assessment.wrapper_dependency_risks:
+        lines.append(
+            (
+                f"- wrapper_risk: {risk.risk_type} | severity: {risk.severity} | "
+                f"confidence: {risk.confidence:.2f} | rationale: {risk.rationale} | "
+                f"evidence_refs: {_evidence_reference_text(risk.evidences)}"
+            )
+        )
+    return tuple(lines)
+
+
+def _recommendation_prompt_lines(
+    recommendation_set: NVIDIARecommendationSet | None,
+) -> tuple[str, ...]:
+    if recommendation_set is None:
+        return ("- unknown",)
+
+    lines = [
+        f"- schema_version: {recommendation_set.schema_version}",
+        f"- run_id: {recommendation_set.run_id}",
+        f"- startup_identifier: {recommendation_set.startup_identifier}",
+        f"- corpus_version: {recommendation_set.corpus_version}",
+        f"- final_nvidia_opportunity_priority: {recommendation_set.final_nvidia_opportunity_priority}",
+        f"- next_action: {recommendation_set.next_action}",
+        f"- ready_for_briefing: {recommendation_set.quality.ready_for_briefing}",
+        f"- quality_reasons: {','.join(recommendation_set.quality.reasons) or 'none'}",
+    ]
+    for recommendation in recommendation_set.technical_recommendations:
+        lines.append(
+            (
+                f"- supported_technical_recommendation: {recommendation.nvidia_technology} | "
+                f"gap: {recommendation.gap.gap_type} | rationale: {recommendation.technical_rationale} | "
+                f"startup_evidence_refs: {_evidence_reference_text(recommendation.startup_evidences)} | "
+                f"citation_refs: {_citation_reference_text(recommendation.nvidia_citations)}"
+            )
+        )
+    for recommendation in recommendation_set.hypotheses:
+        lines.append(
+            (
+                f"- hypothesis_recommendation: {recommendation.nvidia_technology} | "
+                f"gap: {recommendation.gap.gap_type} | rationale: {recommendation.technical_rationale} | "
+                f"startup_evidence_refs: {_evidence_reference_text(recommendation.startup_evidences)} | "
+                f"citation_refs: {_citation_reference_text(recommendation.nvidia_citations)}"
+            )
+        )
+    for recommendation in recommendation_set.blocked_recommendations:
+        lines.append(
+            (
+                f"- blocked_recommendation: {recommendation.nvidia_technology} | "
+                f"gap: {recommendation.gap.gap_type} | rationale: {recommendation.technical_rationale} | "
+                f"startup_evidence_refs: {_evidence_reference_text(recommendation.startup_evidences)} | "
+                f"citation_refs: {_citation_reference_text(recommendation.nvidia_citations)}"
+            )
+        )
+    return tuple(lines)
+
+
+def _citation_prompt_lines(citations: tuple[NVIDIACitation, ...]) -> tuple[str, ...]:
+    if not citations:
+        return ("- none",)
+    return tuple(
+        (
+            f"- document_id: {citation.document_id} | chunk_id: {citation.chunk_id} | "
+            f"title: {citation.document_title} | source_url: {citation.source_url}"
+        )
+        for citation in citations
+    )
+
+
+def _cited_rag_chunk_prompt_lines(
+    retrievals: tuple[NVIDIAKnowledgeRetrieval, ...],
+    citations: tuple[NVIDIACitation, ...],
+) -> tuple[str, ...]:
+    cited_chunk_ids = {citation.chunk_id for citation in citations}
+    if not retrievals or not cited_chunk_ids:
+        return ("- none",)
+
+    lines: list[str] = []
+    for retrieval in retrievals:
+        for result in retrieval.results:
+            if result.citation.chunk_id not in cited_chunk_ids:
+                continue
+            lines.append(
+                (
+                    f"- corpus_version: {retrieval.corpus_version} | "
+                    f"document_id: {result.citation.document_id} | "
+                    f"chunk_id: {result.citation.chunk_id} | "
+                    f"source_url: {result.citation.source_url} | "
+                    f"text: {result.chunk.text}"
+                )
+            )
+    return tuple(lines) or ("- none",)
 
 
 def _evidence_reference_text(evidences: tuple[FieldEvidence, ...]) -> str:
@@ -808,11 +1009,14 @@ def _safe_narrative_output(
     briefing: ExecutiveBriefing | HumanReviewBriefing,
     claims: tuple[BriefingClaim, ...],
     prompt: str,
-) -> tuple[str, LLMGenerationResponse, tuple[str, ...]]:
+) -> tuple[str, str, str, LLMGenerationResponse, tuple[str, ...]]:
     unsupported_terms = _unsupported_narrative_terms(response.content, prompt)
     if unsupported_terms:
+        technical_gap_narrative, commercial_approach_narrative = _fallback_narrative_sections(briefing, claims)
         return (
-            _fallback_narrative_text(briefing, claims),
+            technical_gap_narrative,
+            commercial_approach_narrative,
+            _combined_narrative_text(technical_gap_narrative, commercial_approach_narrative),
             _llm_response_without_unsafe_content(
                 response,
                 rejection_reason="unsupported_terms",
@@ -821,8 +1025,11 @@ def _safe_narrative_output(
             ("llm_narrative_rejected_unsupported_terms",),
         )
     if not response.content.strip():
+        technical_gap_narrative, commercial_approach_narrative = _fallback_narrative_sections(briefing, claims)
         return (
-            _fallback_narrative_text(briefing, claims),
+            technical_gap_narrative,
+            commercial_approach_narrative,
+            _combined_narrative_text(technical_gap_narrative, commercial_approach_narrative),
             _llm_response_without_unsafe_content(
                 response,
                 rejection_reason="empty_response",
@@ -830,7 +1037,57 @@ def _safe_narrative_output(
             ),
             ("llm_narrative_rejected_empty_response",),
         )
-    return response.content, response, ("llm_narrative_accepted",)
+
+    sections = _split_narrative_sections(response.content)
+    if sections is None:
+        technical_gap_narrative, commercial_approach_narrative = _fallback_narrative_sections(briefing, claims)
+        return (
+            technical_gap_narrative,
+            commercial_approach_narrative,
+            _combined_narrative_text(technical_gap_narrative, commercial_approach_narrative),
+            _llm_response_without_unsafe_content(
+                response,
+                rejection_reason="missing_required_sections",
+                unsupported_terms=(),
+            ),
+            ("llm_narrative_rejected_missing_required_sections",),
+        )
+
+    technical_gap_narrative, commercial_approach_narrative = sections
+    return (
+        technical_gap_narrative,
+        commercial_approach_narrative,
+        _combined_narrative_text(technical_gap_narrative, commercial_approach_narrative),
+        response,
+        ("llm_narrative_accepted",),
+    )
+
+
+def _split_narrative_sections(content: str) -> tuple[str, str] | None:
+    sections: dict[str, list[str]] = {
+        "technical_gap_narrative": [],
+        "commercial_approach_narrative": [],
+    }
+    current_section = ""
+    for line in content.splitlines():
+        stripped = line.strip()
+        lowered = stripped.lower()
+        if lowered.startswith("technical_gap_narrative:"):
+            current_section = "technical_gap_narrative"
+            sections[current_section].append(stripped.split(":", 1)[1].strip())
+            continue
+        if lowered.startswith("commercial_approach_narrative:"):
+            current_section = "commercial_approach_narrative"
+            sections[current_section].append(stripped.split(":", 1)[1].strip())
+            continue
+        if current_section and stripped:
+            sections[current_section].append(stripped)
+
+    technical_gap_narrative = " ".join(sections["technical_gap_narrative"]).strip()
+    commercial_approach_narrative = " ".join(sections["commercial_approach_narrative"]).strip()
+    if not technical_gap_narrative or not commercial_approach_narrative:
+        return None
+    return technical_gap_narrative, commercial_approach_narrative
 
 
 def _unsupported_narrative_terms(content: str, prompt: str) -> tuple[str, ...]:
@@ -880,6 +1137,14 @@ def _fallback_narrative_text(
     briefing: ExecutiveBriefing | HumanReviewBriefing,
     claims: tuple[BriefingClaim, ...],
 ) -> str:
+    technical_gap_narrative, commercial_approach_narrative = _fallback_narrative_sections(briefing, claims)
+    return _combined_narrative_text(technical_gap_narrative, commercial_approach_narrative)
+
+
+def _fallback_narrative_sections(
+    briefing: ExecutiveBriefing | HumanReviewBriefing,
+    claims: tuple[BriefingClaim, ...],
+) -> tuple[str, str]:
     lines: list[str] = []
     if isinstance(briefing, ExecutiveBriefing):
         lines.append(briefing.executive_summary)
@@ -891,8 +1156,29 @@ def _fallback_narrative_text(
     lines.extend(f"{claim.claim_type}: {claim.text}" for claim in claims)
     lines.extend(f"unknown: {unknown}" for unknown in _source_briefing_unknowns(briefing, claims))
     lines.extend(f"risk: {risk}" for risk in _source_briefing_risks(briefing))
-    lines.append(f"next_action: {briefing.next_action}")
-    return " ".join(lines)
+    technical_gap_narrative = " ".join(lines)
+
+    commercial_lines: list[str] = []
+    if isinstance(briefing, ExecutiveBriefing):
+        commercial_lines.append(f"opportunity: {briefing.opportunity}")
+    else:
+        commercial_lines.extend(f"review_reason: {reason}" for reason in briefing.review_reasons)
+    commercial_lines.extend(
+        f"pending_question: {question.priority}: {question.field_name}: {question.question}"
+        for question in briefing.pending_questions
+    )
+    commercial_lines.append(f"next_action: {briefing.next_action}")
+    return technical_gap_narrative, " ".join(commercial_lines)
+
+
+def _combined_narrative_text(
+    technical_gap_narrative: str,
+    commercial_approach_narrative: str,
+) -> str:
+    return (
+        f"technical_gap_narrative: {technical_gap_narrative} "
+        f"commercial_approach_narrative: {commercial_approach_narrative}"
+    )
 
 
 def _to_plain_data(value: object) -> object:

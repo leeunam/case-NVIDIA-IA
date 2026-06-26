@@ -7,7 +7,8 @@ import unittest
 from nvidia_startup_intel.ai_native_assessment import AINativeAssessment, DiagnosticQuality, TechnicalGap
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
-from nvidia_startup_intel.nvidia_knowledge import load_nvidia_knowledge_corpus
+from nvidia_startup_intel.framework_adapters import LLMGenerationRequest, LLMGenerationResponse
+from nvidia_startup_intel.nvidia_knowledge import NVIDIAKnowledgeRetrieval, load_nvidia_knowledge_corpus
 from nvidia_startup_intel.persistence import JsonDownstreamArtifactStore, create_pipeline_run, load_json
 from nvidia_startup_intel.search_params import UNKNOWN
 from nvidia_startup_intel.sql_repository import sqlite_repository
@@ -70,6 +71,56 @@ class DownstreamPersistenceTests(unittest.TestCase):
             self.assertFalse((run.processed_dir / "downstream_retrievals.json").exists())
             self.assertFalse((run.processed_dir / "downstream_recommendation_set.json").exists())
             self.assertFalse((run.processed_dir / "downstream_briefing.json").exists())
+
+    def test_workflow_persists_groq_briefing_narrative_json_with_llm_metadata(self) -> None:
+        with TemporaryDirectory() as base_dir:
+            run = create_pipeline_run(base_dir, run_id="run-issue-62-json")
+            startup_evidence = _startup_evidence(
+                snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
+            )
+            workflow = build_local_downstream_workflow(
+                DownstreamWorkflowRuntime(
+                    corpus=load_nvidia_knowledge_corpus(_fixture_path()),
+                    llm_client=GroqNarrativeLLM(),
+                    artifact_store=JsonDownstreamArtifactStore(run),
+                )
+            )
+
+            state = workflow.invoke(
+                {
+                    "run_id": run.run_id,
+                    "user_query": "priorizar healthtech AI-native no Brasil",
+                    "profile": _profile(startup_evidence),
+                    "evidence_groups": (_evidence_group(startup_evidence),),
+                    "collection_quality": _collection_quality(),
+                    "assessment": _assessment(_model_serving_gap(startup_evidence), run_id=run.run_id),
+                }
+            )
+
+            startup_dir = run.processed_dir / "downstream" / "VetAI"
+            narrative = load_json(startup_dir / "briefing_narrative.json")
+            serialized = str(narrative).lower()
+
+            self.assertEqual(state["errors"], ())
+            self.assertEqual(narrative["schema_version"], "briefing_narrative.v1")
+            self.assertEqual(narrative["run_id"], "run-issue-62-json")
+            self.assertEqual(narrative["startup_identifier"], "VetAI")
+            self.assertEqual(narrative["source_briefing_schema_version"], "executive_briefing.v1")
+            self.assertIn("NVIDIA NIM Microservices", narrative["technical_gap_narrative"])
+            self.assertIn("prepare_technical_outreach", narrative["commercial_approach_narrative"])
+            self.assertEqual(narrative["llm_request"]["metadata"]["run_id"], "run-issue-62-json")
+            self.assertEqual(
+                narrative["llm_request"]["metadata"]["source_briefing_schema_version"],
+                "executive_briefing.v1",
+            )
+            self.assertEqual(narrative["llm_response"]["provider"], "litellm")
+            self.assertEqual(narrative["llm_response"]["model"], "groq/llama-3.1-8b-instant")
+            self.assertEqual(narrative["llm_response"]["metadata"]["adapter"], "litellm")
+            self.assertEqual(
+                narrative["llm_response"]["metadata"]["configured_api_key_env_var"],
+                "GROQ_API_KEY",
+            )
+            self.assertNotIn("secret", serialized)
 
     def test_json_downstream_snapshots_are_namespaced_by_startup(self) -> None:
         with TemporaryDirectory() as base_dir:
@@ -174,6 +225,56 @@ class DownstreamPersistenceTests(unittest.TestCase):
             stored.recommendation_sets[0]["technical_recommendations"][0]["nvidia_citations"][0]["chunk_id"],
         )
 
+    def test_sql_repository_persists_human_review_narrative_with_llm_metadata(self) -> None:
+        repository = sqlite_repository()
+        run_id = repository.create_run(run_id="run-sql-human-review-narrative")
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
+        )
+        retrieval_without_citation = NVIDIAKnowledgeRetrieval(
+            schema_version="nvidia_knowledge.v1",
+            run_id=run_id,
+            corpus_version="official-nvidia-fixture.v1",
+            query="unrelated commercial billing workflow",
+            results=(),
+            documents=(),
+        )
+        workflow = build_local_downstream_workflow(
+            DownstreamWorkflowRuntime(
+                retrievals=(retrieval_without_citation,),
+                llm_client=GroqNarrativeLLM(),
+                artifact_store=repository,
+            )
+        )
+
+        state = workflow.invoke(
+            {
+                "run_id": run_id,
+                "user_query": "priorizar healthtech AI-native no Brasil",
+                "profile": _profile(startup_evidence),
+                "evidence_groups": (_evidence_group(startup_evidence),),
+                "collection_quality": _collection_quality(),
+                "assessment": _assessment(_model_serving_gap(startup_evidence), run_id=run_id),
+            }
+        )
+        stored = repository.load_downstream_artifacts(run_id, startup_identifier="VetAI")
+        briefings_by_schema = {briefing["schema_version"]: briefing for briefing in stored.briefings}
+        narrative = briefings_by_schema["briefing_narrative.v1"]
+
+        self.assertEqual(state["workflow_outcome"], "human_review_requested")
+        self.assertEqual(len(stored.briefings), 2)
+        self.assertIn("human_review_briefing.v1", briefings_by_schema)
+        self.assertEqual(narrative["run_id"], run_id)
+        self.assertEqual(narrative["startup_identifier"], "VetAI")
+        self.assertEqual(narrative["source_briefing_schema_version"], "human_review_briefing.v1")
+        self.assertEqual(narrative["llm_request"]["metadata"]["run_id"], run_id)
+        self.assertEqual(
+            narrative["llm_request"]["metadata"]["source_briefing_schema_version"],
+            "human_review_briefing.v1",
+        )
+        self.assertEqual(narrative["llm_response"]["provider"], "litellm")
+        self.assertEqual(narrative["llm_response"]["metadata"]["configured_api_key_env_var"], "GROQ_API_KEY")
+
     def test_sql_repository_reprocesses_briefing_without_repeating_scraping_or_retrieval(self) -> None:
         repository = sqlite_repository()
         run_id = repository.create_run(run_id="run-sql-reprocess")
@@ -210,6 +311,30 @@ class DownstreamPersistenceTests(unittest.TestCase):
         self.assertEqual(stored_after.retrievals, stored_before.retrievals)
         self.assertEqual(len(stored_after.recommendation_sets), 1)
         self.assertEqual(len(stored_after.briefings), 1)
+
+
+class GroqNarrativeLLM:
+    def generate(self, request: LLMGenerationRequest) -> LLMGenerationResponse:
+        next_action = (
+            "validate_nvidia_fit_with_human"
+            if "validate_nvidia_fit_with_human" in request.user_prompt
+            else "prepare_technical_outreach"
+        )
+        return LLMGenerationResponse(
+            schema_version="llm_generation_response.v1",
+            request_purpose=request.purpose,
+            provider="litellm",
+            model="groq/llama-3.1-8b-instant",
+            model_version="2026-06-26",
+            content=(
+                "technical_gap_narrative: Recommend NVIDIA NIM Microservices for model_serving.\n"
+                f"commercial_approach_narrative: next_action {next_action}."
+            ),
+            structured_output_schema=request.structured_output_schema,
+            finish_reason="stop",
+            usage={"total_tokens": 34},
+            metadata={"adapter": "litellm", "configured_api_key_env_var": "GROQ_API_KEY"},
+        )
 
 
 def _fixture_path() -> Path:

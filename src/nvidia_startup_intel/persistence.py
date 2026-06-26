@@ -17,7 +17,11 @@ import shutil
 from typing import Any
 from uuid import uuid4
 
-from nvidia_startup_intel.briefing import executive_briefing_to_dict, human_review_briefing_to_dict
+from nvidia_startup_intel.briefing import (
+    briefing_narrative_to_dict,
+    executive_briefing_to_dict,
+    human_review_briefing_to_dict,
+)
 from nvidia_startup_intel.nvidia_knowledge import nvidia_knowledge_retrieval_to_dict
 from nvidia_startup_intel.nvidia_recommendation import nvidia_recommendation_set_to_dict
 
@@ -42,10 +46,12 @@ class JsonDownstreamArtifactStore:
         recommendation_set = state.get("recommendation_set")
         executive_briefing = state.get("executive_briefing")
         human_review_briefing = state.get("human_review_briefing")
+        briefing_narrative = state.get("briefing_narrative")
         startup_identifier = _downstream_startup_identifier(
             recommendation_set=recommendation_set,
             executive_briefing=executive_briefing,
             human_review_briefing=human_review_briefing,
+            briefing_narrative=briefing_narrative,
             profile=state.get("profile"),
             assessment=state.get("assessment"),
         )
@@ -62,6 +68,8 @@ class JsonDownstreamArtifactStore:
             save_downstream_briefing(self.run, executive_briefing)
         if human_review_briefing is not None:
             save_downstream_briefing(self.run, human_review_briefing)
+        if briefing_narrative is not None:
+            save_downstream_briefing(self.run, briefing_narrative)
 
 
 def create_pipeline_run(
@@ -160,11 +168,17 @@ def save_downstream_recommendation_set(run: PipelineRun, recommendation_set: Any
 
 
 def save_downstream_briefing(run: PipelineRun, briefing: Any) -> Path:
-    if getattr(briefing, "schema_version", "") == "human_review_briefing.v1":
+    schema_version = getattr(briefing, "schema_version", "")
+    if schema_version == "human_review_briefing.v1":
         payload = human_review_briefing_to_dict(briefing)
+        filename = "briefing.json"
+    elif schema_version == "briefing_narrative.v1":
+        payload = briefing_narrative_to_dict(briefing)
+        filename = "briefing_narrative.json"
     else:
         payload = executive_briefing_to_dict(briefing)
-    return _write_json(_downstream_artifact_path(run, briefing.startup_identifier, "briefing.json"), payload)
+        filename = "briefing.json"
+    return _write_json(_downstream_artifact_path(run, briefing.startup_identifier, filename), payload)
 
 
 def load_collected_pages(run: PipelineRun) -> dict[str, Any]:
@@ -192,13 +206,14 @@ def _downstream_startup_identifier(
     recommendation_set: Any,
     executive_briefing: Any,
     human_review_briefing: Any,
+    briefing_narrative: Any = None,
     profile: Any = None,
     assessment: Any = None,
 ) -> str:
-    for artifact in (recommendation_set, executive_briefing, human_review_briefing):
+    for artifact in (recommendation_set, executive_briefing, human_review_briefing, briefing_narrative):
         startup_identifier = getattr(artifact, "startup_identifier", None)
         if startup_identifier:
-            return startup_identifier
+            return str(startup_identifier)
     profile_company_name = getattr(getattr(profile, "company_name", None), "value", None)
     if profile_company_name:
         return str(profile_company_name)
