@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from nvidia_startup_intel.ai_native_assessment import AINativeAssessment, TechnicalGap
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
+from nvidia_startup_intel.gap_space_assessment import GapSpaceAssessment
 from nvidia_startup_intel.normalization import normalize_text
 from nvidia_startup_intel.nvidia_knowledge import (
     NVIDIACitation,
@@ -138,6 +139,7 @@ def build_nvidia_recommendations(
     assessment: AINativeAssessment,
     retrievals: tuple[NVIDIAKnowledgeRetrieval, ...],
     commercial_opportunities: tuple[CommercialOpportunity, ...] = (),
+    gap_space_assessment: GapSpaceAssessment | None = None,
 ) -> NVIDIARecommendationSet:
     """Build a recommendation set from upstream diagnosis and NVIDIA citations."""
 
@@ -146,6 +148,7 @@ def build_nvidia_recommendations(
         collection_quality=collection_quality,
         assessment=assessment,
         evidence_groups=evidence_groups,
+        gap_space_assessment=gap_space_assessment,
     )
     supported_candidates: list[tuple[float, NVIDIATechnicalRecommendation]] = []
     alternative_candidates: list[tuple[float, NVIDIATechnicalRecommendation]] = []
@@ -775,6 +778,7 @@ def _blocking_context_reasons(
     collection_quality: CollectionQualitySummary,
     assessment: AINativeAssessment,
     evidence_groups: tuple[FieldEvidenceGroup, ...],
+    gap_space_assessment: GapSpaceAssessment | None = None,
 ) -> tuple[str, ...]:
     reasons: list[str] = []
     if not collection_quality.ready_for_evaluation:
@@ -788,6 +792,9 @@ def _blocking_context_reasons(
     if _has_excessive_unknown_fields(collection_quality):
         reasons.append("excessive_unknown_fields")
         reasons.extend(f"unknown_field:{field_name}" for field_name in _unknown_field_names(collection_quality))
+    if gap_space_assessment is not None and not gap_space_assessment.quality.ready_for_recommendation:
+        reasons.append("gap_space_not_ready_for_recommendation")
+        reasons.extend(reason for reason in gap_space_assessment.quality.reasons if reason != "gap_space_ready_for_recommendation")
     return tuple(reasons)
 
 
@@ -1140,6 +1147,7 @@ def _is_quality_gate_reason(reason: str) -> bool:
     return (
         reason.startswith("missing_")
         or reason.startswith("low_")
+        or reason.startswith("unknown_field:")
         or reason.endswith("_not_ready")
         or reason.endswith("_not_covered_by_recommendation_rules")
         or reason.endswith("_not_covered_by_program_rules")
@@ -1149,6 +1157,7 @@ def _is_quality_gate_reason(reason: str) -> bool:
             "conflicting_startup_evidence",
             "excessive_unknown_fields",
             "generic_inception_without_specific_gap_or_opportunity",
+            "gap_space_not_ready_for_recommendation",
             "high_wrapper_risk",
         }
     )

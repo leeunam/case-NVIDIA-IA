@@ -26,6 +26,7 @@ from nvidia_startup_intel.framework_adapters import (
     NVIDIAKnowledgeRetriever,
     NVIDIAVectorKnowledgeStore,
 )
+from nvidia_startup_intel.gap_space_assessment import GapSpaceAssessment, assess_gap_space
 from nvidia_startup_intel.nvidia_embeddings import EmbeddingClient
 from nvidia_startup_intel.nvidia_knowledge import (
     NVIDIAKnowledgeCorpus,
@@ -60,6 +61,7 @@ class DownstreamWorkflowState(TypedDict, total=False):
     evidence_groups: tuple[FieldEvidenceGroup, ...]
     collection_quality: CollectionQualitySummary
     assessment: AINativeAssessment
+    gap_space_assessment: GapSpaceAssessment
     corpus: NVIDIAKnowledgeCorpus
     retrievals: tuple[NVIDIAKnowledgeRetrieval, ...]
     recommendation_set: NVIDIARecommendationSet
@@ -104,6 +106,7 @@ class LocalDownstreamWorkflow:
         current = initialize_downstream_state_node(state, self.runtime)
         for node in (
             decide_recommendation_readiness_node,
+            assess_gap_space_node,
             retrieve_nvidia_knowledge_node,
             build_recommendations_node,
             decide_briefing_readiness_node,
@@ -142,6 +145,10 @@ def build_downstream_langgraph(runtime: DownstreamWorkflowRuntime) -> Any:
         lambda state: retrieve_nvidia_knowledge_node(state, runtime),
     )
     graph.add_node(
+        "assess_gap_space",
+        lambda state: assess_gap_space_node(state, runtime),
+    )
+    graph.add_node(
         "build_recommendations",
         lambda state: build_recommendations_node(state, runtime),
     )
@@ -168,10 +175,11 @@ def build_downstream_langgraph(runtime: DownstreamWorkflowRuntime) -> Any:
         "decide_recommendation_readiness",
         _route_after_recommendation_readiness,
         {
-            "ready_for_recommendation": "retrieve_nvidia_knowledge",
-            "needs_more_collection_or_human_review": "retrieve_nvidia_knowledge",
+            "ready_for_recommendation": "assess_gap_space",
+            "needs_more_collection_or_human_review": "assess_gap_space",
         },
     )
+    graph.add_edge("assess_gap_space", "retrieve_nvidia_knowledge")
     graph.add_edge("retrieve_nvidia_knowledge", "build_recommendations")
     graph.add_edge("build_recommendations", "decide_briefing_readiness")
     graph.add_conditional_edges(
@@ -306,6 +314,33 @@ def retrieve_nvidia_knowledge_node(
     return _merge(state, retrievals=tuple(retrievals))
 
 
+def assess_gap_space_node(
+    state: DownstreamWorkflowState,
+    runtime: DownstreamWorkflowRuntime,
+) -> DownstreamWorkflowState:
+    if _has_branch(state, "needs_more_collection_or_human_review"):
+        return state
+    if state.get("gap_space_assessment") is not None:
+        return state
+
+    corpus = state.get("corpus") or runtime.corpus
+    if corpus is None:
+        return state
+
+    assessment = state["assessment"]
+    return _merge(
+        state,
+        gap_space_assessment=assess_gap_space(
+            profile=state["profile"],
+            collection_quality=state["collection_quality"],
+            assessment=assessment,
+            evidence_groups=state.get("evidence_groups", ()),
+            corpus=corpus,
+            run_id=state.get("run_id", assessment.run_id),
+        ),
+    )
+
+
 def build_recommendations_node(
     state: DownstreamWorkflowState,
     runtime: DownstreamWorkflowRuntime,
@@ -316,6 +351,7 @@ def build_recommendations_node(
         collection_quality=state["collection_quality"],
         assessment=state["assessment"],
         retrievals=state.get("retrievals", ()),
+        gap_space_assessment=state.get("gap_space_assessment"),
     )
     return _merge(state, recommendation_set=recommendation_set)
 
