@@ -14,6 +14,7 @@ Este status significa que existe um walking skeleton funcional e auditável para
 - A coleta consulta `robots.txt` quando recebe `RobotsCache`, bloqueia URLs não permitidas e respeita `crawl-delay`.
 - A extração HTML é injetável e possui adapter para trafilatura + BeautifulSoup.
 - A CLI de coleta real usa Playwright por padrão via `PlaywrightPageRenderer`; o caminho sem navegador fica reservado para testes/debug.
+- Existe smoke Playwright opt-in para validar browser instalado sem entrar na suíte default.
 - Perfil estruturado usa schema `startup_profile.v1`.
 - Campos sem evidência suficiente retornam `unknown`.
 - Evidências são agrupadas por campo e conflitos são marcados.
@@ -51,7 +52,7 @@ Existe suíte local padrão sem rede, credenciais, serviços externos, Postgres 
 
 - O único adaptador real de busca implementado é Brave Search.
 - Outros provedores exigem novos `SearchClient`.
-- O scraping atual possui CLI Playwright-first, mas ainda precisa de smoke real para validar browser instalado.
+- O smoke Playwright real é opt-in e requer browser instalado; a suíte local continua sem navegador obrigatório.
 - Melhorias como Firecrawl ou Scrapy devem ser introduzidas por necessidade medida, não todas de uma vez.
 - A suíte local não deve fazer chamadas externas.
 - Postgres real requer `docker compose up -d postgres` e driver `psycopg`.

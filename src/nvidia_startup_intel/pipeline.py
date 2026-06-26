@@ -2,6 +2,8 @@
 
 The domain modules stay small and testable; this file provides one stable
 surface for future graph nodes or CLI/application entrypoints.
+Production collection is Playwright-first with trafilatura and BeautifulSoup
+extraction; injected fetchers keep deterministic tests and debug runs explicit.
 """
 
 from __future__ import annotations

@@ -186,13 +186,13 @@ Existe um entrypoint local para coletar páginas públicas de uma startup sem ro
 PYTHONPATH=src python -m nvidia_startup_intel collect-pages https://startup.ai/ --max-pages 1 --max-depth 0
 ```
 
-Por padrão, o comando respeita `robots.txt` em modo conservador, limita páginas/profundidade, usa renderização Playwright e imprime JSON auditável em stdout. Para gravar arquivo:
+Por padrão, o comando respeita `robots.txt` em modo conservador, limita páginas/profundidade, usa renderização Playwright e extrai HTML com `trafilatura` + BeautifulSoup quando disponíveis, mantendo fallback local. O comando imprime JSON auditável em stdout. Para gravar arquivo:
 
 ```bash
 PYTHONPATH=src python -m nvidia_startup_intel collect-pages https://startup.ai/ --max-pages 2 --output runs/startup-ai-collection.json
 ```
 
-Para desativar Playwright em debug determinístico:
+Para desativar Playwright no harness de debug/teste determinístico:
 
 ```bash
 PYTHONPATH=src python -m nvidia_startup_intel collect-pages https://startup.ai/ --no-render-js --max-pages 1
@@ -224,6 +224,31 @@ python -m pytest -q tests/integration/test_llm_adapter_integration_smoke.py -m l
 ```
 
 Com `NVIDIA_STARTUP_INTEL_LLM_PROVIDER=litellm`, o smoke usa a configuração real do LiteLLM e exige que a dependência e a credencial apontada por `NVIDIA_STARTUP_INTEL_LLM_API_KEY_ENV` estejam disponíveis no ambiente. Com `NVIDIA_STARTUP_INTEL_LLM_PROVIDER=langchain`, o smoke valida um chat model localmente fornecido pelo próprio teste, sem credencial externa. Em ambos os casos, o teste afirma que a saída cruza a fronteira como `LLMGenerationResponse` serializável, não como objeto de provider.
+
+## Validação Opcional Playwright Collection
+
+Playwright real não faz parte da suíte local padrão. A coleta de produção é Playwright-first com extração `trafilatura` + BeautifulSoup quando disponíveis, mas a validação default continua usando fakes, fixtures e o harness determinístico de teste/debug.
+
+Para validar o browser instalado sem depender de rede, rode o smoke direto. Sem URL, ele cria uma página HTML temporária local, renderiza com Chromium via Playwright e retorna o `PageCollectionResult` versionado:
+
+```bash
+PYTHONPATH=src python -m nvidia_startup_intel.playwright_collection_smoke
+```
+
+Para validar uma URL pública real de forma opt-in:
+
+```bash
+PYTHONPATH=src python -m nvidia_startup_intel.playwright_collection_smoke https://startup.ai/
+```
+
+Também existe um teste de integração isolado, fora da suíte default:
+
+```bash
+NVIDIA_STARTUP_INTEL_RUN_PLAYWRIGHT_COLLECTION_SMOKE=1 \
+python -m pytest -q tests/integration/test_playwright_collection_integration_smoke.py -m playwright_collection_integration
+```
+
+Esse caminho exige `playwright` e os browser binaries instalados com `python -m playwright install chromium`. Falhas são reportadas como `OPTIONAL PLAYWRIGHT COLLECTION SMOKE FAILED` para separar problema de ambiente real da suíte determinística local.
 
 ## Validação Opcional Pgvector
 
