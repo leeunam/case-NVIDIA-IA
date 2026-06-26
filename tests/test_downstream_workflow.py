@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
+from types import ModuleType
 import unittest
+from unittest.mock import patch
 
 from nvidia_startup_intel.ai_native_assessment import AINativeAssessment, DiagnosticQuality, TechnicalGap
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
@@ -13,10 +16,113 @@ from nvidia_startup_intel.nvidia_knowledge import (
 )
 from nvidia_startup_intel.search_params import UNKNOWN
 from nvidia_startup_intel.startup_profile import ClaimSource, FieldEvidence, ProfileField, StartupProfile
-from nvidia_startup_intel.workflow_graph import DownstreamWorkflowRuntime, build_local_downstream_workflow
+from nvidia_startup_intel.workflow_graph import (
+    DownstreamWorkflowRuntime,
+    build_downstream_langgraph,
+    build_local_downstream_workflow,
+)
 
 
 class DownstreamWorkflowTests(unittest.TestCase):
+    def test_optional_langgraph_builder_matches_local_successful_downstream_path(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
+        )
+        profile = _profile(startup_evidence)
+        runtime = DownstreamWorkflowRuntime(corpus=load_nvidia_knowledge_corpus(_fixture_path()))
+
+        with fake_langgraph_modules():
+            graph = build_downstream_langgraph(runtime)
+
+        state = graph.invoke(
+            {
+                "run_id": "run-issue-47",
+                "profile": profile,
+                "evidence_groups": (),
+                "collection_quality": _collection_quality(),
+                "assessment": _assessment(_model_serving_gap(startup_evidence)),
+            }
+        )
+
+        self.assertEqual(state["workflow_outcome"], "briefing_generated")
+        self.assertEqual(state["next_action"], "prepare_technical_outreach")
+        self.assertEqual(state["executive_briefing"].schema_version, "executive_briefing.v1")
+        self.assertEqual(
+            tuple(branch.branch_name for branch in state["branch_decisions"]),
+            ("ready_for_recommendation", "ready_for_briefing", "briefing_generated"),
+        )
+        self.assertTrue(all(branch.audit_reason for branch in state["branch_decisions"]))
+
+    def test_optional_langgraph_builder_routes_missing_citation_to_human_review(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
+        )
+        retrieval_without_citation = NVIDIAKnowledgeRetrieval(
+            schema_version="nvidia_knowledge.v1",
+            run_id="run-issue-47",
+            corpus_version="official-nvidia-fixture.v1",
+            query="unrelated commercial billing workflow",
+            results=(),
+            documents=(),
+        )
+        runtime = DownstreamWorkflowRuntime(retrievals=(retrieval_without_citation,))
+
+        with fake_langgraph_modules():
+            graph = build_downstream_langgraph(runtime)
+
+        state = graph.invoke(
+            {
+                "run_id": "run-issue-47",
+                "profile": _profile(startup_evidence),
+                "evidence_groups": (),
+                "collection_quality": _collection_quality(),
+                "assessment": _assessment(_model_serving_gap(startup_evidence)),
+            }
+        )
+
+        self.assertEqual(state["workflow_outcome"], "human_review_requested")
+        self.assertEqual(state["next_action"], "validate_nvidia_fit_with_human")
+        self.assertNotIn("executive_briefing", state)
+        self.assertEqual(state["human_review_briefing"].schema_version, "human_review_briefing.v1")
+        self.assertEqual(
+            tuple(branch.branch_name for branch in state["branch_decisions"]),
+            ("ready_for_recommendation", "human_review_requested"),
+        )
+        self.assertTrue(all(branch.audit_reason for branch in state["branch_decisions"]))
+
+    def test_optional_langgraph_builder_exposes_needs_more_collection_branch(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
+        )
+        runtime = DownstreamWorkflowRuntime()
+
+        with fake_langgraph_modules():
+            graph = build_downstream_langgraph(runtime)
+
+        state = graph.invoke(
+            {
+                "run_id": "run-issue-47",
+                "profile": _profile(startup_evidence),
+                "evidence_groups": (),
+                "collection_quality": _low_collection_quality(),
+                "assessment": _assessment(_model_serving_gap(startup_evidence)),
+            }
+        )
+
+        self.assertEqual(state["workflow_outcome"], "needs_more_collection_or_human_review")
+        self.assertEqual(state["next_action"], "resolve_blocking_evidence")
+        self.assertEqual(state["retrievals"], ())
+        self.assertEqual(state["errors"], ())
+        self.assertEqual(state["human_review_briefing"].schema_version, "human_review_briefing.v1")
+        self.assertEqual(state["branch_decisions"][0].branch_name, "needs_more_collection_or_human_review")
+        self.assertIn("insufficient_public_evidence", state["branch_decisions"][0].audit_reason)
+        self.assertTrue(all(branch.audit_reason for branch in state["branch_decisions"]))
+
+    def test_downstream_langgraph_builder_reports_missing_optional_dependency(self) -> None:
+        with patch.dict(sys.modules, {"langgraph.graph": None}):
+            with self.assertRaisesRegex(RuntimeError, "Install langgraph"):
+                build_downstream_langgraph(DownstreamWorkflowRuntime())
+
     def test_injected_retriever_adapter_keeps_framework_objects_out_of_workflow_state(self) -> None:
         startup_evidence = _startup_evidence(
             snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
@@ -259,6 +365,63 @@ class FakeFrameworkRetriever:
     ) -> NVIDIAKnowledgeRetrieval:
         self.requests = (*self.requests, (run_id, gap.gap_type, gap.description, top_k))
         return self.retrieval
+
+
+class FakeCompiledStateGraph:
+    def __init__(self, graph: "FakeStateGraph") -> None:
+        self.graph = graph
+
+    def invoke(self, state: dict[str, object]) -> dict[str, object]:
+        current = dict(state)
+        node_name = self.graph.entry_point
+        while node_name != self.graph.end_marker:
+            current = self.graph.nodes[node_name](current)
+            if node_name in self.graph.conditional_edges:
+                route_function, branch_targets = self.graph.conditional_edges[node_name]
+                branch_name = route_function(current)
+                node_name = branch_targets[branch_name]
+            else:
+                node_name = self.graph.edges[node_name]
+        return current
+
+
+class FakeStateGraph:
+    def __init__(self, state_type: object) -> None:
+        self.state_type = state_type
+        self.end_marker = "__end__"
+        self.nodes: dict[str, object] = {}
+        self.edges: dict[str, str] = {}
+        self.conditional_edges: dict[str, tuple[object, dict[str, str]]] = {}
+        self.entry_point = ""
+
+    def add_node(self, name: str, node: object) -> None:
+        self.nodes[name] = node
+
+    def set_entry_point(self, name: str) -> None:
+        self.entry_point = name
+
+    def add_edge(self, source: str, target: str) -> None:
+        self.edges[source] = target
+
+    def add_conditional_edges(
+        self,
+        source: str,
+        route_function: object,
+        branch_targets: dict[str, str],
+    ) -> None:
+        self.conditional_edges[source] = (route_function, branch_targets)
+
+    def compile(self) -> FakeCompiledStateGraph:
+        return FakeCompiledStateGraph(self)
+
+
+def fake_langgraph_modules() -> object:
+    langgraph_module = ModuleType("langgraph")
+    graph_module = ModuleType("langgraph.graph")
+    graph_module.END = "__end__"
+    graph_module.StateGraph = FakeStateGraph
+    langgraph_module.graph = graph_module
+    return patch.dict(sys.modules, {"langgraph": langgraph_module, "langgraph.graph": graph_module})
 
 
 def _fixture_path() -> Path:
