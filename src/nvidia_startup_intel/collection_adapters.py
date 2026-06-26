@@ -1,0 +1,210 @@
+"""Optional production collection adapters behind project-owned contracts."""
+
+from __future__ import annotations
+
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Protocol
+
+from nvidia_startup_intel.normalization import normalize_url, normalize_whitespace
+from nvidia_startup_intel.page_collection import CollectedPage, PageCollectionError, PageCollectionResult
+from nvidia_startup_intel.search_params import UNKNOWN
+
+
+class CollectionClock(Protocol):
+    def __call__(self) -> datetime: ...
+
+
+class CollectionAdapter(Protocol):
+    """Project-owned collection adapter seam for optional external tools."""
+
+    def collect(
+        self,
+        start_url: str,
+        *,
+        max_pages: int = 5,
+        max_depth: int = 1,
+        clock: CollectionClock | None = None,
+    ) -> PageCollectionResult: ...
+
+
+class FirecrawlClient(Protocol):
+    """Minimal Firecrawl boundary used by the adapter and fakes."""
+
+    def scrape(
+        self,
+        url: str,
+        *,
+        formats: tuple[str, ...],
+        only_main_content: bool,
+    ) -> object: ...
+
+
+class ScrapyCrawler(Protocol):
+    """Minimal Scrapy boundary used by the adapter and fakes."""
+
+    def crawl(self, start_url: str, *, max_pages: int, max_depth: int) -> Iterable[object]: ...
+
+
+@dataclass(frozen=True)
+class FirecrawlCollectionAdapter:
+    """Firecrawl clean extraction adapter returning PageCollectionResult."""
+
+    client: FirecrawlClient
+    formats: tuple[str, ...] = ("markdown", "html")
+    only_main_content: bool = True
+
+    def collect(
+        self,
+        start_url: str,
+        *,
+        max_pages: int = 5,
+        max_depth: int = 1,
+        clock: CollectionClock | None = None,
+    ) -> PageCollectionResult:
+        collected_at = _format_time((clock or _utc_now)())
+        try:
+            response = self.client.scrape(
+                start_url,
+                formats=self.formats,
+                only_main_content=self.only_main_content,
+            )
+        except Exception as exc:  # noqa: BLE001 - adapter failures are collection data.
+            return _adapter_error_result(
+                start_url,
+                collected_at=collected_at,
+                error=exc,
+                error_category="firecrawl_adapter_failed",
+            )
+        document = _firecrawl_document(response)
+        metadata = _as_mapping(document.get("metadata", {}))
+        page = CollectedPage(
+            url=normalize_url(str(metadata.get("sourceURL") or metadata.get("url") or start_url)),
+            title=normalize_whitespace(str(metadata.get("title") or document.get("title") or UNKNOWN)),
+            main_text=_first_text(document, ("markdown", "text", "content", "html")) or UNKNOWN,
+            collected_at=collected_at,
+            status_code=_status_code(document, metadata),
+            extraction_strategy="firecrawl_clean_extraction",
+            needs_js_rendering=False,
+        )
+        return PageCollectionResult(pages=(page,), errors=())
+
+
+@dataclass(frozen=True)
+class ScrapyCollectionAdapter:
+    """Scrapy structured crawling adapter returning PageCollectionResult."""
+
+    crawler: ScrapyCrawler
+
+    def collect(
+        self,
+        start_url: str,
+        *,
+        max_pages: int = 5,
+        max_depth: int = 1,
+        clock: CollectionClock | None = None,
+    ) -> PageCollectionResult:
+        collected_at = _format_time((clock or _utc_now)())
+        try:
+            items = tuple(self.crawler.crawl(start_url, max_pages=max_pages, max_depth=max_depth))
+        except Exception as exc:  # noqa: BLE001 - adapter failures are collection data.
+            return _adapter_error_result(
+                start_url,
+                collected_at=collected_at,
+                error=exc,
+                error_category="scrapy_adapter_failed",
+            )
+        pages = tuple(
+            CollectedPage(
+                url=normalize_url(str(document.get("url") or start_url)),
+                title=normalize_whitespace(str(document.get("title") or UNKNOWN)),
+                main_text=_first_text(
+                    document,
+                    ("main_text", "text", "content", "body", "html"),
+                )
+                or UNKNOWN,
+                collected_at=collected_at,
+                status_code=_status_code(document, {}),
+                extraction_strategy="scrapy_structured_crawl",
+                needs_js_rendering=False,
+            )
+            for document in (_as_mapping(item) for item in items[:max_pages])
+        )
+        return PageCollectionResult(pages=pages, errors=())
+
+
+def _as_mapping(value: object) -> Mapping[str, object]:
+    if isinstance(value, Mapping):
+        return value
+    return {}
+
+
+def _firecrawl_document(response: object) -> Mapping[str, object]:
+    payload = _as_mapping(response)
+    data = payload.get("data")
+    if isinstance(data, Mapping):
+        return data
+    if isinstance(data, list) and data:
+        return _as_mapping(data[0])
+    return payload
+
+
+def _adapter_error_result(
+    url: str,
+    *,
+    collected_at: str,
+    error: Exception,
+    error_category: str,
+) -> PageCollectionResult:
+    return PageCollectionResult(
+        pages=(),
+        errors=(
+            PageCollectionError(
+                url=normalize_url(url),
+                error_type=type(error).__name__,
+                message=str(error),
+                collected_at=collected_at,
+                status_code=_error_status_code(error),
+                error_category=error_category,
+            ),
+        ),
+    )
+
+
+def _error_status_code(error: Exception) -> int | None:
+    for attribute in ("status_code", "status", "code"):
+        value = getattr(error, attribute, None)
+        if isinstance(value, int):
+            return value
+    return None
+
+
+def _first_text(document: Mapping[str, object], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = document.get(key)
+        if value:
+            return normalize_whitespace(str(value))
+    return ""
+
+
+def _status_code(document: Mapping[str, object], metadata: Mapping[str, object]) -> int:
+    for value in (
+        document.get("status_code"),
+        document.get("statusCode"),
+        metadata.get("status_code"),
+        metadata.get("statusCode"),
+    ):
+        if isinstance(value, int):
+            return value
+    return 200
+
+
+def _format_time(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.isoformat()
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
