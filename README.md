@@ -198,6 +198,44 @@ Para desativar Playwright no harness de debug/teste determinístico:
 PYTHONPATH=src python -m nvidia_startup_intel collect-pages https://startup.ai/ --no-render-js --max-pages 1
 ```
 
+## Coleta de Startup com Persistência Postgres
+
+O caminho operacional para demonstrar uma coleta real de uma startup por URL, sem rodar o workflow de recomendação completo, usa o comando `collect-startup`. Ele coleta páginas públicas, extrai `StartupProfile`, estrutura evidências por campo, mede qualidade de coleta, salva artefatos JSON locais e persiste o run no Postgres local.
+
+Suba o banco local:
+
+```bash
+docker compose up -d postgres
+```
+
+O serviço usa estas variáveis do `docker-compose.yml`, com defaults já definidos:
+
+```bash
+export POSTGRES_DB=nvidia_startup_intel
+export POSTGRES_USER=nvidia_startup_intel
+export POSTGRES_PASSWORD=nvidia_startup_intel
+export POSTGRES_PORT=5432
+```
+
+Configure a conexão usada pela CLI. O driver `psycopg` precisa estar instalado no ambiente Python que roda o comando; no projeto, use o extra opcional `postgres`.
+
+```bash
+python -m pip install -e ".[postgres]"
+export DATABASE_URL="postgresql://nvidia_startup_intel:nvidia_startup_intel@localhost:5432/nvidia_startup_intel"
+```
+
+Execute a coleta persistida:
+
+```bash
+PYTHONPATH=src python -m nvidia_startup_intel collect-startup https://startup.ai/ \
+  --startup-name "Startup AI" \
+  --max-pages 2 \
+  --max-depth 1 \
+  --output-dir runs
+```
+
+Por padrão, o comando respeita `robots.txt`, usa Playwright com extração `trafilatura` + BeautifulSoup quando disponíveis e grava um diretório `runs/<run_id>/` com `raw/collected_pages.json`, `processed/startup_profiles.json`, `processed/field_evidences.json` e `processed/collection_quality.json`. O mesmo `run_id` é salvo no Postgres com páginas coletadas, erros de coleta, perfil, evidências por campo e qualidade.
+
 ## Validação Opcional LLM Adapters
 
 LiteLLM e LangChain não fazem parte da suíte local padrão. A validação default continua usando fakes e contract tests, sem rede, credenciais, chamadas reais de LLM, LiteLLM ou LangChain instalados.

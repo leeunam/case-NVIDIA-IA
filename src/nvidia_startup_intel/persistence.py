@@ -121,6 +121,10 @@ def save_startup_profiles(run: PipelineRun, profiles: Any) -> Path:
     return _write_json(run.processed_dir / "startup_profiles.json", profiles)
 
 
+def save_field_evidences(run: PipelineRun, evidences_by_profile: Any) -> Path:
+    return _write_json(run.processed_dir / "field_evidences.json", evidences_by_profile)
+
+
 def save_collection_quality(run: PipelineRun, quality_summary: Any) -> Path:
     return _write_json(run.processed_dir / "collection_quality.json", quality_summary)
 

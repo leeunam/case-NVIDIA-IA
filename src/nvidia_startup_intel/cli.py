@@ -20,12 +20,35 @@ from nvidia_startup_intel.page_collection import (
     collect_public_pages,
     fetch_url,
 )
+from nvidia_startup_intel.discovery import RawDiscoveryResult
+from nvidia_startup_intel.persistence import (
+    PipelineRun,
+    create_pipeline_run,
+    save_candidate_startups,
+    save_collected_pages,
+    save_collection_quality,
+    save_field_evidences,
+    save_raw_discovery_results,
+    save_search_params,
+    save_search_plan,
+    save_startup_profiles,
+)
+from nvidia_startup_intel.pipeline import (
+    ScrapingPipelineResult,
+    candidate_result_key,
+    profile_result_key,
+    run_controlled_startup_collection,
+)
 from nvidia_startup_intel.robots import RobotsCache, RobotsFetcher
+from nvidia_startup_intel.search_params import UNKNOWN
+from nvidia_startup_intel.sql_repository import SqlPipelineRepository, postgres_repository_from_env
 
 
 SCHEMA_VERSION = "collection_cli_result.v1"
+STARTUP_COLLECTION_SCHEMA_VERSION = "startup_collection_cli_result.v1"
 Clock = Callable[[], datetime]
 Fetcher = Callable[[str], FetchResponse]
+SqlRepositoryFactory = Callable[[], SqlPipelineRepository]
 
 
 def main(
@@ -37,6 +60,7 @@ def main(
     playwright_renderer: PlaywrightRenderer | None = None,
     robots_fetcher: RobotsFetcher | None = None,
     clock: Clock | None = None,
+    sql_repository_factory: SqlRepositoryFactory | None = None,
 ) -> int:
     """Run the project CLI and return a process-style exit code."""
 
@@ -55,6 +79,17 @@ def main(
             playwright_renderer=playwright_renderer,
             robots_fetcher=robots_fetcher,
             clock=now,
+        )
+    if args.command == "collect-startup":
+        return _run_collect_startup(
+            args,
+            stdout=output,
+            stderr=errors,
+            fetcher=fetcher,
+            playwright_renderer=playwright_renderer,
+            robots_fetcher=robots_fetcher,
+            clock=now,
+            sql_repository_factory=sql_repository_factory,
         )
 
     parser.print_help(errors)
@@ -95,6 +130,43 @@ def _build_parser() -> argparse.ArgumentParser:
         help="robots.txt policy for collection.",
     )
     collect.add_argument("--output", help="Write JSON payload to this path instead of stdout.")
+
+    startup = subparsers.add_parser(
+        "collect-startup",
+        help="Collect one startup URL, extract profile evidence, and persist the run to Postgres.",
+    )
+    startup.add_argument("url", help="Public startup URL to collect.")
+    startup.add_argument(
+        "--startup-name",
+        default=UNKNOWN,
+        help="Optional startup name used as the controlled candidate identifier.",
+    )
+    startup.add_argument("--max-pages", type=int, default=1, help="Maximum pages to collect.")
+    startup.add_argument("--max-depth", type=int, default=0, help="Maximum crawl depth.")
+    startup.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=15,
+        help="HTTP timeout for the standard-library fetcher.",
+    )
+    startup.add_argument(
+        "--no-render-js",
+        action="store_false",
+        dest="render_js",
+        help="Disable Playwright rendering and use only the deterministic debug/test harness.",
+    )
+    startup.set_defaults(render_js=True)
+    startup.add_argument(
+        "--robots-policy",
+        choices=("conservative", "permissive-on-error", "off"),
+        default="conservative",
+        help="robots.txt policy for collection.",
+    )
+    startup.add_argument(
+        "--output-dir",
+        default="runs",
+        help="Base directory for JSON audit artifacts; the run id is created below it.",
+    )
     return parser
 
 
@@ -138,6 +210,121 @@ def _run_collect_pages(
     }
     _write_payload(payload, output_path=args.output, stdout=stdout)
     return 0
+
+
+def _run_collect_startup(
+    args: argparse.Namespace,
+    *,
+    stdout: TextIO,
+    stderr: TextIO,
+    fetcher: Fetcher | None,
+    playwright_renderer: PlaywrightRenderer | None,
+    robots_fetcher: RobotsFetcher | None,
+    clock: Clock,
+    sql_repository_factory: SqlRepositoryFactory | None,
+) -> int:
+    del stderr
+    run_started_at = clock()
+    run_id = _run_id(run_started_at)
+    active_fetcher = fetcher or (lambda url: fetch_url(url, timeout=args.timeout_seconds))
+    result = run_controlled_startup_collection(
+        args.url,
+        startup_name=args.startup_name,
+        fetcher=active_fetcher,
+        playwright_renderer=_playwright_renderer(args, playwright_renderer),
+        html_extractor=StaticHTMLExtractionAdapter(),
+        robots_cache=_robots_cache(args, robots_fetcher),
+        max_pages_per_candidate=args.max_pages,
+        max_depth=args.max_depth,
+    )
+
+    json_run = create_pipeline_run(args.output_dir, run_id=run_id, created_at=run_started_at)
+    _save_json_artifacts(json_run, result, raw_results=result.raw_results)
+
+    repository = (sql_repository_factory or postgres_repository_from_env)()
+    repository.create_run(run_id=run_id, created_at=run_started_at)
+    repository.save_pipeline_result(run_id, result)
+
+    payload = {
+        "schema_version": STARTUP_COLLECTION_SCHEMA_VERSION,
+        "run_id": run_id,
+        "input_url": args.url,
+        "created_at": _format_time(run_started_at),
+        "candidate_identifier": _candidate_identifier(result),
+        "startup_identifier": _startup_identifier(result),
+        "source_urls": _source_urls(result),
+        "json_run_dir": str(json_run.root_dir),
+        "postgres": {"persisted": True, "run_id": run_id},
+        "options": {
+            "max_pages": args.max_pages,
+            "max_depth": args.max_depth,
+            "timeout_seconds": args.timeout_seconds,
+            "render_js": args.render_js,
+            "robots_policy": args.robots_policy,
+        },
+        "summary": {
+            "candidate_count": len(result.candidates),
+            "collected_pages": sum(
+                len(collection.pages) for collection in result.collected_pages_by_candidate.values()
+            ),
+            "collection_errors": sum(
+                len(collection.errors) for collection in result.collected_pages_by_candidate.values()
+            ),
+            "startup_profiles": len(result.profiles),
+            "field_evidences": _field_evidence_count(result),
+            "ready_for_evaluation": result.quality_summary.ready_for_evaluation,
+        },
+    }
+    _write_payload(payload, output_path=None, stdout=stdout)
+    return 0
+
+
+def _save_json_artifacts(
+    run: PipelineRun,
+    result: ScrapingPipelineResult,
+    *,
+    raw_results: tuple[RawDiscoveryResult, ...],
+) -> None:
+    save_search_params(run, result.search_params)
+    save_search_plan(run, result.search_plan)
+    save_raw_discovery_results(run, raw_results)
+    save_candidate_startups(run, result.candidates)
+    save_collected_pages(run, result.collected_pages_by_candidate)
+    save_startup_profiles(run, result.profiles)
+    save_field_evidences(run, result.evidence_groups_by_profile)
+    save_collection_quality(run, result.quality_summary)
+
+
+def _candidate_identifier(result: ScrapingPipelineResult) -> str:
+    if not result.candidates:
+        return UNKNOWN
+    return candidate_result_key(result.candidates[0])
+
+
+def _startup_identifier(result: ScrapingPipelineResult) -> str:
+    if not result.profiles:
+        return UNKNOWN
+    return profile_result_key(result.profiles[0])
+
+
+def _source_urls(result: ScrapingPipelineResult) -> list[str]:
+    urls: list[str] = []
+    for collection in result.collected_pages_by_candidate.values():
+        for page in collection.pages:
+            if page.url not in urls:
+                urls.append(page.url)
+        for error in collection.errors:
+            if error.url not in urls:
+                urls.append(error.url)
+    return urls
+
+
+def _field_evidence_count(result: ScrapingPipelineResult) -> int:
+    return sum(
+        len(group.evidences)
+        for groups in result.evidence_groups_by_profile.values()
+        for group in groups
+    )
 
 
 def _playwright_renderer(
