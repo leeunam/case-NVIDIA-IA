@@ -11,6 +11,11 @@ from nvidia_startup_intel.downstream_metrics import (
     build_downstream_quality_report,
     downstream_quality_report_to_dict,
 )
+from nvidia_startup_intel.nvidia_embeddings import (
+    DeterministicFakeEmbeddingClient,
+    build_nvidia_embedding_index,
+    retrieve_nvidia_knowledge_hybrid,
+)
 from nvidia_startup_intel.nvidia_knowledge import (
     NVIDIAKnowledgeRetrieval,
     load_nvidia_knowledge_corpus,
@@ -198,6 +203,64 @@ class DownstreamMetricsTests(unittest.TestCase):
         self.assertEqual(report.retrieval_metrics.precision, 0.5)
         self.assertEqual(report.retrieval_metrics.f1, 0.666667)
         self.assertEqual(report.retrieval_metrics.cases[0].f1, 0.666667)
+
+    def test_hybrid_retrieval_metrics_report_quality_and_improvement_targets(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao."
+        )
+        gap = _model_serving_gap(startup_evidence)
+        corpus = load_nvidia_knowledge_corpus(_fixture_path())
+        embedding_client = DeterministicFakeEmbeddingClient(dimension=6)
+        embedding_index = build_nvidia_embedding_index(corpus, embedding_client)
+        retrieval = retrieve_nvidia_knowledge_hybrid(
+            corpus,
+            embedding_index,
+            embedding_client,
+            run_id="run-metrics-004",
+            gap_type=gap.gap_type,
+            description=gap.description,
+            startup_signals=("inference", "latency"),
+            lexical_top_k=2,
+            vector_top_k=2,
+            top_k=2,
+        )
+        recommendation_set = build_nvidia_recommendations(
+            profile=_profile(startup_evidence),
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=_assessment(gap, run_id="run-metrics-004"),
+            retrievals=(retrieval,),
+        )
+
+        report = build_downstream_quality_report(
+            run_id="run-metrics-004",
+            startup_identifier="VetAI",
+            retrievals=(retrieval,),
+            retrieval_expectations=(
+                RetrievalMetricExpectation(
+                    expectation_id="hybrid-model-serving-nim",
+                    target_type="technical_gap",
+                    target="model_serving",
+                    expected_chunk_ids=("nvidia-nim-developers:0",),
+                ),
+            ),
+            recommendation_set=recommendation_set,
+        )
+
+        self.assertEqual(report.retrieval_metrics.retrieval_strategy, "hybrid_bm25_vector")
+        self.assertEqual(report.retrieval_metrics.recall, 1.0)
+        self.assertEqual(report.retrieval_metrics.precision, 0.5)
+        self.assertEqual(report.retrieval_metrics.f1, 0.666667)
+        self.assertEqual(report.retrieval_metrics.coverage, 1.0)
+        self.assertEqual(report.retrieval_metrics.failure_reasons, ("unexpected_retrieved_citation",))
+        self.assertEqual(
+            report.retrieval_metrics.improvement_targets,
+            ("measure_before_framework_change_for:model_serving",),
+        )
+        self.assertEqual(
+            report.retrieval_metrics.framework_change_assessment,
+            ("framework_change_candidate_after_query_review:model_serving",),
+        )
 
 
 def _fixture_path() -> Path:

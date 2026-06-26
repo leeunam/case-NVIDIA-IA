@@ -21,9 +21,12 @@ from nvidia_startup_intel.briefing import (
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
 from nvidia_startup_intel.framework_adapters import (
+    HybridNVIDIAPgvectorKnowledgeRetriever,
     LocalBM25NVIDIAKnowledgeRetriever,
     NVIDIAKnowledgeRetriever,
+    NVIDIAVectorKnowledgeStore,
 )
+from nvidia_startup_intel.nvidia_embeddings import EmbeddingClient
 from nvidia_startup_intel.nvidia_knowledge import (
     NVIDIAKnowledgeCorpus,
     NVIDIAKnowledgeRetrieval,
@@ -77,6 +80,15 @@ class DownstreamWorkflowRuntime:
     corpus: NVIDIAKnowledgeCorpus | None = None
     retrievals: tuple[NVIDIAKnowledgeRetrieval, ...] = ()
     knowledge_retriever: NVIDIAKnowledgeRetriever | None = None
+    embedding_client: EmbeddingClient | None = None
+    vector_store: NVIDIAVectorKnowledgeStore | None = None
+    retrieval_top_k: int = 1
+    lexical_top_k: int = 3
+    vector_top_k: int = 3
+    lexical_weight: float = 1.0
+    vector_weight: float = 1.0
+    rrf_k: int = 60
+    min_vector_score: float = 0.0
     artifact_store: DownstreamArtifactStore | None = None
     checkpoints: list[DownstreamWorkflowState] = field(default_factory=list)
 
@@ -234,6 +246,23 @@ def retrieve_nvidia_knowledge_node(
 
     corpus = state.get("corpus") or runtime.corpus
     retriever = runtime.knowledge_retriever
+    if (
+        retriever is None
+        and corpus is not None
+        and runtime.embedding_client is not None
+        and runtime.vector_store is not None
+    ):
+        retriever = HybridNVIDIAPgvectorKnowledgeRetriever(
+            corpus=corpus,
+            embedding_client=runtime.embedding_client,
+            vector_store=runtime.vector_store,
+            lexical_top_k=runtime.lexical_top_k,
+            vector_top_k=runtime.vector_top_k,
+            lexical_weight=runtime.lexical_weight,
+            vector_weight=runtime.vector_weight,
+            rrf_k=runtime.rrf_k,
+            min_vector_score=runtime.min_vector_score,
+        )
     if retriever is None and corpus is not None:
         retriever = LocalBM25NVIDIAKnowledgeRetriever(corpus)
     if retriever is None:
@@ -260,7 +289,7 @@ def retrieve_nvidia_knowledge_node(
                     run_id=state.get("run_id", assessment.run_id),
                     gap=gap,
                     startup_signals=_startup_signals(profile),
-                    top_k=1,
+                    top_k=runtime.retrieval_top_k,
                 )
             )
     except Exception as exc:

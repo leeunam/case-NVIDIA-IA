@@ -16,6 +16,10 @@ from typing import Protocol
 
 from nvidia_startup_intel.ai_native_assessment import TechnicalGap
 from nvidia_startup_intel.normalization import normalize_text
+from nvidia_startup_intel.nvidia_embeddings import (
+    EmbeddingClient,
+    merge_nvidia_knowledge_retrievals_hybrid,
+)
 from nvidia_startup_intel.nvidia_knowledge import (
     NVIDIACitation,
     NVIDIAKnowledgeChunk,
@@ -47,6 +51,26 @@ class NVIDIAKnowledgeRetriever(Protocol):
     ) -> NVIDIAKnowledgeRetrieval: ...
 
 
+class NVIDIAVectorKnowledgeStore(Protocol):
+    """Project-owned seam for pgvector-backed semantic NVIDIA Knowledge retrieval."""
+
+    def retrieve_by_vector(
+        self,
+        embedding_client: EmbeddingClient,
+        *,
+        run_id: str,
+        corpus_version: str,
+        gap_type: str = "",
+        opportunity_type: str = "",
+        description: str = "",
+        startup_signals: tuple[str, ...] = (),
+        query_terms: tuple[str, ...] = (),
+        normalized_query: str = "",
+        top_k: int = 3,
+        min_vector_score: float = 0.0,
+    ) -> NVIDIAKnowledgeRetrieval: ...
+
+
 @dataclass(frozen=True)
 class LocalBM25NVIDIAKnowledgeRetriever:
     """Adapter over the existing deterministic NVIDIA Knowledge retrieval contract."""
@@ -68,6 +92,58 @@ class LocalBM25NVIDIAKnowledgeRetriever:
             description=gap.description,
             startup_signals=startup_signals,
             top_k=top_k,
+        )
+
+
+@dataclass(frozen=True)
+class HybridNVIDIAPgvectorKnowledgeRetriever:
+    """Adapter that fuses local BM25 with pgvector semantic retrieval."""
+
+    corpus: NVIDIAKnowledgeCorpus
+    embedding_client: EmbeddingClient
+    vector_store: NVIDIAVectorKnowledgeStore
+    lexical_top_k: int = 3
+    vector_top_k: int = 3
+    lexical_weight: float = 1.0
+    vector_weight: float = 1.0
+    rrf_k: int = 60
+    min_vector_score: float = 0.0
+
+    def retrieve_for_gap(
+        self,
+        *,
+        run_id: str,
+        gap: TechnicalGap,
+        startup_signals: tuple[str, ...],
+        top_k: int,
+    ) -> NVIDIAKnowledgeRetrieval:
+        lexical_retrieval = retrieve_nvidia_knowledge_by_gap(
+            self.corpus,
+            run_id=run_id,
+            gap_type=gap.gap_type,
+            description=gap.description,
+            startup_signals=startup_signals,
+            top_k=self.lexical_top_k,
+        )
+        vector_retrieval = self.vector_store.retrieve_by_vector(
+            self.embedding_client,
+            run_id=run_id,
+            corpus_version=self.corpus.corpus_version,
+            gap_type=gap.gap_type,
+            description=gap.description,
+            startup_signals=startup_signals,
+            top_k=self.vector_top_k,
+            min_vector_score=self.min_vector_score,
+        )
+        return merge_nvidia_knowledge_retrievals_hybrid(
+            lexical_retrieval,
+            vector_retrieval,
+            lexical_top_k=self.lexical_top_k,
+            vector_top_k=self.vector_top_k,
+            top_k=top_k,
+            lexical_weight=self.lexical_weight,
+            vector_weight=self.vector_weight,
+            rrf_k=self.rrf_k,
         )
 
 
