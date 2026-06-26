@@ -140,7 +140,7 @@ O guia completo está em [Frameworks de IA, Orquestração e Retrieval](context/
 A suíte antiga ampla de scraping/assessment foi removida por estar inválida para o escopo atual. Existe uma suíte local focada no downstream atual, sem rede, credenciais, Postgres real ou LangGraph obrigatório:
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests
+python -m pytest -q
 python -m ruff check .
 python -m mypy src
 ```
