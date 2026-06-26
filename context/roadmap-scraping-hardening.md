@@ -23,14 +23,14 @@ O MVP atual:
 - coleta páginas públicas com limites de profundidade e quantidade;
 - respeita `robots.txt` quando recebe `RobotsCache`;
 - extrai texto simples e perfil estruturado;
+- possui contrato injetável de extração HTML, adapter opcional trafilatura + BeautifulSoup e fallback Playwright seletivo com testes fake;
 - mede qualidade da coleta;
-- não possui suíte automatizada válida no estado atual; a suíte antiga foi removida por estar inválida para o escopo atual.
+- possui suíte local padrão sem rede, credenciais, serviços externos ou navegador real obrigatório.
 
 O MVP atual ainda não:
 
-- renderiza JavaScript com Playwright;
-- usa trafilatura para texto principal;
-- usa BeautifulSoup para parsing HTML mais robusto;
+- valida Playwright real em smoke test opt-in com browser instalado;
+- declara trafilatura, BeautifulSoup ou Playwright como dependências default;
 - usa Firecrawl para extração limpa orientada a RAG;
 - usa Scrapy para crawling em escala;
 - compara estratégias de coleta para a mesma página.
@@ -131,7 +131,7 @@ Critérios de aceite:
 - [ ] Falhas de coleta são categorizadas de forma auditável.
 - [ ] Extração estática é mais robusta em fixtures reais.
 - [ ] Conteúdo JS-heavy é detectado antes de usar navegador.
-- [ ] Playwright entra apenas como fallback seletivo, se necessário.
+- [x] Playwright entra apenas como fallback seletivo, se necessário.
 - [ ] Serviços externos entram por adaptadores testáveis, se necessário.
 - [ ] Os contratos de saída atuais continuam compatíveis.
 - [ ] Nova suíte local de validação passa sem rede, credenciais ou navegador real obrigatório.

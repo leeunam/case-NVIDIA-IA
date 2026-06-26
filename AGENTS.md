@@ -139,7 +139,9 @@ Estado atual:
 
 - A coleta usa biblioteca padrão do Python (`urllib` + `html.parser`) para manter o MVP simples e testável.
 - A coleta consulta `robots.txt` automaticamente quando recebe um `RobotsCache`, bloqueia URLs não permitidas e respeita `crawl-delay`.
-- Ainda não há Playwright, Scrapy, Firecrawl, BeautifulSoup ou trafilatura integrados no código.
+- Existe contrato injetável de extração HTML e adapter opcional `StaticHTMLExtractionAdapter` para trafilatura + BeautifulSoup com fallback local.
+- Existe fallback seletivo `PlaywrightPageRenderer` para páginas que a extração estática marcar como `needs_js_rendering`; a suíte default usa renderer fake e não exige navegador real.
+- Ainda não há Scrapy ou Firecrawl integrados no código.
 - O scraping atual pode perder conteúdo em sites JavaScript-heavy ou páginas com extração de texto ruidosa; isso é limitação conhecida do MVP.
 - Melhorias de scraping devem seguir `context/roadmap-scraping-hardening.md` e ser guiadas por falhas medidas, como excesso de `unknown`, baixa completude, páginas vazias ou necessidade clara de renderização JavaScript.
 - A busca web real possui adaptador `BraveSearchClient`, configurável por `BRAVE_SEARCH_API_KEY`, `BRAVE_SEARCH_ENDPOINT` e `NVIDIA_STARTUP_INTEL_SEARCH_PROVIDER=brave`.
@@ -349,7 +351,7 @@ Definition of Done atual:
 Limitações conhecidas:
 
 - O adaptador real implementado é Brave Search; outros provedores exigem novos `SearchClient`.
-- A coleta atual usa `urllib` + `html.parser`; ainda não renderiza JavaScript nem aplica extração avançada de texto principal.
-- Playwright, BeautifulSoup, trafilatura, Firecrawl ou Scrapy devem ser adicionados apenas por stories específicas de hardening, com testes locais e contratos preservados.
+- A coleta default usa `urllib` + `html.parser`; renderização JavaScript existe como fallback Playwright opcional e extração avançada existe como adapter opcional, ambos fora de dependências obrigatórias da suíte local.
+- Playwright, BeautifulSoup, trafilatura, Firecrawl ou Scrapy devem evoluir apenas por stories específicas de hardening, com testes locais e contratos preservados.
 - Postgres em desenvolvimento requer `docker compose up -d postgres` e driver `psycopg` instalado para uso real via `postgres_repository_from_env`.
 - `build_langgraph` requer a dependência opcional `langgraph`; a próxima suíte deve usar o runner local para não tornar validação dependente dessa instalação.

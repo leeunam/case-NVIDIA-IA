@@ -35,6 +35,7 @@ from nvidia_startup_intel.search_params import UNKNOWN
 
 
 Fetcher = Callable[[str], "FetchResponse"]
+PlaywrightRenderer = Callable[[str], "FetchResponse"]
 HTMLExtractor = Callable[[str], "HTMLExtractionResult"]
 Clock = Callable[[], datetime]
 Sleeper = Callable[[float], None]
@@ -131,6 +132,7 @@ def collect_public_pages(
     start_url: str,
     *,
     fetcher: Fetcher | None = None,
+    playwright_renderer: PlaywrightRenderer | None = None,
     html_extractor: HTMLExtractor | None = None,
     max_pages: int = 5,
     max_depth: int = 1,
@@ -199,6 +201,21 @@ def collect_public_pages(
             continue
 
         extracted = extract_html(response.body)
+        if extracted.needs_js_rendering and playwright_renderer is not None:
+            try:
+                response = playwright_renderer(url)
+                extracted = _mark_playwright_extraction(extract_html(response.body))
+            except Exception as exc:  # noqa: BLE001 - render failures are pipeline data.
+                errors.append(
+                    PageCollectionError(
+                        url=url,
+                        error_type=type(exc).__name__,
+                        message=str(exc),
+                        collected_at=collected_at,
+                        status_code=getattr(exc, "code", None),
+                        error_category="browser_render_failed",
+                    )
+                )
         pages.append(
             CollectedPage(
                 url=normalize_url(response.url),
@@ -258,6 +275,32 @@ def extract_readable_html(html: str) -> HTMLExtractionResult:
         extraction_strategy="stdlib_html_parser",
         needs_js_rendering=_needs_js_rendering(html, main_text),
     )
+
+
+@dataclass(frozen=True)
+class PlaywrightPageRenderer:
+    """Optional Playwright renderer for public pages that need JavaScript."""
+
+    timeout_ms: int = 15000
+    wait_until: str = "networkidle"
+    headless: bool = True
+
+    def __call__(self, url: str) -> FetchResponse:
+        sync_playwright = _load_sync_playwright()
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=self.headless)
+            try:
+                page = browser.new_page()
+                response = page.goto(url, wait_until=self.wait_until, timeout=self.timeout_ms)
+                body = page.content()
+                return FetchResponse(
+                    url=page.url,
+                    status_code=getattr(response, "status", 0) or 0,
+                    body=body,
+                    content_type="text/html; rendered=playwright",
+                )
+            finally:
+                browser.close()
 
 
 @dataclass(frozen=True)
@@ -446,6 +489,24 @@ def _optional_beautiful_soup_factory() -> Callable[[str, str], object] | None:
     except ImportError:
         return None
     return BeautifulSoup
+
+
+def _load_sync_playwright() -> Callable[[], object]:
+    try:
+        from playwright.sync_api import sync_playwright  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise RuntimeError("Install playwright and browser binaries to use PlaywrightPageRenderer") from exc
+    return sync_playwright
+
+
+def _mark_playwright_extraction(extracted: HTMLExtractionResult) -> HTMLExtractionResult:
+    return HTMLExtractionResult(
+        title=extracted.title,
+        main_text=extracted.main_text,
+        links=extracted.links,
+        extraction_strategy=f"{extracted.extraction_strategy}+playwright",
+        needs_js_rendering=extracted.needs_js_rendering,
+    )
 
 
 def _static_extraction_strategy(

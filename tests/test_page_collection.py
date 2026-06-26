@@ -123,6 +123,82 @@ def test_collect_pages_uses_injected_html_extractor_without_changing_output_cont
     assert [page.url for page in result.pages] == ["https://startup.ai", "https://startup.ai/sobre"]
 
 
+def test_collect_pages_uses_playwright_renderer_when_static_html_needs_javascript() -> None:
+    pages = {
+        "https://startup.ai": FetchResponse(
+            url="https://startup.ai/",
+            status_code=200,
+            body="<html><body><div id='root'></div><script>render()</script></body></html>",
+        ),
+        "https://startup.ai/sobre": FetchResponse(
+            url="https://startup.ai/sobre",
+            status_code=200,
+            body="<html><body>Sobre fallback.</body></html>",
+        ),
+    }
+    rendered_pages = {
+        "https://startup.ai": FetchResponse(
+            url="https://startup.ai/",
+            status_code=200,
+            body="""
+            <html>
+              <head><title>Startup AI Rendered</title></head>
+              <body>
+                Plataforma AI-native renderizada com evidencias publicas.
+                <a href="/sobre">Sobre</a>
+              </body>
+            </html>
+            """,
+        )
+    }
+
+    result = collect_public_pages(
+        "https://startup.ai/",
+        fetcher=make_fetcher(pages),
+        playwright_renderer=make_fetcher(rendered_pages),
+        max_pages=2,
+        max_depth=1,
+        clock=fixed_clock,
+    )
+
+    assert result.errors == ()
+    assert result.pages[0].title == "Startup AI Rendered"
+    assert "AI-native renderizada" in result.pages[0].main_text
+    assert result.pages[0].needs_js_rendering is False
+    assert result.pages[0].extraction_strategy == "stdlib_html_parser+playwright"
+    assert [page.url for page in result.pages] == ["https://startup.ai", "https://startup.ai/sobre"]
+
+
+def test_collect_pages_records_playwright_failure_without_dropping_static_page() -> None:
+    pages = {
+        "https://startup.ai": FetchResponse(
+            url="https://startup.ai/",
+            status_code=200,
+            body="<html><body><div id='root'></div><script>render()</script></body></html>",
+        )
+    }
+
+    def failing_renderer(url: str) -> FetchResponse:
+        raise TimeoutError("playwright timeout")
+
+    result = collect_public_pages(
+        "https://startup.ai/",
+        fetcher=make_fetcher(pages),
+        playwright_renderer=failing_renderer,
+        max_pages=1,
+        clock=fixed_clock,
+    )
+
+    assert len(result.pages) == 1
+    assert result.pages[0].main_text == "unknown"
+    assert result.pages[0].needs_js_rendering is True
+    assert len(result.errors) == 1
+    assert result.errors[0].url == "https://startup.ai"
+    assert result.errors[0].error_type == "TimeoutError"
+    assert result.errors[0].message == "playwright timeout"
+    assert result.errors[0].error_category == "browser_render_failed"
+
+
 def test_static_html_extraction_adapter_combines_trafilatura_text_and_beautifulsoup_links() -> None:
     html = """
     <html>

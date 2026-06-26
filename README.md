@@ -73,6 +73,8 @@ Já existe walking skeleton implementado para o fluxo upstream e downstream loca
 - planejamento de busca;
 - descoberta de candidatas;
 - coleta pública simples com `urllib` + `html.parser`;
+- extração HTML injetável com adapter opcional para trafilatura + BeautifulSoup;
+- fallback seletivo Playwright para páginas marcadas como `needs_js_rendering`, sem navegador real na suíte default;
 - política de scraping e robots.txt;
 - extração de `StartupProfile` com schema `startup_profile.v1`;
 - agrupamento de evidências;
