@@ -10,8 +10,9 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, fields, is_dataclass
 
+from nvidia_startup_intel.framework_adapters import NVIDIARerankResult
 from nvidia_startup_intel.normalization import normalize_text
-from nvidia_startup_intel.nvidia_knowledge import NVIDIAKnowledgeRetrieval
+from nvidia_startup_intel.nvidia_knowledge import NVIDIAKnowledgeRetrieval, RetrievedNVIDIAKnowledge
 from nvidia_startup_intel.nvidia_recommendation import NVIDIARecommendationSet
 from nvidia_startup_intel.search_params import UNKNOWN
 
@@ -103,6 +104,24 @@ class DownstreamQualityReport:
     corpus_version: str
     retrieval_metrics: DownstreamRetrievalMetrics
     recommendation_metrics: DownstreamRecommendationMetrics
+
+
+@dataclass(frozen=True)
+class RerankQualityComparison:
+    schema_version: str
+    run_id: str
+    corpus_version: str
+    baseline_retrieval_strategy: str
+    rerank_ranking_strategy: str
+    before: DownstreamRetrievalMetrics
+    after: DownstreamRetrievalMetrics
+    recall_delta: float
+    precision_delta: float
+    f1_delta: float
+    coverage_delta: float
+    before_top_1_expected_count: int
+    after_top_1_expected_count: int
+    top_1_expected_delta: int
 
 
 def build_downstream_quality_report(
@@ -202,10 +221,59 @@ def summarize_downstream_recommendation_metrics(
     )
 
 
+def compare_rerank_retrieval_quality(
+    *,
+    run_id: str,
+    baseline_retrievals: tuple[NVIDIAKnowledgeRetrieval, ...],
+    rerank_results: tuple[NVIDIARerankResult, ...],
+    expectations: tuple[RetrievalMetricExpectation, ...],
+) -> RerankQualityComparison:
+    """Compare retrieval metrics before and after reranking the supplied Top K."""
+
+    corpus_version = _rerank_comparison_corpus_version(baseline_retrievals, rerank_results)
+    after_retrievals = tuple(_retrieval_from_rerank_result(result) for result in rerank_results)
+    before = summarize_downstream_retrieval_metrics(
+        run_id=run_id,
+        corpus_version=corpus_version,
+        retrievals=baseline_retrievals,
+        expectations=expectations,
+    )
+    after = summarize_downstream_retrieval_metrics(
+        run_id=run_id,
+        corpus_version=corpus_version,
+        retrievals=after_retrievals,
+        expectations=expectations,
+    )
+    before_top_1 = _top_1_expected_count(expectations, baseline_retrievals)
+    after_top_1 = _top_1_expected_count(expectations, after_retrievals)
+    return RerankQualityComparison(
+        schema_version=SCHEMA_VERSION,
+        run_id=run_id,
+        corpus_version=corpus_version,
+        baseline_retrieval_strategy=before.retrieval_strategy,
+        rerank_ranking_strategy=_aggregate_rerank_ranking_strategy(rerank_results),
+        before=before,
+        after=after,
+        recall_delta=_metric_delta(after.recall, before.recall),
+        precision_delta=_metric_delta(after.precision, before.precision),
+        f1_delta=_metric_delta(after.f1, before.f1),
+        coverage_delta=_metric_delta(after.coverage, before.coverage),
+        before_top_1_expected_count=before_top_1,
+        after_top_1_expected_count=after_top_1,
+        top_1_expected_delta=after_top_1 - before_top_1,
+    )
+
+
 def downstream_quality_report_to_dict(report: DownstreamQualityReport) -> dict[str, object]:
     """Convert a downstream metrics report to JSON-serializable dictionaries."""
 
     return _to_plain_data(report)
+
+
+def rerank_quality_comparison_to_dict(comparison: RerankQualityComparison) -> dict[str, object]:
+    """Convert a rerank quality comparison to JSON-serializable dictionaries."""
+
+    return _to_plain_data(comparison)
 
 
 def _retrieval_metric_case(
@@ -276,6 +344,48 @@ def _matching_retrieval(
     if len(retrievals) == 1:
         return retrievals[0]
     return None
+
+
+def _retrieval_from_rerank_result(result: NVIDIARerankResult) -> NVIDIAKnowledgeRetrieval:
+    return NVIDIAKnowledgeRetrieval(
+        schema_version="nvidia_knowledge.v1",
+        run_id=result.run_id,
+        corpus_version=result.corpus_version,
+        query=result.query,
+        results=tuple(
+            RetrievedNVIDIAKnowledge(
+                chunk=item.chunk,
+                citation=item.citation,
+                score=item.original_score,
+                retrieval_strategy=result.ranking_strategy,
+                rationale=item.rerank_rationale,
+                rank=item.rerank_rank,
+                bm25_score=item.original_bm25_score,
+                vector_score=item.original_vector_score,
+                hybrid_score=item.original_hybrid_score,
+            )
+            for item in result.results
+        ),
+        documents=(),
+    )
+
+
+def _top_1_expected_count(
+    expectations: tuple[RetrievalMetricExpectation, ...],
+    retrievals: tuple[NVIDIAKnowledgeRetrieval, ...],
+) -> int:
+    count = 0
+    for expectation in expectations:
+        retrieval = _matching_retrieval(expectation, retrievals)
+        if retrieval is None or not retrieval.results:
+            continue
+        top_result = retrieval.results[0]
+        if (
+            top_result.chunk.chunk_id in expectation.expected_chunk_ids
+            or top_result.citation.document_id in expectation.expected_document_ids
+        ):
+            count += 1
+    return count
 
 
 def _retrieval_matches_query_terms(
@@ -389,6 +499,26 @@ def _aggregate_retrieval_strategy(cases: tuple[RetrievalMetricCase, ...]) -> str
     return "mixed"
 
 
+def _aggregate_rerank_ranking_strategy(rerank_results: tuple[NVIDIARerankResult, ...]) -> str:
+    strategies = tuple(dict.fromkeys(result.ranking_strategy for result in rerank_results))
+    if not strategies:
+        return UNKNOWN
+    if len(strategies) == 1:
+        return strategies[0]
+    return "mixed"
+
+
+def _rerank_comparison_corpus_version(
+    baseline_retrievals: tuple[NVIDIAKnowledgeRetrieval, ...],
+    rerank_results: tuple[NVIDIARerankResult, ...],
+) -> str:
+    if baseline_retrievals:
+        return baseline_retrievals[0].corpus_version
+    if rerank_results:
+        return rerank_results[0].corpus_version
+    return UNKNOWN
+
+
 def _corpus_version(
     retrievals: tuple[NVIDIAKnowledgeRetrieval, ...],
     recommendation_set: NVIDIARecommendationSet,
@@ -408,6 +538,10 @@ def _f1(*, precision: float, recall: float) -> float:
     if precision + recall == 0:
         return 0.0
     return round((2 * precision * recall) / (precision + recall), 6)
+
+
+def _metric_delta(after: float, before: float) -> float:
+    return round(after - before, 6)
 
 
 def _deduplicate(values: Iterable[object]) -> tuple[str, ...]:
