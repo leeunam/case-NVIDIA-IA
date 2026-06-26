@@ -68,11 +68,13 @@ class PgvectorNVIDIAEmbeddingStore:
                     source_type,
                     ingested_at,
                     metadata_json,
-                    payload_json
+                    payload_json,
+                    schema_version
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (corpus_version, document_id)
                 DO UPDATE SET
+                    schema_version = EXCLUDED.schema_version,
                     title = EXCLUDED.title,
                     source_url = EXCLUDED.source_url,
                     source_type = EXCLUDED.source_type,
@@ -89,6 +91,7 @@ class PgvectorNVIDIAEmbeddingStore:
                     document.ingested_at,
                     _dumps(document.metadata),
                     _dumps(document),
+                    document.schema_version,
                 ),
             )
 
@@ -104,11 +107,13 @@ class PgvectorNVIDIAEmbeddingStore:
                     topic,
                     text,
                     metadata_json,
-                    payload_json
+                    payload_json,
+                    schema_version
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (corpus_version, chunk_id)
                 DO UPDATE SET
+                    schema_version = EXCLUDED.schema_version,
                     document_id = EXCLUDED.document_id,
                     chunk_index = EXCLUDED.chunk_index,
                     topic = EXCLUDED.topic,
@@ -125,6 +130,7 @@ class PgvectorNVIDIAEmbeddingStore:
                     chunk.text,
                     _dumps(chunk.metadata),
                     _dumps(chunk),
+                    chunk.schema_version,
                 ),
             )
 
