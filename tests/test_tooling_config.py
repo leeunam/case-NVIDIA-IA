@@ -60,6 +60,21 @@ class ToolingConfigTests(unittest.TestCase):
             config["tool"]["pytest"]["ini_options"]["markers"],
         )
 
+    def test_optional_embedding_and_pgvector_dependencies_are_documented_separately(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        readme = (project_root / "README.md").read_text(encoding="utf-8")
+        with (project_root / "pyproject.toml").open("rb") as pyproject_file:
+            config = tomllib.load(pyproject_file)
+
+        optional_dependencies = config["project"]["optional-dependencies"]
+        self.assertIn("sentence-transformers", optional_dependencies["embeddings"])
+        self.assertIn("psycopg[binary]", optional_dependencies["pgvector"])
+        self.assertNotIn("sentence-transformers", config["project"]["dependencies"])
+        self.assertNotIn("psycopg[binary]", config["project"]["dependencies"])
+        self.assertIn('python -m pip install -e ".[embeddings,pgvector]"', readme)
+        self.assertIn("NVIDIA_STARTUP_INTEL_EMBEDDING_PROVIDER", readme)
+        self.assertIn("NVIDIA_STARTUP_INTEL_EMBEDDING_MODEL", readme)
+
     def test_readme_documents_optional_playwright_collection_smoke_separately(self) -> None:
         readme_path = Path(__file__).resolve().parents[1] / "README.md"
         pyproject_path = Path(__file__).resolve().parents[1] / "pyproject.toml"

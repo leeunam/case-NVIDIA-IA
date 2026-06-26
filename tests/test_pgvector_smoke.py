@@ -28,6 +28,28 @@ def test_pgvector_smoke_applies_project_schema_and_round_trips_fixture() -> None
     assert "select exists" in executed_sql
 
 
+def test_pgvector_smoke_can_use_configured_sentence_transformers_embeddings() -> None:
+    connection = _SmokeConnection()
+
+    result = run_pgvector_smoke(
+        database_url="postgresql://user:secret@localhost:5432/db",
+        connect=lambda _database_url: connection,
+        embedding_env={
+            "NVIDIA_STARTUP_INTEL_EMBEDDING_PROVIDER": "sentence-transformers",
+            "NVIDIA_STARTUP_INTEL_EMBEDDING_MODEL": "intfloat/multilingual-e5-base",
+            "NVIDIA_STARTUP_INTEL_EMBEDDING_MODEL_VERSION": "local-snapshot",
+        },
+        embedding_model_loader=lambda _model_name: _SentenceTransformerLikeModel(dimension=2),
+    )
+
+    metadata = json.loads(connection.embedding_metadata_json)
+    assert result.persisted_embeddings == result.persisted_chunks
+    assert metadata["embedding_provider"] == "sentence_transformers"
+    assert metadata["embedding_model"] == "intfloat/multilingual-e5-base"
+    assert metadata["embedding_version"] == "local-snapshot"
+    assert metadata["dimension"] == 2
+
+
 class _SmokeConnection:
     def __init__(self) -> None:
         self.sql_statements: list[str] = []
@@ -82,6 +104,20 @@ class _SmokeCursor:
 
     def fetchall(self) -> tuple[tuple[object, ...], ...]:
         return self._rows
+
+
+class _SentenceTransformerLikeModel:
+    def __init__(self, *, dimension: int) -> None:
+        self._dimension = dimension
+
+    def get_sentence_embedding_dimension(self) -> int:
+        return self._dimension
+
+    def encode(self, texts: list[str], **_: object) -> list[list[float]]:
+        vectors: list[list[float]] = []
+        for index, _text in enumerate(texts):
+            vectors.append([1.0 if index == component else 0.0 for component in range(self._dimension)])
+        return vectors
 
 
 def test_pgvector_smoke_command_is_documented() -> None:

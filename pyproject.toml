@@ -28,6 +28,12 @@ scraping-scale = [
 scraping-services = [
     "firecrawl-py",
 ]
+embeddings = [
+    "sentence-transformers",
+]
+pgvector = [
+    "psycopg[binary]",
+]
 
 [project.scripts]
 nvidia-startup-intel = "nvidia_startup_intel.cli:main"
