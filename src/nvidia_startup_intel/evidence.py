@@ -1,6 +1,6 @@
 """Evidence structuring and conflict detection by profile field.
 
-Story 6 makes field-level claims auditable. It preserves all sourced claims,
+This module makes field-level claims auditable, preserves sourced claims,
 supports multiple evidences per field, and marks fields with conflicting values.
 """
 

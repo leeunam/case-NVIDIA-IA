@@ -1,8 +1,8 @@
 """Basic startup profile extraction from collected pages.
 
-Story 5 converts collected page text into a versioned, evidence-backed startup
-profile. This MVP uses deterministic extraction from explicit text patterns and
-returns ``unknown`` when evidence is insufficient.
+Collected page text is converted into a versioned, evidence-backed startup
+profile. Extraction is deterministic from explicit text patterns and returns
+``unknown`` when evidence is insufficient.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """Search plan generation for startup discovery.
 
-Story 2 converts structured search parameters into concrete search terms and
-target sources. It does not execute search requests.
+This module converts structured search parameters into concrete search terms
+and target sources. It does not execute search requests.
 """
 
 from __future__ import annotations

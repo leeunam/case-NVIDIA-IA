@@ -1,7 +1,7 @@
 """robots.txt policy lookup with per-run cache.
 
-Story 13 uses Python's standard ``urllib.robotparser`` before introducing a
-larger crawler. The cache is explicit so tests and pipeline runs can audit and
+The implementation uses Python's standard ``urllib.robotparser`` before adding
+a larger crawler. The cache is explicit so tests and pipeline runs can audit and
 reuse domain decisions.
 """
 

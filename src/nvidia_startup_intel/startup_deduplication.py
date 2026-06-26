@@ -1,9 +1,9 @@
 """Startup normalization and conservative deduplication.
 
-Story 7 consolidates candidate startups while preserving every discovery
-evidence that led to them. The matching rules are intentionally conservative:
-domain matches and known aliases are strong signals; similar names alone are
-not enough unless the similarity is an obvious legal/name variant.
+Candidate startups are consolidated while preserving every discovery evidence
+that led to them. The matching rules are intentionally conservative: domain
+matches and known aliases are strong signals; similar names alone are not
+enough unless the similarity is an obvious legal/name variant.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """Candidate startup discovery from raw search results.
 
-Story 3 starts after a search plan has been executed. This module does not
-search the web; it turns raw results into auditable candidate startups.
+This module starts after a search plan has been executed. It does not search
+the web; it turns raw provider results into auditable candidate startups.
 """
 
 from __future__ import annotations

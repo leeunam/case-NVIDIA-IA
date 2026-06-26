@@ -1,6 +1,6 @@
 """Collection quality metrics for pipeline runs.
 
-Story 9 summarizes whether discovery, collection, and extraction produced
+This module summarizes whether discovery, collection, and extraction produced
 enough sourced data to move into AI-native evaluation.
 """
 

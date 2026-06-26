@@ -1,7 +1,7 @@
 """Parsing and normalization for startup search parameters.
 
-Story 1 is intentionally deterministic. The next story can consume this
-structured object to generate a search plan without reparsing free text.
+The parser is intentionally deterministic so downstream planning can consume a
+structured object without reparsing free text.
 """
 
 from __future__ import annotations

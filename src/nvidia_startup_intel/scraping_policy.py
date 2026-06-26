@@ -1,7 +1,7 @@
 """Scraping limits, block rules, and error classification.
 
-Story 10 keeps collection predictable and auditable without adding a heavy
-crawler framework before the MVP needs one.
+The policy keeps collection predictable and auditable without adding a heavy
+crawler framework before a measured need exists.
 """
 
 from __future__ import annotations

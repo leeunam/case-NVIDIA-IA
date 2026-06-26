@@ -1,8 +1,8 @@
 """Search plan execution against configurable providers.
 
-Story 11 keeps search execution behind a small interface. Tests can use a fake
-client, while production can configure a real HTTP provider through
-environment variables without leaking credentials into code.
+Search execution stays behind a small interface. Tests can use a fake client,
+while production can configure a real HTTP provider through environment
+variables without leaking credentials into code.
 """
 
 from __future__ import annotations

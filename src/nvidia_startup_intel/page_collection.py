@@ -1,8 +1,8 @@
 """Public page collection for candidate startups.
 
-Story 4 collects a small, relevant set of public pages from a startup website.
-The default fetcher uses the Python standard library, and tests inject a fake
-fetcher so collection behavior stays deterministic.
+The collector gathers a small, relevant set of public pages from a startup
+website. The default fetcher uses the Python standard library, and tests inject
+a fake fetcher so collection behavior stays deterministic.
 """
 
 from __future__ import annotations

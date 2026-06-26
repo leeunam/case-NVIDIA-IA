@@ -1,7 +1,8 @@
 """Persist intermediate pipeline results by execution.
 
-Story 8 stores raw and processed artifacts separately so collection can be
-reused while later extraction/profile steps are reprocessed.
+Raw and processed artifacts are stored separately so collection can be reused
+while later extraction, assessment, recommendation, or briefing steps are
+reprocessed.
 """
 
 from __future__ import annotations
