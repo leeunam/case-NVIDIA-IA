@@ -25,7 +25,13 @@ from nvidia_startup_intel.briefing import executive_briefing_to_dict, human_revi
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.discovery import CandidateStartup, RawDiscoveryResult
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
-from nvidia_startup_intel.nvidia_knowledge import nvidia_knowledge_retrieval_to_dict
+from nvidia_startup_intel.nvidia_knowledge import (
+    NVIDIAKnowledgeChunk,
+    NVIDIAKnowledgeCorpus,
+    NVIDIAKnowledgeDocument,
+    nvidia_knowledge_retrieval_to_dict,
+    validate_nvidia_knowledge_corpus,
+)
 from nvidia_startup_intel.nvidia_recommendation import nvidia_recommendation_set_to_dict
 from nvidia_startup_intel.page_collection import PageCollectionResult
 from nvidia_startup_intel.pipeline import ScrapingPipelineResult, candidate_result_key, profile_result_key
@@ -359,6 +365,121 @@ class SqlPipelineRepository:
             ),
         )
         self._commit()
+
+    def save_nvidia_knowledge_corpus(self, corpus: NVIDIAKnowledgeCorpus) -> None:
+        """Persist a validated NVIDIA Knowledge corpus with idempotent upserts."""
+
+        validation = validate_nvidia_knowledge_corpus(corpus)
+        if not validation.is_valid:
+            raise ValueError(_nvidia_knowledge_validation_error(validation.issues))
+
+        with self._transaction():
+            for document in corpus.documents:
+                self._execute(
+                    """
+                    INSERT INTO nvidia_knowledge_documents
+                    (
+                        schema_version,
+                        corpus_version,
+                        document_id,
+                        title,
+                        source_url,
+                        source_type,
+                        ingested_at,
+                        metadata_json,
+                        payload_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (corpus_version, document_id)
+                    DO UPDATE SET
+                        schema_version = excluded.schema_version,
+                        title = excluded.title,
+                        source_url = excluded.source_url,
+                        source_type = excluded.source_type,
+                        ingested_at = excluded.ingested_at,
+                        metadata_json = excluded.metadata_json,
+                        payload_json = excluded.payload_json
+                    """,
+                    (
+                        document.schema_version,
+                        document.corpus_version,
+                        document.document_id,
+                        document.title,
+                        document.source_url,
+                        document.source_type,
+                        document.ingested_at,
+                        _dumps(document.metadata),
+                        _dumps(document),
+                    ),
+                )
+
+            for chunk in corpus.chunks:
+                self._execute(
+                    """
+                    INSERT INTO nvidia_knowledge_chunks
+                    (
+                        schema_version,
+                        corpus_version,
+                        chunk_id,
+                        document_id,
+                        chunk_index,
+                        topic,
+                        text,
+                        metadata_json,
+                        payload_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (corpus_version, chunk_id)
+                    DO UPDATE SET
+                        schema_version = excluded.schema_version,
+                        document_id = excluded.document_id,
+                        chunk_index = excluded.chunk_index,
+                        topic = excluded.topic,
+                        text = excluded.text,
+                        metadata_json = excluded.metadata_json,
+                        payload_json = excluded.payload_json
+                    """,
+                    (
+                        chunk.schema_version,
+                        chunk.corpus_version,
+                        chunk.chunk_id,
+                        chunk.document_id,
+                        chunk.chunk_index,
+                        chunk.topic,
+                        chunk.text,
+                        _dumps(chunk.metadata),
+                        _dumps(chunk),
+                    ),
+                )
+
+    def load_nvidia_knowledge_corpus(self, corpus_version: str) -> NVIDIAKnowledgeCorpus:
+        document_rows = self._execute(
+            """
+            SELECT payload_json FROM nvidia_knowledge_documents
+            WHERE corpus_version = ?
+            ORDER BY document_id
+            """,
+            (corpus_version,),
+        ).fetchall()
+        if not document_rows:
+            raise KeyError(f"NVIDIA Knowledge corpus not found: {corpus_version}")
+
+        chunk_rows = self._execute(
+            """
+            SELECT payload_json FROM nvidia_knowledge_chunks
+            WHERE corpus_version = ?
+            ORDER BY document_id, chunk_index, chunk_id
+            """,
+            (corpus_version,),
+        ).fetchall()
+        documents = tuple(_nvidia_document_from_payload(row[0]) for row in document_rows)
+        chunks = tuple(_nvidia_chunk_from_payload(row[0]) for row in chunk_rows)
+        return NVIDIAKnowledgeCorpus(
+            schema_version=documents[0].schema_version,
+            corpus_version=corpus_version,
+            documents=documents,
+            chunks=chunks,
+        )
 
     def save_pipeline_result(
         self,
@@ -714,11 +835,12 @@ def _schema_statements(id_column_type: str) -> tuple[str, ...]:
     )
 
 
-def _pgvector_schema_statements(id_column_type: str) -> tuple[str, ...]:
+def _nvidia_knowledge_table_statements(id_column_type: str) -> tuple[str, ...]:
     return (
         f"""
         CREATE TABLE IF NOT EXISTS nvidia_knowledge_documents (
             id {id_column_type},
+            schema_version TEXT NOT NULL,
             corpus_version TEXT NOT NULL,
             document_id TEXT NOT NULL,
             title TEXT NOT NULL,
@@ -733,6 +855,7 @@ def _pgvector_schema_statements(id_column_type: str) -> tuple[str, ...]:
         f"""
         CREATE TABLE IF NOT EXISTS nvidia_knowledge_chunks (
             id {id_column_type},
+            schema_version TEXT NOT NULL,
             corpus_version TEXT NOT NULL,
             chunk_id TEXT NOT NULL,
             document_id TEXT NOT NULL,
@@ -747,6 +870,26 @@ def _pgvector_schema_statements(id_column_type: str) -> tuple[str, ...]:
                 ON DELETE CASCADE
         )
         """,
+    )
+
+
+def _nvidia_knowledge_index_statements() -> tuple[str, ...]:
+    return (
+        "CREATE INDEX IF NOT EXISTS idx_nvidia_knowledge_documents_corpus ON nvidia_knowledge_documents(corpus_version)",
+        "CREATE INDEX IF NOT EXISTS idx_nvidia_knowledge_chunks_corpus_topic ON nvidia_knowledge_chunks(corpus_version, topic)",
+    )
+
+
+def _nvidia_knowledge_schema_statements(id_column_type: str) -> tuple[str, ...]:
+    return (
+        *_nvidia_knowledge_table_statements(id_column_type),
+        *_nvidia_knowledge_index_statements(),
+    )
+
+
+def _pgvector_schema_statements(id_column_type: str) -> tuple[str, ...]:
+    return (
+        *_nvidia_knowledge_table_statements(id_column_type),
         f"""
         CREATE TABLE IF NOT EXISTS nvidia_chunk_embeddings (
             id {id_column_type},
@@ -776,14 +919,16 @@ def _pgvector_schema_statements(id_column_type: str) -> tuple[str, ...]:
                 ON DELETE CASCADE
         )
         """,
-        "CREATE INDEX IF NOT EXISTS idx_nvidia_knowledge_documents_corpus ON nvidia_knowledge_documents(corpus_version)",
-        "CREATE INDEX IF NOT EXISTS idx_nvidia_knowledge_chunks_corpus_topic ON nvidia_knowledge_chunks(corpus_version, topic)",
+        *_nvidia_knowledge_index_statements(),
         "CREATE INDEX IF NOT EXISTS idx_nvidia_chunk_embeddings_lookup ON nvidia_chunk_embeddings(corpus_version, embedding_model, embedding_version, vector_dimension)",
         "CREATE INDEX IF NOT EXISTS idx_nvidia_chunk_embeddings_chunk ON nvidia_chunk_embeddings(corpus_version, chunk_id)",
     )
 
 
-SQLITE_SCHEMA_STATEMENTS = _schema_statements("INTEGER PRIMARY KEY AUTOINCREMENT")
+SQLITE_SCHEMA_STATEMENTS = (
+    *_schema_statements("INTEGER PRIMARY KEY AUTOINCREMENT"),
+    *_nvidia_knowledge_schema_statements("INTEGER PRIMARY KEY AUTOINCREMENT"),
+)
 POSTGRES_SCHEMA_STATEMENTS = (
     "CREATE EXTENSION IF NOT EXISTS vector",
     *_schema_statements("BIGSERIAL PRIMARY KEY"),
@@ -842,6 +987,45 @@ def _briefing_payload(briefing: Any) -> dict[str, object]:
     if _briefing_type(briefing) == "human_review":
         return human_review_briefing_to_dict(briefing)
     return executive_briefing_to_dict(briefing)
+
+
+def _nvidia_knowledge_validation_error(issues: Sequence[Any]) -> str:
+    reasons = ", ".join(f"{issue.document_id}:{issue.reason}" for issue in issues)
+    return f"invalid_nvidia_knowledge_corpus:{reasons}"
+
+
+def _nvidia_document_from_payload(payload_json: object) -> NVIDIAKnowledgeDocument:
+    payload = _loads_mapping(payload_json)
+    return NVIDIAKnowledgeDocument(
+        schema_version=str(payload["schema_version"]),
+        corpus_version=str(payload["corpus_version"]),
+        document_id=str(payload["document_id"]),
+        title=str(payload["title"]),
+        source_url=str(payload["source_url"]),
+        source_type=str(payload["source_type"]),
+        ingested_at=str(payload["ingested_at"]),
+        metadata=dict(payload.get("metadata", {})),
+    )
+
+
+def _nvidia_chunk_from_payload(payload_json: object) -> NVIDIAKnowledgeChunk:
+    payload = _loads_mapping(payload_json)
+    return NVIDIAKnowledgeChunk(
+        schema_version=str(payload["schema_version"]),
+        corpus_version=str(payload["corpus_version"]),
+        chunk_id=str(payload["chunk_id"]),
+        document_id=str(payload["document_id"]),
+        chunk_index=int(payload["chunk_index"]),
+        topic=str(payload["topic"]),
+        text=str(payload["text"]),
+        metadata=dict(payload.get("metadata", {})),
+    )
+
+
+def _loads_mapping(payload_json: object) -> dict[str, object]:
+    if isinstance(payload_json, str):
+        return dict(json.loads(payload_json))
+    return dict(payload_json)  # type: ignore[arg-type]
 
 
 def _to_jsonable(value: Any) -> Any:

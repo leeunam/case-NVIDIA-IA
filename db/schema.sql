@@ -128,6 +128,7 @@ CREATE INDEX IF NOT EXISTS idx_downstream_briefings_run_startup ON downstream_br
 
 CREATE TABLE IF NOT EXISTS nvidia_knowledge_documents (
     id BIGSERIAL PRIMARY KEY,
+    schema_version TEXT NOT NULL,
     corpus_version TEXT NOT NULL,
     document_id TEXT NOT NULL,
     title TEXT NOT NULL,
@@ -141,6 +142,7 @@ CREATE TABLE IF NOT EXISTS nvidia_knowledge_documents (
 
 CREATE TABLE IF NOT EXISTS nvidia_knowledge_chunks (
     id BIGSERIAL PRIMARY KEY,
+    schema_version TEXT NOT NULL,
     corpus_version TEXT NOT NULL,
     chunk_id TEXT NOT NULL,
     document_id TEXT NOT NULL,
