@@ -89,11 +89,7 @@ class LocalDownstreamWorkflow:
 
     def invoke(self, state: DownstreamWorkflowState) -> DownstreamWorkflowState:
         self.runtime.checkpoints.clear()
-        current = _merge(
-            state,
-            branch_decisions=state.get("branch_decisions", ()),
-            errors=state.get("errors", ()),
-        )
+        current = initialize_downstream_state_node(state, self.runtime)
         for node in (
             decide_recommendation_readiness_node,
             retrieve_nvidia_knowledge_node,
@@ -110,6 +106,96 @@ class LocalDownstreamWorkflow:
 
 def build_local_downstream_workflow(runtime: DownstreamWorkflowRuntime) -> LocalDownstreamWorkflow:
     return LocalDownstreamWorkflow(runtime)
+
+
+def build_downstream_langgraph(runtime: DownstreamWorkflowRuntime) -> Any:
+    """Compile the optional LangGraph downstream workflow when available."""
+
+    try:
+        from langgraph.graph import END, StateGraph  # type: ignore[import-not-found]
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("Install langgraph to build the production downstream graph") from exc
+
+    graph = StateGraph(DownstreamWorkflowState)
+    graph.add_node(
+        "initialize_state",
+        lambda state: initialize_downstream_state_node(state, runtime),
+    )
+    graph.add_node(
+        "decide_recommendation_readiness",
+        lambda state: decide_recommendation_readiness_node(state, runtime),
+    )
+    graph.add_node(
+        "retrieve_nvidia_knowledge",
+        lambda state: retrieve_nvidia_knowledge_node(state, runtime),
+    )
+    graph.add_node(
+        "build_recommendations",
+        lambda state: build_recommendations_node(state, runtime),
+    )
+    graph.add_node(
+        "decide_briefing_readiness",
+        lambda state: decide_briefing_readiness_node(state, runtime),
+    )
+    graph.add_node(
+        "generate_downstream_briefing",
+        lambda state: generate_downstream_briefing_node(state, runtime),
+    )
+    graph.add_node(
+        "persist_downstream_artifacts",
+        lambda state: persist_downstream_artifacts_node(state, runtime),
+    )
+    graph.add_node(
+        "decide_final_next_action",
+        lambda state: decide_final_next_action_node(state, runtime),
+    )
+
+    graph.set_entry_point("initialize_state")
+    graph.add_edge("initialize_state", "decide_recommendation_readiness")
+    graph.add_conditional_edges(
+        "decide_recommendation_readiness",
+        _route_after_recommendation_readiness,
+        {
+            "ready_for_recommendation": "retrieve_nvidia_knowledge",
+            "needs_more_collection_or_human_review": "retrieve_nvidia_knowledge",
+        },
+    )
+    graph.add_edge("retrieve_nvidia_knowledge", "build_recommendations")
+    graph.add_edge("build_recommendations", "decide_briefing_readiness")
+    graph.add_conditional_edges(
+        "decide_briefing_readiness",
+        _route_after_briefing_readiness,
+        {
+            "ready_for_briefing": "generate_downstream_briefing",
+            "human_review_requested": "generate_downstream_briefing",
+        },
+    )
+    graph.add_conditional_edges(
+        "generate_downstream_briefing",
+        _route_after_briefing_generation,
+        {
+            "briefing_generated": "persist_downstream_artifacts",
+            "human_review_requested": "persist_downstream_artifacts",
+            "needs_more_collection_or_human_review": "persist_downstream_artifacts",
+        },
+    )
+    graph.add_edge("persist_downstream_artifacts", "decide_final_next_action")
+    graph.add_edge("decide_final_next_action", END)
+    return graph.compile()
+
+
+build_langgraph = build_downstream_langgraph
+
+
+def initialize_downstream_state_node(
+    state: DownstreamWorkflowState,
+    runtime: DownstreamWorkflowRuntime,
+) -> DownstreamWorkflowState:
+    return _merge(
+        state,
+        branch_decisions=state.get("branch_decisions", ()),
+        errors=state.get("errors", ()),
+    )
 
 
 def decide_recommendation_readiness_node(
@@ -322,6 +408,26 @@ def _append_branch(
 
 def _has_branch(state: DownstreamWorkflowState, branch_name: str) -> bool:
     return any(branch.branch_name == branch_name for branch in state.get("branch_decisions", ()))
+
+
+def _route_after_recommendation_readiness(state: DownstreamWorkflowState) -> str:
+    if _has_branch(state, "needs_more_collection_or_human_review"):
+        return "needs_more_collection_or_human_review"
+    return "ready_for_recommendation"
+
+
+def _route_after_briefing_readiness(state: DownstreamWorkflowState) -> str:
+    if _has_branch(state, "ready_for_briefing"):
+        return "ready_for_briefing"
+    return "human_review_requested"
+
+
+def _route_after_briefing_generation(state: DownstreamWorkflowState) -> str:
+    if _has_branch(state, "briefing_generated"):
+        return "briefing_generated"
+    if _has_branch(state, "human_review_requested"):
+        return "human_review_requested"
+    return "needs_more_collection_or_human_review"
 
 
 def _append_error(
