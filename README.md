@@ -135,6 +135,7 @@ O guia completo está em [Frameworks de IA, Orquestração e Retrieval](context/
 - [Roadmap de avaliação AI-native](context/roadmap-pipeline-avaliação.md)
 - [Roadmap de NVIDIA Knowledge, Recommendation e Briefing](context/roadmap-nvidia-knowledge-recommendation-briefing.md)
 - [Frameworks de IA, orquestração e retrieval](context/frameworks-and-retrieval-strategy.md)
+- [Arquitetura de produção para scraping, retrieval, LangGraph e LLM](context/production-retrieval-and-scraping-architecture.md)
 - [ADRs](context/adr)
 
 ## Validação

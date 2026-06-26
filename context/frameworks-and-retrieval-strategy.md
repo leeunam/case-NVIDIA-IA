@@ -2,6 +2,8 @@
 
 Este documento orienta humanos e agentes de IA sobre quais frameworks podem entrar no projeto, onde cada um entra e quais limites não devem ser ultrapassados.
 
+O mapa operacional para sair do core determinístico e chegar em scraping robusto, retrieval híbrido escalável, LangGraph real, LLM via Groq/LiteLLM e Postgres/pgvector está em `context/production-retrieval-and-scraping-architecture.md`.
+
 ## Regra Principal
 
 Frameworks não são a regra de negócio do projeto.
