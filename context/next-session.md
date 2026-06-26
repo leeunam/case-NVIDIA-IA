@@ -4,7 +4,7 @@
 
 O MVP de scraping está implementado como walking skeleton funcional e auditável. Ele transforma consulta em plano de busca, executa descoberta, deduplica candidatas, coleta páginas públicas, extrai `StartupProfile`, estrutura evidências e mede qualidade da coleta.
 
-Esse MVP é um walking skeleton pronto para alimentar a próxima etapa, não uma camada final de scraping production-grade. A coleta atual usa `urllib` + `html.parser`; ainda não há Playwright, trafilatura, BeautifulSoup, Firecrawl ou Scrapy integrados. O roadmap para hardening incremental está em `context/roadmap-scraping-hardening.md`.
+Esse MVP é um walking skeleton pronto para alimentar a próxima etapa, não uma camada final de scraping production-grade completa. A CLI de coleta real é Playwright-first, com extração HTML injetável e adapter para trafilatura + BeautifulSoup quando as dependências estiverem instaladas. O caminho `urllib` + `html.parser` permanece como harness determinístico de teste/debug. Firecrawl e Scrapy ainda não estão integrados; entram como adapters futuros quando houver ganho medido.
 
 O épico local de avaliação AI-native também está implementado: schema `ai_native_assessment.v1`, classificador determinístico, riscos de wrapper/API-dependency, gaps técnicos iniciais, sinal preliminar de oportunidade, qualidade do diagnóstico, persistência JSON/SQL e branch no grafo.
 

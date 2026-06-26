@@ -64,9 +64,9 @@ Guia técnico: `context/frameworks-and-retrieval-strategy.md`.
 
 ### 1. Descoberta e Coleta
 
-Status: implementado como MVP.
+Status: implementado como MVP em evolução.
 
-O MVP atual é suficiente como walking skeleton auditável para alimentar avaliação AI-native, mas não deve ser tratado como scraping production-grade. A coleta usa `urllib` + `html.parser`, ainda não renderiza JavaScript e ainda não possui extração avançada com Playwright, trafilatura, BeautifulSoup, Firecrawl ou Scrapy. A evolução dessa camada está separada em `context/roadmap-scraping-hardening.md` e deve ser guiada por falhas medidas de coleta.
+O MVP atual é suficiente como walking skeleton auditável para alimentar avaliação AI-native, mas ainda não deve ser tratado como scraping production-grade completo. A coleta real da CLI é Playwright-first e já possui contrato injetável de extração HTML com adapter para trafilatura + BeautifulSoup quando as dependências estiverem instaladas. O caminho `urllib` + `html.parser` permanece como harness determinístico de teste/debug. Firecrawl e Scrapy ainda não estão integrados; entram como adapters futuros quando houver ganho medido de extração externa ou crawling em escala.
 
 Entrada:
 

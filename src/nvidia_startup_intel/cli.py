@@ -82,10 +82,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="HTTP timeout for the standard-library fetcher.",
     )
     collect.add_argument(
-        "--render-js",
-        action="store_true",
-        help="Enable Playwright fallback for pages marked as needing JavaScript rendering.",
+        "--no-render-js",
+        action="store_false",
+        dest="render_js",
+        help="Disable Playwright rendering and keep only the deterministic HTTP/static path.",
     )
+    collect.set_defaults(render_js=True)
     collect.add_argument(
         "--robots-policy",
         choices=("conservative", "permissive-on-error", "off"),

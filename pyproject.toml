@@ -1,3 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nvidia-startup-intel"
+version = "0.1.0"
+description = "Evidence-first intelligence pipeline for Brazilian AI-native startup qualification."
+requires-python = ">=3.11"
+dependencies = [
+    "beautifulsoup4",
+    "playwright",
+    "trafilatura",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy",
+    "pytest",
+    "ruff",
+]
+scraping-scale = [
+    "scrapy",
+]
+scraping-services = [
+    "firecrawl-py",
+]
+
+[project.scripts]
+nvidia-startup-intel = "nvidia_startup_intel.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]

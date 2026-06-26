@@ -87,6 +87,55 @@ def test_two_startups_pass_through_complete_scraping_pipeline() -> None:
     assert result.quality_summary.ready_for_evaluation is True
 
 
+def test_pipeline_uses_injected_playwright_renderer_as_primary_collection_engine() -> None:
+    raw_results = (
+        RawDiscoveryResult(
+            title="Atlas AI",
+            url="https://atlas.ai/",
+            snippet="Atlas AI usa IA para dados.",
+            source_name="web",
+            discovered_name="Atlas AI",
+        ),
+    )
+    static_pages = {
+        "https://atlas.ai": FetchResponse(
+            url="https://atlas.ai/",
+            status_code=200,
+            body="<html><head><title>Static</title></head><body>Texto estatico incompleto.</body></html>",
+        )
+    }
+    rendered_pages = {
+        "https://atlas.ai": FetchResponse(
+            url="https://atlas.ai/",
+            status_code=200,
+            body=(
+                "<html><head><title>Atlas AI Rendered</title></head><body>"
+                "Resumo: Plataforma AI-native para dados. "
+                "Setor: dados. Produto: Copiloto analitico. "
+                "Sinais de IA: modelos proprietarios em producao."
+                "</body></html>"
+            ),
+        )
+    }
+
+    result = run_scraping_pipeline(
+        "startups AI-native do Brasil",
+        raw_results,
+        fetcher=fixture_fetcher(static_pages),
+        playwright_renderer=fixture_fetcher(rendered_pages),
+        robots_cache=allow_robots(),
+        limit=1,
+        max_pages_per_candidate=1,
+    )
+
+    pages = result.collected_pages_by_candidate["url:https://atlas.ai"].pages
+
+    assert pages[0].title == "Atlas AI Rendered"
+    assert "AI-native" in pages[0].main_text
+    assert pages[0].extraction_strategy.endswith("+playwright")
+    assert result.profiles[0].ai_signals.value != UNKNOWN
+
+
 def test_profile_extraction_prefers_collected_page_name_over_candidate_fallback() -> None:
     candidate = CandidateStartup(
         name="10 startups brasileiras de IA para acompanhar",

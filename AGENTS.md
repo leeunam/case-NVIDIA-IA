@@ -133,14 +133,15 @@ Se algum comando não existir ainda, não assuma que ele funciona. Informe isso 
 - Firecrawl: extração de páginas web em formato limpo para RAG.
 - trafilatura: extração de texto principal de páginas, blogs e notícias.
 
-Use a ferramenta mais simples que resolva a story atual. Não introduza Scrapy, Playwright ou Firecrawl antes de existir uma necessidade concreta.
+Use a ferramenta mais simples que preserve o motor principal robusto. Playwright + extração estática robusta são o caminho real de coleta; o caminho determinístico simples existe para testes, debug e comparação.
 
 Estado atual:
 
-- A coleta usa biblioteca padrão do Python (`urllib` + `html.parser`) para manter o MVP simples e testável.
+- O motor principal de coleta real é Playwright-first, com extração por `StaticHTMLExtractionAdapter` para trafilatura + BeautifulSoup na instalação base do projeto.
+- A coleta determinística com biblioteca padrão (`urllib` + `html.parser`) permanece como harness local/fallback de teste e debug.
 - A coleta consulta `robots.txt` automaticamente quando recebe um `RobotsCache`, bloqueia URLs não permitidas e respeita `crawl-delay`.
-- Existe contrato injetável de extração HTML e adapter opcional `StaticHTMLExtractionAdapter` para trafilatura + BeautifulSoup com fallback local.
-- Existe fallback seletivo `PlaywrightPageRenderer` para páginas que a extração estática marcar como `needs_js_rendering`; a suíte default usa renderer fake e não exige navegador real.
+- Existe contrato injetável de extração HTML e adapter `StaticHTMLExtractionAdapter` para trafilatura + BeautifulSoup com fallback local.
+- Existe `PlaywrightPageRenderer` como motor primário de renderização da CLI real; a suíte default usa renderer fake para não exigir navegador real.
 - Ainda não há Scrapy ou Firecrawl integrados no código.
 - O scraping atual pode perder conteúdo em sites JavaScript-heavy ou páginas com extração de texto ruidosa; isso é limitação conhecida do MVP.
 - Melhorias de scraping devem seguir `context/roadmap-scraping-hardening.md` e ser guiadas por falhas medidas, como excesso de `unknown`, baixa completude, páginas vazias ou necessidade clara de renderização JavaScript.
@@ -351,7 +352,7 @@ Definition of Done atual:
 Limitações conhecidas:
 
 - O adaptador real implementado é Brave Search; outros provedores exigem novos `SearchClient`.
-- A coleta default usa `urllib` + `html.parser`; renderização JavaScript existe como fallback Playwright opcional e extração avançada existe como adapter opcional, ambos fora de dependências obrigatórias da suíte local.
-- Playwright, BeautifulSoup, trafilatura, Firecrawl ou Scrapy devem evoluir apenas por stories específicas de hardening, com testes locais e contratos preservados.
+- A coleta real deve ser Playwright-first com extração estática robusta; o caminho `urllib` + `html.parser` continua apenas como harness/fallback de teste e debug.
+- Smoke real de Playwright, qualidade de trafilatura/BeautifulSoup, Firecrawl e Scrapy devem evoluir por stories específicas de hardening, com testes locais e contratos preservados.
 - Postgres em desenvolvimento requer `docker compose up -d postgres` e driver `psycopg` instalado para uso real via `postgres_repository_from_env`.
 - `build_langgraph` requer a dependência opcional `langgraph`; a próxima suíte deve usar o runner local para não tornar validação dependente dessa instalação.

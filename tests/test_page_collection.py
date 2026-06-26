@@ -149,7 +149,12 @@ def test_collect_pages_uses_playwright_renderer_when_static_html_needs_javascrip
               </body>
             </html>
             """,
-        )
+        ),
+        "https://startup.ai/sobre": FetchResponse(
+            url="https://startup.ai/sobre",
+            status_code=200,
+            body="<html><head><title>Sobre Rendered</title></head><body>Sobre renderizado.</body></html>",
+        ),
     }
 
     result = collect_public_pages(
@@ -167,6 +172,36 @@ def test_collect_pages_uses_playwright_renderer_when_static_html_needs_javascrip
     assert result.pages[0].needs_js_rendering is False
     assert result.pages[0].extraction_strategy == "stdlib_html_parser+playwright"
     assert [page.url for page in result.pages] == ["https://startup.ai", "https://startup.ai/sobre"]
+
+
+def test_collect_pages_uses_playwright_renderer_as_primary_collection_engine_when_configured() -> None:
+    pages = {
+        "https://startup.ai": FetchResponse(
+            url="https://startup.ai/",
+            status_code=200,
+            body="<html><head><title>Static</title></head><body>Texto estatico.</body></html>",
+        )
+    }
+    rendered_pages = {
+        "https://startup.ai": FetchResponse(
+            url="https://startup.ai/",
+            status_code=200,
+            body="<html><head><title>Rendered</title></head><body>Texto do motor Playwright.</body></html>",
+        )
+    }
+
+    result = collect_public_pages(
+        "https://startup.ai/",
+        fetcher=make_fetcher(pages),
+        playwright_renderer=make_fetcher(rendered_pages),
+        max_pages=1,
+        clock=fixed_clock,
+    )
+
+    assert result.errors == ()
+    assert result.pages[0].title == "Rendered"
+    assert result.pages[0].main_text == "Texto do motor Playwright."
+    assert result.pages[0].extraction_strategy == "stdlib_html_parser+playwright"
 
 
 def test_collect_pages_records_playwright_failure_without_dropping_static_page() -> None:

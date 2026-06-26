@@ -35,7 +35,7 @@ Essa separacao preserva a suite local sem rede, credenciais, Postgres real, nave
 | Contexto | Atual deterministico | Limite de escala | Adapter/framework de producao | Contrato que nao deve mudar |
 | --- | --- | --- | --- | --- |
 | Search | `SearchClient`, Brave opcional, fakes em teste | um provedor, pouca estrategia de fallback | Brave, Firecrawl Search ou outro `SearchClient` com retry/rate limit | `RawDiscoveryResult` e erros auditaveis |
-| Collection | `urllib` + `html.parser` | perde JS, texto ruidoso, pouca extracao principal | cadeia `StaticFetcher` + `trafilatura` + `BeautifulSoup` + `Playwright` fallback + Firecrawl opcional + Scrapy para escala | `CollectedPage` e `PageCollectionResult` |
+| Collection | `urllib` + `html.parser` como harness local | perde JS, texto ruidoso, pouca extracao principal | Playwright-first + `trafilatura` + `BeautifulSoup`; Firecrawl como adapter externo; Scrapy para escala | `CollectedPage` e `PageCollectionResult` |
 | Profile Extraction | regras deterministicas | pode perder dados nao estruturados | manter deterministico; LLM so como proposta revisavel atras de contrato futuro | `StartupProfile` com evidencia por campo |
 | Evidence Quality | metricas locais | precisa comparar estrategias de coleta | metricas por estrategia e reprocessamento sem nova coleta | `CollectionQualitySummary` |
 | NVIDIA BM25 | BM25 proprio/local | manutencao e otimizacao limitadas | `rank_bm25.BM25Okapi` ou `langchain_community.retrievers.BM25Retriever` atras de adapter | `NVIDIAKnowledgeRetrieval` |
@@ -48,14 +48,14 @@ Essa separacao preserva a suite local sem rede, credenciais, Postgres real, nave
 
 ## Scraping Robusto
 
-A ordem recomendada nao e instalar todas as ferramentas ao mesmo tempo. A coleta deve virar uma cadeia de estrategias com fallback seletivo:
+A coleta real deve virar uma cadeia de estrategias robusta, mantendo o caminho deterministico apenas para teste/debug:
 
 ```text
-1. HTTP estatico permitido por policy/robots
-2. trafilatura para texto principal
-3. BeautifulSoup para links, titulo, metadados e fallback HTML
-4. detector needs_js_rendering
-5. Playwright apenas para paginas JS-heavy permitidas
+1. policy/robots antes de qualquer coleta
+2. Playwright para renderizar a pagina publica em modo controlado
+3. trafilatura para texto principal sobre HTML renderizado
+4. BeautifulSoup para links, titulo, metadados e fallback HTML
+5. detector needs_js_rendering como qualidade/diagnostico, nao como gate principal da CLI real
 6. Firecrawl apenas como adapter externo opcional
 7. Scrapy apenas para crawling em volume e multiplas fontes
 ```
@@ -64,7 +64,7 @@ Uso esperado por ferramenta:
 
 - `trafilatura`: extrair texto principal, metadata e reduzir ruido de menu/rodape/noticias/blogs.
 - `BeautifulSoup`: navegar HTML, extrair links, titulo, metatags e fallback quando `trafilatura` falhar.
-- `Playwright`: renderizar paginas publicas JS-heavy depois de uma heuristica detectar pouco texto estatico.
+- `Playwright`: renderizar paginas publicas como motor principal da coleta real.
 - `Firecrawl`: servico externo opcional para markdown/JSON limpo quando coleta local falhar; nunca entra na suite default.
 - `Scrapy`: crawling estruturado em escala, com politicas, filas, item pipelines e throttling; nao deve substituir os contratos de dominio.
 
@@ -292,14 +292,18 @@ Como a chave foi compartilhada em texto, trate-a como exposta e rotacione no pro
 
 ## Dependencias Por Grupo
 
-Grupos sugeridos quando o projeto passar a declarar dependencias opcionais:
+Dependencias declaradas ou previstas por grupo:
 
 ```text
-[scraping]
+[base scraping]
 beautifulsoup4
 trafilatura
 playwright
+
+[scraping-scale]
 scrapy
+
+[scraping-services]
 firecrawl-py
 
 [retrieval]
@@ -335,8 +339,8 @@ Nem todas devem ir para a instalacao default. A instalacao default deve continua
 5. Persistir embeddings reais em Postgres/pgvector e validar smoke opt-in.
 6. Comparar BM25, vector e hybrid em precision/recall/F1.
 7. Adicionar reranker cross-encoder opt-in e medir ganho no top K.
-8. Evoluir scraping estatico com `trafilatura` + `BeautifulSoup`.
-9. Adicionar detector `needs_js_rendering` e Playwright fallback opt-in.
+8. Validar smoke real da CLI Playwright-first com browser instalado.
+9. Medir ganho de `trafilatura` + `BeautifulSoup` em páginas reais brasileiras.
 10. Adicionar LangGraph completo com checkpoint Postgres.
 11. Conectar LiteLLM/Groq somente para narrativa ou etapas explicitamente LLM-safe.
 12. Avaliar Firecrawl/Scrapy apenas quando houver volume/falha medida que justifique.
@@ -347,7 +351,7 @@ Nem todas devem ir para a instalacao default. A instalacao default deve continua
 - Nao troque Postgres/pgvector por FAISS como armazenamento principal. FAISS e util para benchmark local; Postgres e melhor para auditoria neste projeto.
 - Nao deixe LangChain ou LlamaIndex virarem contrato de dominio. Eles podem compor retrievers, mas a saida precisa voltar aos schemas do projeto.
 - Nao use Groq para classificar fatos de startup ou tecnologia NVIDIA sem evidencia. Groq pode gerar narrativa, resumir briefing e talvez reranquear, mas nao deve inventar dados.
-- Nao instale Playwright/Scrapy/Firecrawl/trafilatura juntos na mesma issue. Cada ferramenta deve provar ganho em uma falha medida.
+- Nao deixe Scrapy ou Firecrawl virarem caminho obrigatorio da suite local. Eles devem provar ganho em escala ou extração externa antes de entrarem no fluxo padrão.
 
 ## Referencias Externas
 

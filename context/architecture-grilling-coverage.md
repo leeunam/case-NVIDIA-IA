@@ -8,9 +8,9 @@ Observação operacional: a revisão foi consolidada com a disciplina de `grill-
 
 A arquitetura está coerente até a etapa de `AI-Native Assessment`.
 
-O desenho atual preserva a decisão evidence-first, mantém dependências fluindo para frente e separa regra de negócio de orquestração. O principal risco arquitetural agora não é o scraping nem a avaliação determinística; é avançar para recomendações NVIDIA e briefing sem antes fechar contratos versionados para conhecimento, recuperação citável, ranking por gap, qualidade da recomendação e revisão humana.
+O desenho atual preserva a decisão evidence-first, mantém dependências fluindo para frente e separa regra de negócio de orquestração. O principal risco arquitetural agora é garantir que o motor de coleta Playwright-first preserve rastreabilidade e que recomendações NVIDIA e briefing continuem passando por contratos versionados para conhecimento, recuperação citável, ranking por gap, qualidade da recomendação e revisão humana.
 
-Próxima prioridade: entregar um walking skeleton de `NVIDIA Knowledge`, `Recommendation` e `Briefing` com snapshot local de fontes oficiais NVIDIA, recuperação BM25 lexical + vetorial citável, ranking híbrido reprodutível, recomendação baseada em gaps técnicos ou oportunidades comerciais e briefing versionado. Postgres/pgvector é o vector DB local preferido quando embeddings precisarem ser persistidos; vector DB externo, reranking avançado, Playwright e UI continuam fora do caminho crítico até haver falha medida.
+Próxima prioridade: consolidar o fluxo de coleta robusta e completar `NVIDIA Knowledge`, `Recommendation` e `Briefing` com snapshot local de fontes oficiais NVIDIA, recuperação BM25 lexical + vetorial citável, ranking híbrido reprodutível, recomendação baseada em gaps técnicos ou oportunidades comerciais e briefing versionado. Postgres/pgvector é o vector DB local preferido quando embeddings precisarem ser persistidos; vector DB externo, reranking avançado, Firecrawl, Scrapy e UI continuam fora do caminho crítico até haver falha medida.
 
 A estratégia para LangGraph, LangChain, LiteLLM, LlamaIndex, BM25, Postgres/pgvector, busca vetorial, busca híbrida, embeddings e reranking está em `context/frameworks-and-retrieval-strategy.md` e foi registrada na ADR 0007.
 

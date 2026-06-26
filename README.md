@@ -72,9 +72,9 @@ Já existe walking skeleton implementado para o fluxo upstream e downstream loca
 
 - planejamento de busca;
 - descoberta de candidatas;
-- coleta pública simples com `urllib` + `html.parser`;
+- coleta real Playwright-first, com caminho determinístico local para testes e debug;
 - extração HTML injetável com adapter opcional para trafilatura + BeautifulSoup;
-- fallback seletivo Playwright para páginas marcadas como `needs_js_rendering`, sem navegador real na suíte default;
+- renderização Playwright como motor principal da CLI real, sem navegador real obrigatório na suíte default;
 - política de scraping e robots.txt;
 - extração de `StartupProfile` com schema `startup_profile.v1`;
 - agrupamento de evidências;
@@ -99,6 +99,28 @@ Já existe walking skeleton implementado para o fluxo upstream e downstream loca
 - persistência downstream JSON/SQL de retrievals, recommendation sets e briefings por run e startup;
 - métricas downstream para retrieval, recomendação, gaps sem recomendação, bloqueios e motivos de revisão humana;
 - suíte local focada no downstream atual, sem rede, credenciais, Postgres real, LangGraph obrigatório ou provedores externos.
+
+## Setup Local
+
+Instalação base do projeto:
+
+```bash
+python -m pip install -e .
+python -m playwright install chromium
+```
+
+Para desenvolvimento com validação local:
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+Scrapy e Firecrawl ficam em extras separados porque não são necessários para a suíte local padrão:
+
+```bash
+python -m pip install -e ".[scraping-scale]"
+python -m pip install -e ".[scraping-services]"
+```
 
 ## Follow-ups Recomendados
 
@@ -164,16 +186,16 @@ Existe um entrypoint local para coletar páginas públicas de uma startup sem ro
 PYTHONPATH=src python -m nvidia_startup_intel collect-pages https://startup.ai/ --max-pages 1 --max-depth 0
 ```
 
-Por padrão, o comando respeita `robots.txt` em modo conservador, limita páginas/profundidade e imprime JSON auditável em stdout. Para gravar arquivo:
+Por padrão, o comando respeita `robots.txt` em modo conservador, limita páginas/profundidade, usa renderização Playwright e imprime JSON auditável em stdout. Para gravar arquivo:
 
 ```bash
 PYTHONPATH=src python -m nvidia_startup_intel collect-pages https://startup.ai/ --max-pages 2 --output runs/startup-ai-collection.json
 ```
 
-Fallback Playwright é opt-in e exige `playwright` e browser instalados fora da suíte default:
+Para desativar Playwright em debug determinístico:
 
 ```bash
-PYTHONPATH=src python -m nvidia_startup_intel collect-pages https://startup.ai/ --render-js --max-pages 1
+PYTHONPATH=src python -m nvidia_startup_intel collect-pages https://startup.ai/ --no-render-js --max-pages 1
 ```
 
 ## Validação Opcional LLM Adapters

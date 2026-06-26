@@ -21,8 +21,12 @@ from nvidia_startup_intel.normalization import normalize_startup_name, normalize
 from nvidia_startup_intel.page_collection import (
     FetchResponse,
     Fetcher,
+    HTMLExtractor,
     PageCollectionError,
     PageCollectionResult,
+    PlaywrightPageRenderer,
+    PlaywrightRenderer,
+    StaticHTMLExtractionAdapter,
     collect_public_pages,
 )
 from nvidia_startup_intel.scraping_policy import ScrapingPolicy
@@ -83,6 +87,8 @@ def collect_pages_for_candidates(
     candidates: list[CandidateStartup] | tuple[CandidateStartup, ...],
     *,
     fetcher: Fetcher | None = None,
+    playwright_renderer: PlaywrightRenderer | None = None,
+    html_extractor: HTMLExtractor | None = None,
     scraping_policy: ScrapingPolicy | None = None,
     robots_cache: RobotsCache | None = None,
     max_pages_per_candidate: int = 5,
@@ -111,12 +117,42 @@ def collect_pages_for_candidates(
         collected[candidate_key] = collect_public_pages(
             candidate.primary_url,
             fetcher=fetcher,
+            playwright_renderer=_production_renderer(fetcher, playwright_renderer),
+            html_extractor=_production_html_extractor(
+                fetcher=fetcher,
+                playwright_renderer=playwright_renderer,
+                html_extractor=html_extractor,
+            ),
             max_pages=max_pages_per_candidate,
             max_depth=max_depth,
             scraping_policy=scraping_policy,
             robots_cache=active_robots_cache,
         )
     return collected
+
+
+def _production_renderer(
+    fetcher: Fetcher | None,
+    playwright_renderer: PlaywrightRenderer | None,
+) -> PlaywrightRenderer | None:
+    if playwright_renderer is not None:
+        return playwright_renderer
+    if fetcher is None:
+        return PlaywrightPageRenderer()
+    return None
+
+
+def _production_html_extractor(
+    *,
+    fetcher: Fetcher | None,
+    playwright_renderer: PlaywrightRenderer | None,
+    html_extractor: HTMLExtractor | None,
+) -> HTMLExtractor | None:
+    if html_extractor is not None:
+        return html_extractor
+    if fetcher is None or playwright_renderer is not None:
+        return StaticHTMLExtractionAdapter()
+    return None
 
 
 def extract_profiles_for_candidates(
@@ -183,6 +219,8 @@ def _build_pipeline_result(
     raw_results: tuple[RawDiscoveryResult, ...],
     search_errors: tuple[SearchExecutionError, ...],
     fetcher: Fetcher | None,
+    playwright_renderer: PlaywrightRenderer | None,
+    html_extractor: HTMLExtractor | None,
     scraping_policy: ScrapingPolicy | None,
     robots_cache: RobotsCache | None,
     max_pages_per_candidate: int,
@@ -192,6 +230,8 @@ def _build_pipeline_result(
     collected_pages = collect_pages_for_candidates(
         candidates,
         fetcher=fetcher,
+        playwright_renderer=playwright_renderer,
+        html_extractor=html_extractor,
         scraping_policy=scraping_policy,
         robots_cache=robots_cache,
         max_pages_per_candidate=max_pages_per_candidate,
@@ -223,6 +263,8 @@ def run_scraping_pipeline(
     raw_results: list[RawDiscoveryResult] | tuple[RawDiscoveryResult, ...],
     *,
     fetcher: Fetcher | None = None,
+    playwright_renderer: PlaywrightRenderer | None = None,
+    html_extractor: HTMLExtractor | None = None,
     scraping_policy: ScrapingPolicy | None = None,
     robots_cache: RobotsCache | None = None,
     limit: int | None = None,
@@ -238,6 +280,8 @@ def run_scraping_pipeline(
         raw_results=tuple(raw_results),
         search_errors=(),
         fetcher=fetcher,
+        playwright_renderer=playwright_renderer,
+        html_extractor=html_extractor,
         scraping_policy=scraping_policy,
         robots_cache=robots_cache,
         max_pages_per_candidate=max_pages_per_candidate,
@@ -250,6 +294,8 @@ def run_scraping_pipeline_with_search(
     search_client: SearchClient,
     *,
     fetcher: Fetcher | None = None,
+    playwright_renderer: PlaywrightRenderer | None = None,
+    html_extractor: HTMLExtractor | None = None,
     scraping_policy: ScrapingPolicy | None = None,
     robots_cache: RobotsCache | None = None,
     limit: int | None = None,
@@ -272,6 +318,8 @@ def run_scraping_pipeline_with_search(
         raw_results=execution.raw_results,
         search_errors=execution.errors,
         fetcher=fetcher,
+        playwright_renderer=playwright_renderer,
+        html_extractor=html_extractor,
         scraping_policy=scraping_policy,
         robots_cache=robots_cache,
         max_pages_per_candidate=max_pages_per_candidate,

@@ -1,8 +1,8 @@
 """Public page collection for candidate startups.
 
-The collector gathers a small, relevant set of public pages from a startup
-website. The default fetcher uses the Python standard library, and tests inject
-a fake fetcher so collection behavior stays deterministic.
+The production path can render pages with Playwright before extraction, while
+tests and deterministic debugging can still inject or use the standard-library
+fetcher.
 """
 
 from __future__ import annotations
@@ -183,25 +183,12 @@ def collect_public_pages(
             )
             continue
 
-        try:
-            if decision.delay_seconds > 0:
-                wait(decision.delay_seconds)
-            response = fetch(url)
-        except Exception as exc:  # noqa: BLE001 - errors are persisted as pipeline data.
-            errors.append(
-                PageCollectionError(
-                    url=url,
-                    error_type=type(exc).__name__,
-                    message=str(exc),
-                    collected_at=collected_at,
-                    status_code=getattr(exc, "code", None),
-                    error_category=classify_scrape_error(exc).value,
-                )
-            )
-            continue
+        if decision.delay_seconds > 0:
+            wait(decision.delay_seconds)
 
-        extracted = extract_html(response.body)
-        if extracted.needs_js_rendering and playwright_renderer is not None:
+        response: FetchResponse | None = None
+        extracted: HTMLExtractionResult | None = None
+        if playwright_renderer is not None:
             try:
                 response = playwright_renderer(url)
                 extracted = _mark_playwright_extraction(extract_html(response.body))
@@ -216,6 +203,22 @@ def collect_public_pages(
                         error_category="browser_render_failed",
                     )
                 )
+        if response is None or extracted is None:
+            try:
+                response = fetch(url)
+            except Exception as exc:  # noqa: BLE001 - errors are persisted as pipeline data.
+                errors.append(
+                    PageCollectionError(
+                        url=url,
+                        error_type=type(exc).__name__,
+                        message=str(exc),
+                        collected_at=collected_at,
+                        status_code=getattr(exc, "code", None),
+                        error_category=classify_scrape_error(exc).value,
+                    )
+                )
+                continue
+            extracted = extract_html(response.body)
         pages.append(
             CollectedPage(
                 url=normalize_url(response.url),
@@ -279,7 +282,7 @@ def extract_readable_html(html: str) -> HTMLExtractionResult:
 
 @dataclass(frozen=True)
 class PlaywrightPageRenderer:
-    """Optional Playwright renderer for public pages that need JavaScript."""
+    """Playwright renderer for public pages in the production collection path."""
 
     timeout_ms: int = 15000
     wait_until: str = "networkidle"
@@ -305,7 +308,7 @@ class PlaywrightPageRenderer:
 
 @dataclass(frozen=True)
 class StaticHTMLExtractionAdapter:
-    """Optional trafilatura and BeautifulSoup adapter with stdlib fallback."""
+    """trafilatura and BeautifulSoup adapter with stdlib fallback."""
 
     trafilatura_extract: Callable[[str], str | None] | None = None
     beautiful_soup_factory: Callable[[str, str], object] | None = None

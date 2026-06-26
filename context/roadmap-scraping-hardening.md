@@ -2,7 +2,7 @@
 
 Objetivo: evoluir o MVP de scraping de um walking skeleton funcional para uma camada de coleta pública mais robusta, sem quebrar os contratos de evidência, perfil e qualidade já validados.
 
-Este roadmap não substitui o MVP atual. Ele define melhorias incrementais para quando os outputs reais mostrarem que a coleta simples com `urllib` + `html.parser` não é suficiente.
+Este roadmap define a transição para um motor principal robusto de coleta: Playwright + trafilatura + BeautifulSoup, com Scrapy para escala e Firecrawl como serviço externo quando houver ganho medido. O caminho `urllib` + `html.parser` permanece apenas como harness local de teste/debug.
 
 ## Princípios
 
@@ -18,19 +18,19 @@ Este roadmap não substitui o MVP atual. Ele define melhorias incrementais para 
 
 O MVP atual:
 
-- usa `urllib` + `html.parser`;
+- possui caminho determinístico com `urllib` + `html.parser` para testes/debug;
 - executa busca via `SearchClient`, com Brave Search como adaptador real;
 - coleta páginas públicas com limites de profundidade e quantidade;
 - respeita `robots.txt` quando recebe `RobotsCache`;
 - extrai texto simples e perfil estruturado;
-- possui contrato injetável de extração HTML, adapter opcional trafilatura + BeautifulSoup e fallback Playwright seletivo com testes fake;
+- possui contrato injetável de extração HTML, adapter opcional trafilatura + BeautifulSoup e CLI Playwright-first com testes fake;
 - mede qualidade da coleta;
 - possui suíte local padrão sem rede, credenciais, serviços externos ou navegador real obrigatório.
 
 O MVP atual ainda não:
 
 - valida Playwright real em smoke test opt-in com browser instalado;
-- declara trafilatura, BeautifulSoup ou Playwright como dependências default;
+- valida empiricamente trafilatura e BeautifulSoup em páginas reais brasileiras;
 - usa Firecrawl para extração limpa orientada a RAG;
 - usa Scrapy para crawling em escala;
 - compara estratégias de coleta para a mesma página.
@@ -80,9 +80,9 @@ Critérios de aceite:
 - A saída mantém snippets auditáveis.
 - Falha de extração vira erro auditável, não exceção que interrompe o pipeline.
 
-## Story 04: Detectar necessidade de renderização JavaScript
+## Story 04: Medir necessidade de renderização JavaScript
 
-Como desenvolvedor, quero detectar quando a página provavelmente precisa de Playwright antes de pagar o custo de navegador real.
+Como desenvolvedor, quero medir quando a página depende de JavaScript para explicar qualidade da coleta, gargalos e necessidade de revisão.
 
 Critérios de aceite:
 
@@ -91,13 +91,13 @@ Critérios de aceite:
 - A decisão é testável com HTML fixture.
 - Nenhum navegador real é necessário nesta story.
 
-## Story 05: Adicionar Playwright como fallback seletivo
+## Story 05: Adicionar Playwright como motor principal controlado
 
-Como operador do pipeline, quero renderizar apenas páginas que realmente precisam de JavaScript para coletar evidências públicas importantes.
+Como operador do pipeline, quero que a coleta real use Playwright como caminho principal controlado para coletar evidências públicas importantes em sites modernos.
 
 Critérios de aceite:
 
-- Playwright é usado somente quando a política permitir e a coleta estática for insuficiente.
+- Playwright é usado somente quando a política permitir e a CLI/pipeline real estiver em modo de coleta robusta.
 - A coleta respeita limites de tempo, profundidade e quantidade.
 - O resultado preserva as mesmas estruturas de `PageCollectionResult`.
 - Testes unitários usam fixtures ou cliente fake; testes com navegador real ficam opcionais.
@@ -130,8 +130,8 @@ Critérios de aceite:
 
 - [ ] Falhas de coleta são categorizadas de forma auditável.
 - [ ] Extração estática é mais robusta em fixtures reais.
-- [ ] Conteúdo JS-heavy é detectado antes de usar navegador.
-- [x] Playwright entra apenas como fallback seletivo, se necessário.
+- [x] Conteúdo JS-heavy é marcado como sinal de qualidade/gargalo, não como gate para usar navegador.
+- [x] Playwright entra como caminho principal controlado para coleta real, mantendo fallback determinístico para testes/debug.
 - [ ] Serviços externos entram por adaptadores testáveis, se necessário.
 - [ ] Os contratos de saída atuais continuam compatíveis.
 - [ ] Nova suíte local de validação passa sem rede, credenciais ou navegador real obrigatório.

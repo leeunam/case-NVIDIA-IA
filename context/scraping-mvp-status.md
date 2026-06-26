@@ -12,8 +12,8 @@ Este status significa que existe um walking skeleton funcional e auditável para
 - Candidatas duplicadas são consolidadas preservando evidências.
 - Páginas públicas são coletadas com limites de profundidade e quantidade.
 - A coleta consulta `robots.txt` quando recebe `RobotsCache`, bloqueia URLs não permitidas e respeita `crawl-delay`.
-- A extração HTML é injetável e possui adapter opcional para trafilatura + BeautifulSoup.
-- Páginas com pouco texto e sinais de app shell podem usar fallback seletivo Playwright via `PlaywrightPageRenderer`.
+- A extração HTML é injetável e possui adapter para trafilatura + BeautifulSoup.
+- A CLI de coleta real usa Playwright por padrão via `PlaywrightPageRenderer`; o caminho sem navegador fica reservado para testes/debug.
 - Perfil estruturado usa schema `startup_profile.v1`.
 - Campos sem evidência suficiente retornam `unknown`.
 - Evidências são agrupadas por campo e conflitos são marcados.
@@ -24,9 +24,9 @@ Este status significa que existe um walking skeleton funcional e auditável para
 
 ## O Que Ainda Não É Production-Grade
 
-- A coleta default usa biblioteca padrão do Python (`urllib` + `html.parser`) e não exige navegador real.
-- Playwright real ainda precisa de dependência e browser instalados fora da suíte default.
-- BeautifulSoup e trafilatura existem como adapter opcional, mas ainda não são dependências default.
+- O motor de coleta real é Playwright-first; a coleta determinística com `urllib` + `html.parser` permanece como harness local.
+- Playwright real ainda precisa do browser instalado no ambiente operacional com `python -m playwright install chromium`.
+- BeautifulSoup e trafilatura estão declarados na instalação base, mas a qualidade com casos reais ainda precisa ser medida.
 - Ainda não há Firecrawl para extração de texto principal via serviço externo.
 - Ainda não há Scrapy para crawling estruturado em escala.
 - A qualidade da extração em páginas de marketing, blogs, notícias e sites modernos ainda deve ser medida com casos reais.
@@ -51,7 +51,7 @@ Existe suíte local padrão sem rede, credenciais, serviços externos, Postgres 
 
 - O único adaptador real de busca implementado é Brave Search.
 - Outros provedores exigem novos `SearchClient`.
-- O scraping atual é adequado para páginas públicas simples e possui fallback Playwright seletivo, mas ainda precisa de smoke real para validar browser instalado.
+- O scraping atual possui CLI Playwright-first, mas ainda precisa de smoke real para validar browser instalado.
 - Melhorias como Firecrawl ou Scrapy devem ser introduzidas por necessidade medida, não todas de uma vez.
 - A suíte local não deve fazer chamadas externas.
 - Postgres real requer `docker compose up -d postgres` e driver `psycopg`.
