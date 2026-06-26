@@ -603,7 +603,7 @@ class NVIDIARecommendationTests(unittest.TestCase):
         self.assertTrue(recommendation_set.quality.ready_for_briefing)
         self.assertEqual(
             tuple(recommendation.gap.gap_type for recommendation in recommendation_set.technical_recommendations),
-            ("llm_customization", "computer_vision", "data_acceleration", "model_serving"),
+            ("computer_vision", "llm_customization", "data_acceleration", "model_serving"),
         )
         self.assertEqual(
             {
@@ -673,7 +673,7 @@ class NVIDIARecommendationTests(unittest.TestCase):
         self.assertEqual(recommendation.state, "supported")
         self.assertEqual(recommendation.rank, 1)
         self.assertEqual(recommendation.gap.gap_type, "model_serving")
-        self.assertEqual(recommendation.nvidia_technology, "NVIDIA NIM for Developers")
+        self.assertEqual(recommendation.nvidia_technology, "NVIDIA NIM Microservices")
         self.assertEqual(recommendation.complexity, "medium")
         self.assertEqual(recommendation.startup_evidences, (startup_evidence,))
         self.assertEqual(recommendation.nvidia_citations[0].document_id, "nvidia-nim-developers")

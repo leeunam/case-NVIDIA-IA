@@ -66,7 +66,7 @@ class ExecutiveBriefingTests(unittest.TestCase):
         self.assertEqual(briefing.status, "ready_for_use")
         self.assertEqual(briefing.next_action, "prepare_technical_outreach")
         self.assertIn("VetAI", briefing.executive_summary)
-        self.assertIn("NVIDIA NIM for Developers", briefing.executive_summary)
+        self.assertIn("NVIDIA NIM Microservices", briefing.executive_summary)
         self.assertEqual(briefing.opportunity, "urgent")
 
         claim_types = {claim.claim_type for claim in briefing.claims}
