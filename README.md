@@ -149,6 +149,24 @@ Ruff e mypy usam um baseline intencionalmente permissivo nesta primeira adoção
 
 Os comandos estáticos pressupõem `ruff` e `mypy` instalados no ambiente Python usado para validação.
 
+## Validação Opcional LLM Adapters
+
+LiteLLM e LangChain não fazem parte da suíte local padrão. A validação default continua usando fakes e contract tests, sem rede, credenciais, chamadas reais de LLM, LiteLLM ou LangChain instalados.
+
+Os adapters opcionais ficam atrás do contrato `LLMClient` em `framework_adapters.py`. Para validar uma integração real com LiteLLM, instale a dependência no ambiente local e configure explicitamente o provider por variáveis de ambiente:
+
+```bash
+export NVIDIA_STARTUP_INTEL_LLM_PROVIDER=litellm
+export NVIDIA_STARTUP_INTEL_LLM_MODEL=<provider/model>
+export NVIDIA_STARTUP_INTEL_LLM_MODEL_VERSION=<model-version>
+export NVIDIA_STARTUP_INTEL_LLM_API_KEY_ENV=OPENROUTER_API_KEY
+export OPENROUTER_API_KEY=<secret>
+```
+
+`NVIDIA_STARTUP_INTEL_LLM_API_KEY_ENV` guarda apenas o nome da variável que contém a credencial; a credencial não deve entrar em código, fixtures, payloads persistidos ou artefatos de briefing. Configurações opcionais aceitas pelo adapter incluem `NVIDIA_STARTUP_INTEL_LLM_API_BASE`, `NVIDIA_STARTUP_INTEL_LLM_TIMEOUT_SECONDS`, `NVIDIA_STARTUP_INTEL_LLM_TEMPERATURE` e `NVIDIA_STARTUP_INTEL_LLM_MAX_TOKENS`.
+
+Para LangChain, configure `NVIDIA_STARTUP_INTEL_LLM_PROVIDER=langchain` e passe um chat model já instanciado para `LangChainLLMClient`. Objetos LiteLLM ou LangChain devem ser convertidos para `LLMGenerationResponse` antes de qualquer Recommendation, Briefing, workflow state ou payload de persistência.
+
 ## Validação Opcional Pgvector
 
 A persistência de embeddings em Postgres/pgvector é um caminho de integração, não uma dependência da suíte local padrão. Para validar quando Docker e Postgres estiverem disponíveis:
