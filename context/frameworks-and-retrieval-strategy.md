@@ -214,6 +214,16 @@ Opções:
 
 O reranker só pode reordenar ou descartar chunks. Ele não pode gerar novas afirmações. O output precisa preservar score, rationale curto, chunk original e citação oficial.
 
+Implementação atual:
+
+- `NVIDIAReranker` é o contrato do projeto para adapters de reranking.
+- `DeterministicTopKReranker` continua sendo o fake determinístico usado em testes locais e fixtures.
+- `SentenceTransformersCrossEncoderReranker` é o adapter real opcional para cross-encoder, com modelo injetável em testes e carregamento de `sentence-transformers` apenas quando usado.
+- `rerank_nvidia_retrieval` valida a saída do adapter e rejeita qualquer chunk, citação ou score original que não venha do Top K recuperado.
+- `compare_rerank_retrieval_quality` compara métricas antes/depois, incluindo impacto no top 1, para que reranking só seja habilitado quando houver ganho medido.
+
+Reranking não deve ficar ligado por padrão no fluxo local. Habilite depois do retrieval híbrido quando os fixtures ou métricas mostrarem que o Top K contém a citação correta, mas a ordenação ainda prejudica Recommendation ou Briefing.
+
 ## Embedding, Bi-Encoder e LLM
 
 O LLM gerador e o modelo de embedding não precisam ser do mesmo fornecedor. A combinação precisa funcionar na tarefa de recuperação.

@@ -485,6 +485,33 @@ def _rank_bm25_scores(bm25: object, query_tokens: tuple[str, ...]) -> tuple[floa
     return tuple(float(score) for score in get_scores(list(query_tokens)))
 
 
+def _load_sentence_transformers_cross_encoder(model_name: str) -> object:
+    try:
+        from sentence_transformers import CrossEncoder  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise RuntimeError(
+            "Install sentence-transformers to use SentenceTransformersCrossEncoderReranker"
+        ) from exc
+    return CrossEncoder(model_name)
+
+
+def _cross_encoder_scores(
+    cross_encoder: object,
+    pairs: list[tuple[str, str]],
+) -> tuple[float, ...]:
+    predict = getattr(cross_encoder, "predict", None)
+    if not callable(predict):
+        raise TypeError("cross_encoder_object_missing_predict")
+
+    raw_scores = predict(pairs)
+    if hasattr(raw_scores, "tolist"):
+        raw_scores = raw_scores.tolist()
+    scores = tuple(float(score) for score in raw_scores)
+    if len(scores) != len(pairs):
+        raise ValueError(f"cross_encoder_score_count_mismatch:expected_{len(pairs)}:actual_{len(scores)}")
+    return scores
+
+
 def _lexical_tokens(value: str) -> tuple[str, ...]:
     return tuple(re.findall(r"[a-z0-9]+", normalize_text(value)))
 
@@ -645,6 +672,57 @@ class NVIDIAReranker(Protocol):
 
 
 @dataclass(frozen=True)
+class SentenceTransformersCrossEncoderReranker:
+    """Optional sentence-transformers cross-encoder adapter behind NVIDIAReranker."""
+
+    model_name: str
+    model_version: str = "unknown"
+    cross_encoder: object | None = None
+
+    def rerank(self, request: NVIDIARerankRequest) -> NVIDIARerankResult:
+        model = self.cross_encoder or _load_sentence_transformers_cross_encoder(self.model_name)
+        scores = _cross_encoder_scores(
+            model,
+            [(request.query, candidate.chunk.text) for candidate in request.candidates],
+        )
+        ranked = sorted(
+            (
+                _reranked_candidate(
+                    candidate,
+                    score=score,
+                    rerank_rank=0,
+                    rerank_rationale="Cross-encoder scored query and candidate chunk text.",
+                )
+                for candidate, score in zip(request.candidates, scores, strict=True)
+            ),
+            key=lambda result: (
+                -result.rerank_score,
+                result.original_retrieval_rank,
+                result.chunk.document_id,
+                result.chunk.chunk_index,
+                result.chunk.chunk_id,
+            ),
+        )
+        return NVIDIARerankResult(
+            schema_version=RERANK_SCHEMA_VERSION,
+            run_id=request.run_id,
+            corpus_version=request.corpus_version,
+            query=request.query,
+            candidate_top_k=request.candidate_top_k,
+            results=tuple(
+                _with_rerank_rank(result, rerank_rank=rank)
+                for rank, result in enumerate(ranked, start=1)
+            ),
+            ranking_strategy="sentence_transformers_cross_encoder_score_desc",
+            audit_reasons=(
+                "reranked_only_supplied_top_k_candidates",
+                f"reranker_model:{self.model_name}",
+                f"reranker_model_version:{self.model_version}",
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class DeterministicTopKReranker:
     """Local reranker fake that only reorders the candidates provided in the request."""
 
@@ -700,7 +778,7 @@ def rerank_nvidia_retrieval(
         candidates=tuple(retrieval.results[:bounded_top_k]),
         candidate_top_k=bounded_top_k,
     )
-    return reranker.rerank(request)
+    return _validated_rerank_result(reranker.rerank(request), request)
 
 
 def nvidia_rerank_result_to_dict(result: NVIDIARerankResult) -> dict[str, object]:
@@ -709,11 +787,44 @@ def nvidia_rerank_result_to_dict(result: NVIDIARerankResult) -> dict[str, object
     return _to_plain_data(result)
 
 
+def _validated_rerank_result(
+    result: NVIDIARerankResult,
+    request: NVIDIARerankRequest,
+) -> NVIDIARerankResult:
+    candidates_by_chunk_id = {candidate.chunk.chunk_id: candidate for candidate in request.candidates}
+    seen_chunk_ids: set[str] = set()
+
+    for item in result.results:
+        chunk_id = item.chunk.chunk_id
+        if chunk_id not in candidates_by_chunk_id:
+            raise ValueError(f"reranker_returned_unknown_chunk:{chunk_id}")
+        if chunk_id in seen_chunk_ids:
+            raise ValueError(f"reranker_returned_duplicate_chunk:{chunk_id}")
+        seen_chunk_ids.add(chunk_id)
+
+        candidate = candidates_by_chunk_id[chunk_id]
+        if item.chunk != candidate.chunk or item.citation != candidate.citation:
+            raise ValueError(f"reranker_changed_candidate_payload:{chunk_id}")
+        if (
+            item.original_score != candidate.score
+            or item.original_bm25_score != candidate.bm25_score
+            or item.original_vector_score != candidate.vector_score
+            or item.original_hybrid_score != candidate.hybrid_score
+            or item.original_retrieval_rank != candidate.rank
+            or item.original_retrieval_strategy != candidate.retrieval_strategy
+            or item.original_rationale != candidate.rationale
+        ):
+            raise ValueError(f"reranker_changed_original_retrieval_fields:{chunk_id}")
+
+    return result
+
+
 def _reranked_candidate(
     candidate: RetrievedNVIDIAKnowledge,
     *,
     score: float,
     rerank_rank: int,
+    rerank_rationale: str = "deterministic_fixture_rerank_score",
 ) -> RerankedNVIDIAKnowledge:
     return RerankedNVIDIAKnowledge(
         chunk=candidate.chunk,
@@ -727,7 +838,7 @@ def _reranked_candidate(
         original_rationale=candidate.rationale,
         rerank_score=score,
         rerank_rank=rerank_rank,
-        rerank_rationale="deterministic_fixture_rerank_score",
+        rerank_rationale=rerank_rationale,
     )
 
 
