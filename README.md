@@ -173,8 +173,18 @@ A persistência de embeddings em Postgres/pgvector é um caminho de integração
 
 ```bash
 docker compose up -d postgres
-docker compose exec postgres psql -U nvidia_startup_intel -d nvidia_startup_intel -c "SELECT extname FROM pg_extension WHERE extname = 'vector';"
-docker compose exec postgres psql -U nvidia_startup_intel -d nvidia_startup_intel -c "\\d nvidia_chunk_embeddings"
+PYTHONPATH=src python -m nvidia_startup_intel.pgvector_smoke
 ```
+
+O smoke aplica o schema do projeto em `db/schema.sql`, valida `CREATE EXTENSION IF NOT EXISTS vector`, persiste o corpus oficial fixture com embeddings e metadados, e recupera NVIDIA Knowledge por similaridade vetorial SQL usando `PgvectorNVIDIAEmbeddingStore`.
+
+Também existe um teste de integração isolado, fora da suíte default:
+
+```bash
+docker compose up -d postgres
+NVIDIA_STARTUP_INTEL_RUN_PGVECTOR_SMOKE=1 python -m pytest -q tests/integration/test_pgvector_integration_smoke.py -m pgvector_integration
+```
+
+O smoke requer `psycopg` instalado apenas no ambiente usado para essa validação opcional. Por padrão, `DATABASE_URL` ou `NVIDIA_STARTUP_INTEL_PGVECTOR_DATABASE_URL` podem apontar para outro Postgres/pgvector. Sem configuração explícita, o smoke usa as credenciais do `docker-compose.yml`. Falhas desse caminho são reportadas como `OPTIONAL PGVECTOR SMOKE FAILED` para não parecerem falhas da suíte local padrão.
 
 O schema em `db/schema.sql` cria `CREATE EXTENSION IF NOT EXISTS vector`, persiste documentos, chunks e embeddings auditáveis, e usa busca exata por similaridade SQL. Índices HNSW/IVFFlat continuam fora até haver volume ou latência medidos que justifiquem a troca.
