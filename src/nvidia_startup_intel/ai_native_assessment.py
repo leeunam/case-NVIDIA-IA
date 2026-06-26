@@ -142,6 +142,15 @@ DEEP_STACK_TERMS = (
 PRODUCTION_TERMS = ("inferencia em producao", "model serving", "mlops", "producao", "latencia")
 EXTERNAL_API_TERMS = ("api externa", "chatgpt", "gpt api", "openai api")
 PROPRIETARY_DATA_TERMS = ("dados proprietarios", "dataset proprietario", "feedback loop")
+NEGATIVE_AI_SIGNAL_TERMS = (
+    "nenhum",
+    "nenhum uso",
+    "no ai",
+    "no artificial intelligence",
+    "none",
+    "sem ia",
+    "sem uso",
+)
 
 
 def assess_ai_native_maturity(
@@ -245,7 +254,11 @@ class _AssessmentContext:
 
 def _criteria_results(context: _AssessmentContext) -> tuple[CriterionResult, ...]:
     text = context.text
-    has_ai = _has_any(text, AI_TERMS) or context.profile.ai_signals.value != UNKNOWN
+    has_ai = (
+        _has_any(text, AI_TERMS)
+        or _has_any(text, GENERIC_AI_TERMS)
+        or _has_positive_ai_signal_field(context.profile.ai_signals.value)
+    )
     has_generic_only = _has_any(text, GENERIC_AI_TERMS) and not _has_any(text, DEEP_STACK_TERMS)
     has_deep_stack = _has_any(text, DEEP_STACK_TERMS)
     has_proprietary_data = _has_any(text, PROPRIETARY_DATA_TERMS)
@@ -492,18 +505,6 @@ def _technical_gaps(
                 )
             )
 
-    if context.profile.customers.value == UNKNOWN or context.profile.funding.value == UNKNOWN:
-        gaps.append(
-            TechnicalGap(
-                gap_type="go_to_market",
-                description="Commercial maturity evidence is incomplete and may require human validation.",
-                severity=Severity.LOW.value,
-                confidence=0.5,
-                evidences=(),
-                is_hypothesis=True,
-            )
-        )
-
     return tuple(gaps) if gaps else (_unknown_gap(),)
 
 
@@ -614,6 +615,13 @@ def _unknown_risk() -> WrapperDependencyRisk:
 
 def _has_any(text: str, terms: tuple[str, ...]) -> bool:
     return any(term in text for term in terms)
+
+
+def _has_positive_ai_signal_field(value: str) -> bool:
+    if value == UNKNOWN:
+        return False
+    normalized_value = normalize_text(value)
+    return not _has_any(normalized_value, NEGATIVE_AI_SIGNAL_TERMS)
 
 
 def _dedupe_evidences(evidences: tuple[FieldEvidence, ...]) -> tuple[FieldEvidence, ...]:
