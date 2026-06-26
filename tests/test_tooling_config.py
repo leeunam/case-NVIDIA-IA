@@ -26,6 +26,16 @@ class ToolingConfigTests(unittest.TestCase):
         self.assertIn("python -m mypy src", readme)
         self.assertIn("strictness", readme)
 
+    def test_readme_documents_optional_llm_adapter_validation_separately(self) -> None:
+        readme_path = Path(__file__).resolve().parents[1] / "README.md"
+
+        readme = readme_path.read_text(encoding="utf-8")
+
+        self.assertIn("Validação Opcional LLM Adapters", readme)
+        self.assertIn("NVIDIA_STARTUP_INTEL_LLM_PROVIDER", readme)
+        self.assertIn("NVIDIA_STARTUP_INTEL_LLM_API_KEY_ENV", readme)
+        self.assertIn("LiteLLM e LangChain não fazem parte da suíte local padrão", readme)
+
 
 if __name__ == "__main__":
     unittest.main()
