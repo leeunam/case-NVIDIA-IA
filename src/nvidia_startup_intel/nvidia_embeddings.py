@@ -6,9 +6,10 @@ LLMs, vector databases, or framework-specific retriever objects.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, fields, is_dataclass
 import math
+import os
 import re
 from typing import Protocol
 
@@ -28,6 +29,7 @@ from nvidia_startup_intel.normalization import normalize_text
 
 
 SCHEMA_VERSION = "nvidia_embedding.v1"
+EMBEDDING_ENV_PREFIX = "NVIDIA_STARTUP_INTEL_EMBEDDING_"
 EmbeddingVector = tuple[float, ...]
 VECTOR_RETRIEVAL_STRATEGY = "vector_semantic"
 VECTOR_RANKING_STRATEGY = "cosine_similarity_desc"
@@ -57,6 +59,16 @@ class EmbeddingModelMetadata:
     embedding_version: str
     dimension: int
     expected_language_behavior: str
+
+
+@dataclass(frozen=True)
+class EmbeddingProviderConfig:
+    provider: str
+    model: str
+    model_version: str = "unknown"
+    expected_language_behavior: str = "multilingual Portuguese and English technical retrieval"
+    normalize_embeddings: bool = True
+    batch_size: int = 32
 
 
 @dataclass(frozen=True)
@@ -116,6 +128,111 @@ class EmbeddingClient(Protocol):
     def metadata(self) -> EmbeddingModelMetadata: ...
 
     def embed_texts(self, texts: tuple[str, ...]) -> tuple[EmbeddingVector, ...]: ...
+
+
+def embedding_provider_config_from_env(
+    env: Mapping[str, str] | None = None,
+) -> EmbeddingProviderConfig:
+    """Build an embedding provider config without reading credentials or loading models."""
+
+    source = os.environ if env is None else env
+    provider = _normalize_embedding_provider(source.get(f"{EMBEDDING_ENV_PREFIX}PROVIDER", ""))
+    model = source.get(f"{EMBEDDING_ENV_PREFIX}MODEL", "").strip()
+    if not provider:
+        raise ValueError("NVIDIA_STARTUP_INTEL_EMBEDDING_PROVIDER is required")
+    if provider != "sentence_transformers":
+        raise ValueError(f"Unsupported embedding provider: {provider}")
+    if not model:
+        raise ValueError("NVIDIA_STARTUP_INTEL_EMBEDDING_MODEL is required")
+
+    return EmbeddingProviderConfig(
+        provider=provider,
+        model=model,
+        model_version=source.get(f"{EMBEDDING_ENV_PREFIX}MODEL_VERSION", "unknown").strip()
+        or "unknown",
+        expected_language_behavior=source.get(
+            f"{EMBEDDING_ENV_PREFIX}EXPECTED_LANGUAGE_BEHAVIOR",
+            "multilingual Portuguese and English technical retrieval",
+        ).strip()
+        or "multilingual Portuguese and English technical retrieval",
+        normalize_embeddings=_optional_bool(
+            source.get(f"{EMBEDDING_ENV_PREFIX}NORMALIZE"),
+            default=True,
+        ),
+        batch_size=_optional_int(source.get(f"{EMBEDDING_ENV_PREFIX}BATCH_SIZE"), default=32),
+    )
+
+
+def embedding_client_from_config(
+    config: EmbeddingProviderConfig,
+    *,
+    model: object | None = None,
+    model_loader: Callable[[str], object] | None = None,
+) -> EmbeddingClient:
+    """Create an EmbeddingClient adapter from explicit provider configuration."""
+
+    if config.provider != "sentence_transformers":
+        raise ValueError(f"Unsupported embedding provider: {config.provider}")
+    return SentenceTransformersEmbeddingClient(
+        model_name=config.model,
+        model_version=config.model_version,
+        expected_language_behavior=config.expected_language_behavior,
+        model=model,
+        model_loader=model_loader,
+        normalize_embeddings=config.normalize_embeddings,
+        batch_size=config.batch_size,
+    )
+
+
+class SentenceTransformersEmbeddingClient:
+    """Optional local sentence-transformers adapter behind EmbeddingClient."""
+
+    def __init__(
+        self,
+        *,
+        model_name: str,
+        model_version: str = "unknown",
+        expected_language_behavior: str = "multilingual Portuguese and English technical retrieval",
+        model: object | None = None,
+        model_loader: Callable[[str], object] | None = None,
+        normalize_embeddings: bool = True,
+        batch_size: int = 32,
+    ) -> None:
+        self._model = model or _load_sentence_transformer_model(model_name, model_loader)
+        self._normalize_embeddings = normalize_embeddings
+        self._batch_size = batch_size
+        dimension = _sentence_transformer_dimension(self._model)
+        self._metadata = EmbeddingModelMetadata(
+            schema_version=SCHEMA_VERSION,
+            embedding_provider="sentence_transformers",
+            embedding_model=model_name,
+            embedding_version=model_version,
+            dimension=dimension,
+            expected_language_behavior=expected_language_behavior,
+        )
+
+    @property
+    def metadata(self) -> EmbeddingModelMetadata:
+        return self._metadata
+
+    def embed_texts(self, texts: tuple[str, ...]) -> tuple[EmbeddingVector, ...]:
+        if not texts:
+            return ()
+        encoded_vectors = self._model.encode(
+            list(texts),
+            normalize_embeddings=self._normalize_embeddings,
+            batch_size=self._batch_size,
+            show_progress_bar=False,
+            convert_to_numpy=False,
+        )
+        vectors = tuple(_coerce_embedding_vector(vector) for vector in encoded_vectors)
+        for index, vector in enumerate(vectors):
+            _validate_embedding_vector(
+                subject=f"sentence_transformers:{index}",
+                vector=vector,
+                expected_dimension=self.metadata.dimension,
+            )
+        return vectors
 
 
 class DeterministicFakeEmbeddingClient:
@@ -592,6 +709,64 @@ _SEMANTIC_FIXTURE_FEATURES: tuple[frozenset[str], ...] = (
 
 def _embedding_tokens(value: str) -> tuple[str, ...]:
     return tuple(re.findall(r"[a-z0-9]+", normalize_text(value)))
+
+
+def _normalize_embedding_provider(provider: str) -> str:
+    return provider.strip().lower().replace("-", "_")
+
+
+def _optional_bool(value: str | None, *, default: bool) -> bool:
+    if value is None or not value.strip():
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"invalid_embedding_bool:{value}")
+
+
+def _optional_int(value: str | None, *, default: int) -> int:
+    if value is None or not value.strip():
+        return default
+    parsed = int(value)
+    if parsed <= 0:
+        raise ValueError(f"invalid_embedding_positive_int:{value}")
+    return parsed
+
+
+def _load_sentence_transformer_model(
+    model_name: str,
+    model_loader: Callable[[str], object] | None,
+) -> object:
+    if model_loader is not None:
+        return model_loader(model_name)
+    try:
+        from sentence_transformers import SentenceTransformer  # type: ignore[import-not-found]
+    except ImportError as exc:  # pragma: no cover - depends on optional dependency
+        raise RuntimeError(
+            "SentenceTransformersEmbeddingClient requires the optional "
+            "sentence-transformers dependency. Install the embeddings extra to use "
+            "a real local embedding model."
+        ) from exc
+    return SentenceTransformer(model_name)
+
+
+def _sentence_transformer_dimension(model: object) -> int:
+    dimension_getter = getattr(model, "get_sentence_embedding_dimension", None)
+    if not callable(dimension_getter):
+        raise ValueError("sentence_transformers_model_missing_dimension")
+    dimension = dimension_getter()
+    if dimension is None:
+        raise ValueError("sentence_transformers_model_unknown_dimension")
+    return int(dimension)
+
+
+def _coerce_embedding_vector(vector: object) -> EmbeddingVector:
+    tolist = getattr(vector, "tolist", None)
+    if callable(tolist):
+        vector = tolist()
+    return tuple(float(component) for component in vector)  # type: ignore[union-attr]
 
 
 def _normalize_vector(vector: EmbeddingVector) -> EmbeddingVector:

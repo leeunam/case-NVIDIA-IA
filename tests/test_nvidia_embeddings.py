@@ -8,9 +8,12 @@ import unittest
 from nvidia_startup_intel.nvidia_embeddings import (
     DeterministicFakeEmbeddingClient,
     EmbeddingModelMetadata,
+    SentenceTransformersEmbeddingClient,
     assess_nvidia_embedding_index_rebuild,
     build_nvidia_embedding_index,
     embed_nvidia_query,
+    embedding_client_from_config,
+    embedding_provider_config_from_env,
     nvidia_embedding_index_to_dict,
     nvidia_query_embedding_to_dict,
     retrieve_nvidia_knowledge_by_vector,
@@ -39,6 +42,60 @@ class NVIDIAEmbeddingContractTests(unittest.TestCase):
         self.assertEqual(client.metadata.expected_language_behavior, "deterministic multilingual fixture text")
         self.assertEqual(first_vector, second_vector)
         self.assertEqual(len(first_vector), 6)
+
+    def test_sentence_transformers_embedding_client_embeds_chunks_through_project_contract(self) -> None:
+        corpus = load_nvidia_knowledge_corpus(_fixture_path())
+        model = _SentenceTransformerLikeModel(dimension=3)
+        client = SentenceTransformersEmbeddingClient(
+            model_name="intfloat/multilingual-e5-base",
+            model_version="local-fixture",
+            expected_language_behavior="multilingual Portuguese and English technical retrieval",
+            model=model,
+        )
+
+        index = build_nvidia_embedding_index(corpus, client)
+
+        self.assertEqual(index.metadata.embedding_provider, "sentence_transformers")
+        self.assertEqual(index.metadata.embedding_model, "intfloat/multilingual-e5-base")
+        self.assertEqual(index.metadata.embedding_version, "local-fixture")
+        self.assertEqual(index.metadata.dimension, 3)
+        self.assertEqual(
+            index.metadata.expected_language_behavior,
+            "multilingual Portuguese and English technical retrieval",
+        )
+        self.assertEqual(len(index.chunk_embeddings), len(corpus.chunks))
+        self.assertEqual(index.chunk_embeddings[0].vector, (1.0, 0.0, 0.0))
+
+    def test_embedding_client_from_env_config_builds_sentence_transformers_adapter(self) -> None:
+        config = embedding_provider_config_from_env(
+            {
+                "NVIDIA_STARTUP_INTEL_EMBEDDING_PROVIDER": "sentence-transformers",
+                "NVIDIA_STARTUP_INTEL_EMBEDDING_MODEL": "BAAI/bge-m3",
+                "NVIDIA_STARTUP_INTEL_EMBEDDING_MODEL_VERSION": "local-snapshot",
+                "NVIDIA_STARTUP_INTEL_EMBEDDING_EXPECTED_LANGUAGE_BEHAVIOR": (
+                    "multilingual Portuguese and English technical retrieval"
+                ),
+                "NVIDIA_STARTUP_INTEL_EMBEDDING_BATCH_SIZE": "16",
+                "NVIDIA_STARTUP_INTEL_EMBEDDING_NORMALIZE": "false",
+            }
+        )
+        loaded_models: list[str] = []
+
+        client = embedding_client_from_config(
+            config,
+            model_loader=lambda model_name: _loaded_sentence_transformer(
+                loaded_models,
+                model_name,
+                dimension=2,
+            ),
+        )
+
+        self.assertEqual(loaded_models, ["BAAI/bge-m3"])
+        self.assertEqual(client.metadata.embedding_provider, "sentence_transformers")
+        self.assertEqual(client.metadata.embedding_model, "BAAI/bge-m3")
+        self.assertEqual(client.metadata.embedding_version, "local-snapshot")
+        self.assertEqual(client.metadata.dimension, 2)
+        self.assertEqual(client.embed_texts(("NVIDIA NIM",)), ((1.0, 0.0),))
 
     def test_query_embedding_uses_same_contract_metadata_as_chunk_embeddings(self) -> None:
         client = DeterministicFakeEmbeddingClient(dimension=6)
@@ -319,6 +376,30 @@ class _WrongDimensionEmbeddingClient:
 
     def embed_texts(self, texts: tuple[str, ...]) -> tuple[tuple[float, ...], ...]:
         return tuple((0.1, 0.2) for _ in texts)
+
+
+class _SentenceTransformerLikeModel:
+    def __init__(self, *, dimension: int) -> None:
+        self._dimension = dimension
+
+    def get_sentence_embedding_dimension(self) -> int:
+        return self._dimension
+
+    def encode(self, texts: list[str], **_: object) -> list[list[float]]:
+        vectors: list[list[float]] = []
+        for index, _text in enumerate(texts):
+            vectors.append([1.0 if index == component else 0.0 for component in range(self._dimension)])
+        return vectors
+
+
+def _loaded_sentence_transformer(
+    loaded_models: list[str],
+    model_name: str,
+    *,
+    dimension: int,
+) -> _SentenceTransformerLikeModel:
+    loaded_models.append(model_name)
+    return _SentenceTransformerLikeModel(dimension=dimension)
 
 
 if __name__ == "__main__":

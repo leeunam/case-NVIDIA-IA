@@ -122,6 +122,12 @@ python -m pip install -e ".[scraping-scale]"
 python -m pip install -e ".[scraping-services]"
 ```
 
+Embeddings reais e Postgres/pgvector também ficam fora da instalação default:
+
+```bash
+python -m pip install -e ".[embeddings,pgvector]"
+```
+
 ## Follow-ups Recomendados
 
 As próximas lacunas são hardening ou integrações opcionais, não ausência do core downstream:
@@ -259,7 +265,18 @@ docker compose up -d postgres
 PYTHONPATH=src python -m nvidia_startup_intel.pgvector_smoke
 ```
 
-O smoke aplica o schema do projeto em `db/schema.sql`, valida `CREATE EXTENSION IF NOT EXISTS vector`, persiste o corpus oficial fixture com embeddings e metadados, e recupera NVIDIA Knowledge por similaridade vetorial SQL usando `PgvectorNVIDIAEmbeddingStore`.
+Esse comando usa o `DeterministicFakeEmbeddingClient` por padrão para validar pgvector sem download de modelo. Para validar o caminho real com `sentence-transformers`, instale os extras opcionais e configure explicitamente o provider e o modelo:
+
+```bash
+python -m pip install -e ".[embeddings,pgvector]"
+export NVIDIA_STARTUP_INTEL_EMBEDDING_PROVIDER=sentence-transformers
+export NVIDIA_STARTUP_INTEL_EMBEDDING_MODEL=intfloat/multilingual-e5-base
+export NVIDIA_STARTUP_INTEL_EMBEDDING_MODEL_VERSION=local-or-pinned-snapshot
+docker compose up -d postgres
+PYTHONPATH=src python -m nvidia_startup_intel.pgvector_smoke
+```
+
+`NVIDIA_STARTUP_INTEL_EMBEDDING_MODEL` pode apontar para um modelo gratuito baixável pelo `sentence-transformers` ou para um caminho local já cacheado. O smoke aplica o schema do projeto em `db/schema.sql`, valida `CREATE EXTENSION IF NOT EXISTS vector`, persiste o corpus oficial fixture com embeddings e metadados, e recupera NVIDIA Knowledge por similaridade vetorial SQL usando `PgvectorNVIDIAEmbeddingStore`.
 
 Também existe um teste de integração isolado, fora da suíte default:
 
@@ -268,6 +285,6 @@ docker compose up -d postgres
 NVIDIA_STARTUP_INTEL_RUN_PGVECTOR_SMOKE=1 python -m pytest -q tests/integration/test_pgvector_integration_smoke.py -m pgvector_integration
 ```
 
-O smoke requer `psycopg` instalado apenas no ambiente usado para essa validação opcional. Por padrão, `DATABASE_URL` ou `NVIDIA_STARTUP_INTEL_PGVECTOR_DATABASE_URL` podem apontar para outro Postgres/pgvector. Sem configuração explícita, o smoke usa as credenciais do `docker-compose.yml`. Falhas desse caminho são reportadas como `OPTIONAL PGVECTOR SMOKE FAILED` para não parecerem falhas da suíte local padrão.
+O smoke requer `psycopg` apenas no ambiente usado para essa validação opcional; o embedding real requer `sentence-transformers` apenas quando `NVIDIA_STARTUP_INTEL_EMBEDDING_PROVIDER` estiver configurado. Por padrão, `DATABASE_URL` ou `NVIDIA_STARTUP_INTEL_PGVECTOR_DATABASE_URL` podem apontar para outro Postgres/pgvector. Sem configuração explícita, o smoke usa as credenciais do `docker-compose.yml`. Falhas desse caminho são reportadas como `OPTIONAL PGVECTOR SMOKE FAILED` para não parecerem falhas da suíte local padrão.
 
 O schema em `db/schema.sql` cria `CREATE EXTENSION IF NOT EXISTS vector`, persiste documentos, chunks e embeddings auditáveis, e usa busca exata por similaridade SQL. Índices HNSW/IVFFlat continuam fora até haver volume ou latência medidos que justifiquem a troca.

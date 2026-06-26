@@ -7,7 +7,7 @@ local official NVIDIA corpus through a real pgvector database.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 import argparse
 import os
@@ -18,7 +18,10 @@ from urllib.parse import urlsplit, urlunsplit
 
 from nvidia_startup_intel.nvidia_embeddings import (
     DeterministicFakeEmbeddingClient,
+    EmbeddingClient,
     build_nvidia_embedding_index,
+    embedding_client_from_config,
+    embedding_provider_config_from_env,
 )
 from nvidia_startup_intel.nvidia_knowledge import load_nvidia_knowledge_corpus
 from nvidia_startup_intel.nvidia_pgvector import PgvectorNVIDIAEmbeddingStore
@@ -64,6 +67,9 @@ def run_pgvector_smoke(
     schema_path: Path = DEFAULT_SCHEMA_PATH,
     corpus_path: Path = DEFAULT_CORPUS_PATH,
     connect: Callable[[str], Any] | None = None,
+    embedding_client: EmbeddingClient | None = None,
+    embedding_env: Mapping[str, str] | None = None,
+    embedding_model_loader: Callable[[str], object] | None = None,
 ) -> PgvectorSmokeResult:
     """Apply the project pgvector schema and round-trip fixture embeddings."""
 
@@ -73,8 +79,11 @@ def run_pgvector_smoke(
         _apply_project_schema(connection, schema_path)
         vector_extension_available = _validate_vector_extension(connection)
         corpus = load_nvidia_knowledge_corpus(corpus_path)
-        embedding_client = DeterministicFakeEmbeddingClient(dimension=6)
-        embedding_index = build_nvidia_embedding_index(corpus, embedding_client)
+        resolved_embedding_client = embedding_client or _embedding_client_from_env_or_fake(
+            embedding_env=embedding_env,
+            embedding_model_loader=embedding_model_loader,
+        )
+        embedding_index = build_nvidia_embedding_index(corpus, resolved_embedding_client)
 
         store = PgvectorNVIDIAEmbeddingStore(connection)
         try:
@@ -88,7 +97,7 @@ def run_pgvector_smoke(
 
         try:
             retrieval = store.retrieve_by_vector(
-                embedding_client,
+                resolved_embedding_client,
                 run_id=DEFAULT_RUN_ID,
                 corpus_version=corpus.corpus_version,
                 gap_type="model_serving",
@@ -159,6 +168,20 @@ def _database_url_from_env() -> str:
         or os.environ.get("DATABASE_URL")
         or DEFAULT_DATABASE_URL
     )
+
+
+def _embedding_client_from_env_or_fake(
+    *,
+    embedding_env: Mapping[str, str] | None,
+    embedding_model_loader: Callable[[str], object] | None,
+) -> EmbeddingClient:
+    source = os.environ if embedding_env is None else embedding_env
+    if source.get("NVIDIA_STARTUP_INTEL_EMBEDDING_PROVIDER", "").strip():
+        return embedding_client_from_config(
+            embedding_provider_config_from_env(source),
+            model_loader=embedding_model_loader,
+        )
+    return DeterministicFakeEmbeddingClient(dimension=6)
 
 
 def _connect(database_url: str, connect: Callable[[str], Any] | None) -> Any:
