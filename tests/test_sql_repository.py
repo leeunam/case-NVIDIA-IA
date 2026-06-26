@@ -5,7 +5,6 @@ import sqlite3
 
 import pytest
 
-from nvidia_startup_intel.ai_native_assessment import assess_ai_native_maturity
 from nvidia_startup_intel.discovery import RawDiscoveryResult
 from nvidia_startup_intel.page_collection import FetchResponse, PageCollectionError, PageCollectionResult
 from nvidia_startup_intel.pipeline import fixture_fetcher, run_scraping_pipeline

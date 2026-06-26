@@ -19,7 +19,6 @@ from nvidia_startup_intel.discovery import CandidateStartup, RawDiscoveryResult,
 from nvidia_startup_intel.evidence import FieldEvidenceGroup, claims_from_profile, structure_evidence_by_field
 from nvidia_startup_intel.normalization import normalize_startup_name, normalize_url
 from nvidia_startup_intel.page_collection import (
-    CollectedPage,
     FetchResponse,
     Fetcher,
     PageCollectionError,

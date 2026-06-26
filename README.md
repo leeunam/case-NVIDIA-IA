@@ -141,9 +141,13 @@ A suíte antiga ampla de scraping/assessment foi removida por estar inválida pa
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests
+python -m ruff check .
+python -m mypy src
 ```
 
-Ruff e mypy ainda não estão configurados.
+Ruff e mypy usam um baseline intencionalmente permissivo nesta primeira adoção de tooling. Ruff está limitado a erros de sintaxe/estilo críticos e Pyflakes; mypy roda sobre `src` com tolerância para imports ausentes, `strict_optional = false` e checagem de corpos não tipados. A baseline também adia categorias de erro de tipos já existentes, como `arg-type`, `assignment`, `attr-defined`, `call-overload`, `return-value` e `union-attr`. Aumentos de strictness devem entrar em fatias futuras, junto com ajustes de código específicos.
+
+Os comandos estáticos pressupõem `ruff` e `mypy` instalados no ambiente Python usado para validação.
 
 ## Validação Opcional Pgvector
 

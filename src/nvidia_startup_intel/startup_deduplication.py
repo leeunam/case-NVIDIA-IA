@@ -9,7 +9,7 @@ not enough unless the similarity is an obvious legal/name variant.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from nvidia_startup_intel.normalization import normalize_domain, normalize_startup_name, normalize_url
 from nvidia_startup_intel.search_params import UNKNOWN
