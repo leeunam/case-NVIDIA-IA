@@ -156,6 +156,26 @@ Ruff e mypy usam um baseline intencionalmente permissivo nesta primeira adoção
 
 Os comandos estáticos pressupõem `ruff` e `mypy` instalados no ambiente Python usado para validação.
 
+## CLI Controlada
+
+Existe um entrypoint local para coletar páginas públicas de uma startup sem rodar busca, LLM, Postgres ou workflow completo:
+
+```bash
+PYTHONPATH=src python -m nvidia_startup_intel collect-pages https://startup.ai/ --max-pages 1 --max-depth 0
+```
+
+Por padrão, o comando respeita `robots.txt` em modo conservador, limita páginas/profundidade e imprime JSON auditável em stdout. Para gravar arquivo:
+
+```bash
+PYTHONPATH=src python -m nvidia_startup_intel collect-pages https://startup.ai/ --max-pages 2 --output runs/startup-ai-collection.json
+```
+
+Fallback Playwright é opt-in e exige `playwright` e browser instalados fora da suíte default:
+
+```bash
+PYTHONPATH=src python -m nvidia_startup_intel collect-pages https://startup.ai/ --render-js --max-pages 1
+```
+
 ## Validação Opcional LLM Adapters
 
 LiteLLM e LangChain não fazem parte da suíte local padrão. A validação default continua usando fakes e contract tests, sem rede, credenciais, chamadas reais de LLM, LiteLLM ou LangChain instalados.
