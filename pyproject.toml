@@ -19,6 +19,9 @@ dev = [
     "pytest",
     "ruff",
 ]
+postgres = [
+    "psycopg[binary]",
+]
 scraping-scale = [
     "scrapy",
 ]

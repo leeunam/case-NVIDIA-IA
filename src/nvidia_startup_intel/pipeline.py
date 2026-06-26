@@ -18,8 +18,9 @@ from nvidia_startup_intel.collection_quality import (
     summarize_collection_quality,
 )
 from nvidia_startup_intel.discovery import CandidateStartup, RawDiscoveryResult, discover_candidate_startups
+from nvidia_startup_intel.discovery import DiscoveryEvidence, DiscoverySourceType
 from nvidia_startup_intel.evidence import FieldEvidenceGroup, claims_from_profile, structure_evidence_by_field
-from nvidia_startup_intel.normalization import normalize_startup_name, normalize_url
+from nvidia_startup_intel.normalization import normalize_domain, normalize_startup_name, normalize_url, origin_url
 from nvidia_startup_intel.page_collection import (
     FetchResponse,
     Fetcher,
@@ -212,6 +213,86 @@ def assess_profiles_ai_native(
             run_id=run_id,
         )
     return assessments
+
+
+def run_controlled_startup_collection(
+    url: str,
+    *,
+    startup_name: str = UNKNOWN,
+    fetcher: Fetcher | None = None,
+    playwright_renderer: PlaywrightRenderer | None = None,
+    html_extractor: HTMLExtractor | None = None,
+    scraping_policy: ScrapingPolicy | None = None,
+    robots_cache: RobotsCache | None = None,
+    max_pages_per_candidate: int = 5,
+    max_depth: int = 1,
+) -> ScrapingPipelineResult:
+    """Collect and structure one known startup URL without running web search."""
+
+    query_name = startup_name if startup_name != UNKNOWN else url
+    params, plan = plan_startup_search(f"controlled startup collection for {query_name}", limit=1)
+    raw_result = RawDiscoveryResult(
+        title=_controlled_startup_name(url, startup_name),
+        url=url,
+        snippet=f"Controlled startup URL collection requested for {url}.",
+        source_name="cli_controlled_url",
+        discovered_name=_controlled_startup_name(url, startup_name),
+    )
+    candidate = CandidateStartup(
+        name=_controlled_startup_name(url, startup_name),
+        normalized_name=normalize_startup_name(_controlled_startup_name(url, startup_name)),
+        primary_url=origin_url(url),
+        discovery_source=raw_result.source_name,
+        evidence_snippet=raw_result.snippet,
+        confidence_score=0.9,
+        source_types=(DiscoverySourceType.COMPANY,),
+        evidences=(
+            DiscoveryEvidence(
+                url=url,
+                title=raw_result.title,
+                snippet=raw_result.snippet,
+                source_name=raw_result.source_name,
+                source_type=DiscoverySourceType.COMPANY,
+            ),
+        ),
+    )
+    candidates = (candidate,)
+    collected_pages = collect_pages_for_candidates(
+        candidates,
+        fetcher=fetcher,
+        playwright_renderer=playwright_renderer,
+        html_extractor=html_extractor,
+        scraping_policy=scraping_policy,
+        robots_cache=robots_cache,
+        max_pages_per_candidate=max_pages_per_candidate,
+        max_depth=max_depth,
+    )
+    profiles = extract_profiles_for_candidates(candidates, collected_pages)
+    evidence_groups = structure_profile_evidence(profiles)
+    quality_summary = summarize_collection_quality(
+        candidates,
+        profiles,
+        collection_results_by_source=collected_pages,
+    )
+    return ScrapingPipelineResult(
+        search_params=params,
+        search_plan=plan,
+        raw_results=(raw_result,),
+        candidates=candidates,
+        collected_pages_by_candidate=collected_pages,
+        profiles=profiles,
+        evidence_groups_by_profile=evidence_groups,
+        quality_summary=quality_summary,
+    )
+
+
+def _controlled_startup_name(url: str, startup_name: str) -> str:
+    if startup_name != UNKNOWN:
+        return startup_name
+    domain = normalize_domain(url)
+    if domain == UNKNOWN:
+        return UNKNOWN
+    return domain.split(".")[0].replace("-", " ").title()
 
 
 def _build_pipeline_result(
