@@ -9,9 +9,13 @@ from unittest.mock import patch
 from nvidia_startup_intel.ai_native_assessment import AINativeAssessment, DiagnosticQuality, TechnicalGap
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
+from nvidia_startup_intel.nvidia_embeddings import DeterministicFakeEmbeddingClient, EmbeddingClient
 from nvidia_startup_intel.nvidia_knowledge import (
+    NVIDIAKnowledgeCorpus,
     NVIDIAKnowledgeRetrieval,
+    RetrievedNVIDIAKnowledge,
     load_nvidia_knowledge_corpus,
+    nvidia_citation_from_chunk,
     retrieve_nvidia_knowledge_by_gap,
 )
 from nvidia_startup_intel.search_params import UNKNOWN
@@ -207,6 +211,46 @@ class DownstreamWorkflowTests(unittest.TestCase):
         )
         self.assertTrue(all(branch.audit_reason for branch in branches))
 
+    def test_downstream_retrieval_uses_hybrid_pgvector_path_by_default_when_available(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
+        )
+        corpus = load_nvidia_knowledge_corpus(_fixture_path())
+        vector_store = FakePgvectorStore(corpus, chunk_ids=("nvidia-api-catalog:0",))
+        runtime = DownstreamWorkflowRuntime(
+            corpus=corpus,
+            embedding_client=DeterministicFakeEmbeddingClient(dimension=6),
+            vector_store=vector_store,
+            retrieval_top_k=2,
+            lexical_top_k=1,
+            vector_top_k=1,
+        )
+        workflow = build_local_downstream_workflow(runtime)
+
+        state = workflow.invoke(
+            {
+                "run_id": "run-issue-59",
+                "profile": _profile(startup_evidence),
+                "evidence_groups": (),
+                "collection_quality": _collection_quality(),
+                "assessment": _assessment(_model_serving_gap(startup_evidence)),
+            }
+        )
+
+        self.assertEqual(state["workflow_outcome"], "briefing_generated")
+        self.assertEqual(vector_store.requests, (("run-issue-59", "official-nvidia-fixture.v1", "model_serving", 1),))
+
+        retrieval = state["retrievals"][0]
+        self.assertEqual(retrieval.results[0].retrieval_strategy, "hybrid_bm25_vector")
+        self.assertEqual(retrieval.results[0].ranking_strategy, "reciprocal_rank_fusion")
+        self.assertTrue(any(result.bm25_score > 0.0 for result in retrieval.results))
+        self.assertTrue(any(result.vector_score > 0.0 for result in retrieval.results))
+        self.assertTrue(all(result.hybrid_score == result.score for result in retrieval.results))
+        self.assertEqual(retrieval.results[0].index_parameters["storage"], "postgres_pgvector")
+        self.assertEqual(retrieval.results[0].index_parameters["lexical_top_k"], 1)
+        self.assertEqual(retrieval.results[0].index_parameters["vector_top_k"], 1)
+        self.assertEqual(retrieval.results[0].index_parameters["top_k"], 2)
+
     def test_missing_citation_fixture_requests_human_review(self) -> None:
         startup_evidence = _startup_evidence(
             snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
@@ -365,6 +409,84 @@ class FakeFrameworkRetriever:
     ) -> NVIDIAKnowledgeRetrieval:
         self.requests = (*self.requests, (run_id, gap.gap_type, gap.description, top_k))
         return self.retrieval
+
+
+class FakePgvectorStore:
+    def __init__(self, corpus: NVIDIAKnowledgeCorpus, *, chunk_ids: tuple[str, ...]) -> None:
+        self.corpus = corpus
+        self.chunk_ids = chunk_ids
+        self.requests: tuple[tuple[str, str, str, int], ...] = ()
+
+    def retrieve_by_vector(
+        self,
+        embedding_client: EmbeddingClient,
+        *,
+        run_id: str,
+        corpus_version: str,
+        gap_type: str = "",
+        opportunity_type: str = "",
+        description: str = "",
+        startup_signals: tuple[str, ...] = (),
+        query_terms: tuple[str, ...] = (),
+        normalized_query: str = "",
+        top_k: int = 3,
+        min_vector_score: float = 0.0,
+    ) -> NVIDIAKnowledgeRetrieval:
+        self.requests = (*self.requests, (run_id, corpus_version, gap_type, top_k))
+        chunks_by_id = {chunk.chunk_id: chunk for chunk in self.corpus.chunks}
+        documents_by_id = {document.document_id: document for document in self.corpus.documents}
+        result_documents = {}
+        results = []
+        for rank, chunk_id in enumerate(self.chunk_ids[:top_k], start=1):
+            chunk = chunks_by_id[chunk_id]
+            document = documents_by_id[chunk.document_id]
+            vector_score = round(0.93 - rank / 100, 6)
+            result_documents[document.document_id] = document
+            results.append(
+                RetrievedNVIDIAKnowledge(
+                    chunk=chunk,
+                    citation=nvidia_citation_from_chunk(document, chunk),
+                    score=vector_score,
+                    retrieval_strategy="vector_semantic",
+                    rationale="Fixture pgvector nearest-neighbor result.",
+                    rank=rank,
+                    vector_score=vector_score,
+                    embedding_metadata={
+                        "schema_version": embedding_client.metadata.schema_version,
+                        "corpus_version": corpus_version,
+                        "embedding_provider": embedding_client.metadata.embedding_provider,
+                        "embedding_model": embedding_client.metadata.embedding_model,
+                        "embedding_version": embedding_client.metadata.embedding_version,
+                        "dimension": embedding_client.metadata.dimension,
+                        "expected_language_behavior": embedding_client.metadata.expected_language_behavior,
+                    },
+                    index_parameters={
+                        "distance_metric": "cosine",
+                        "index_type": "exact_pgvector_sql",
+                        "storage": "postgres_pgvector",
+                        "approximate_index": "none",
+                    },
+                    ranking_strategy="cosine_similarity_desc",
+                    tie_breakers=("document_id", "chunk_index", "chunk_id"),
+                )
+            )
+        return NVIDIAKnowledgeRetrieval(
+            schema_version="nvidia_knowledge.v1",
+            run_id=run_id,
+            corpus_version=corpus_version,
+            query=" ".join(
+                (
+                    gap_type.replace("_", " "),
+                    opportunity_type.replace("_", " "),
+                    description,
+                    *startup_signals,
+                    *query_terms,
+                    normalized_query,
+                )
+            ).strip(),
+            results=tuple(results),
+            documents=tuple(result_documents.values()),
+        )
 
 
 class FakeCompiledStateGraph:

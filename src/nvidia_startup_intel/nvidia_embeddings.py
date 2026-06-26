@@ -456,6 +456,32 @@ def retrieve_nvidia_knowledge_hybrid(
         min_vector_score=min_vector_score,
     )
 
+    return merge_nvidia_knowledge_retrievals_hybrid(
+        lexical_retrieval,
+        vector_retrieval,
+        lexical_top_k=lexical_top_k,
+        vector_top_k=vector_top_k,
+        top_k=top_k,
+        lexical_weight=lexical_weight,
+        vector_weight=vector_weight,
+        rrf_k=rrf_k,
+    )
+
+
+def merge_nvidia_knowledge_retrievals_hybrid(
+    lexical_retrieval: NVIDIAKnowledgeRetrieval,
+    vector_retrieval: NVIDIAKnowledgeRetrieval,
+    *,
+    lexical_top_k: int,
+    vector_top_k: int,
+    top_k: int = 3,
+    lexical_weight: float = 1.0,
+    vector_weight: float = 1.0,
+    rrf_k: int = 60,
+) -> NVIDIAKnowledgeRetrieval:
+    """Merge BM25 and vector retrieval contracts with deterministic RRF ranking."""
+
+    _validate_hybrid_retrieval_inputs(lexical_retrieval, vector_retrieval)
     candidates = _merge_hybrid_candidates(lexical_retrieval, vector_retrieval)
     ranked_candidates = sorted(
         candidates,
@@ -471,15 +497,17 @@ def retrieve_nvidia_knowledge_hybrid(
             candidate.chunk.chunk_id,
         ),
     )
-    documents_by_id = {document.document_id: document for document in corpus.documents}
+    documents_by_id = {
+        document.document_id: document
+        for document in (*lexical_retrieval.documents, *vector_retrieval.documents)
+    }
     results: list[RetrievedNVIDIAKnowledge] = []
     result_documents: dict[str, NVIDIAKnowledgeDocument] = {}
 
     for candidate in ranked_candidates[:top_k]:
-        document = documents_by_id.get(candidate.chunk.document_id)
-        if document is None:
-            continue
-        result_documents[document.document_id] = document
+        document = documents_by_id.get(candidate.citation.document_id)
+        if document is not None:
+            result_documents[document.document_id] = document
         hybrid_score = round(
             _hybrid_score(
                 candidate,
@@ -517,8 +545,8 @@ def retrieve_nvidia_knowledge_hybrid(
 
     return NVIDIAKnowledgeRetrieval(
         schema_version=KNOWLEDGE_SCHEMA_VERSION,
-        run_id=run_id,
-        corpus_version=corpus.corpus_version,
+        run_id=lexical_retrieval.run_id,
+        corpus_version=lexical_retrieval.corpus_version,
         query=lexical_retrieval.query or vector_retrieval.query,
         results=tuple(results),
         documents=tuple(result_documents.values()),
@@ -619,6 +647,16 @@ def _merge_hybrid_candidates(
         candidate.vector_index_parameters = dict(result.index_parameters)
 
     return tuple(candidates_by_chunk_id.values())
+
+
+def _validate_hybrid_retrieval_inputs(
+    lexical_retrieval: NVIDIAKnowledgeRetrieval,
+    vector_retrieval: NVIDIAKnowledgeRetrieval,
+) -> None:
+    if lexical_retrieval.run_id != vector_retrieval.run_id:
+        raise ValueError("hybrid_retrieval_run_id_mismatch")
+    if lexical_retrieval.corpus_version != vector_retrieval.corpus_version:
+        raise ValueError("hybrid_retrieval_corpus_version_mismatch")
 
 
 def _hybrid_score(
