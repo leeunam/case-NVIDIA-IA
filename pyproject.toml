@@ -38,6 +38,7 @@ testpaths = ["tests"]
 markers = [
     "pgvector_integration: optional real Postgres/pgvector smoke tests, skipped unless explicitly enabled",
     "llm_adapter_integration: optional real LLM/framework adapter smoke tests, skipped unless explicitly enabled",
+    "playwright_collection_integration: optional real Playwright collection smoke tests, skipped unless explicitly enabled",
 ]
 
 [tool.ruff]

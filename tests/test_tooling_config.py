@@ -60,6 +60,25 @@ class ToolingConfigTests(unittest.TestCase):
             config["tool"]["pytest"]["ini_options"]["markers"],
         )
 
+    def test_readme_documents_optional_playwright_collection_smoke_separately(self) -> None:
+        readme_path = Path(__file__).resolve().parents[1] / "README.md"
+        pyproject_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
+
+        readme = readme_path.read_text(encoding="utf-8")
+        with pyproject_path.open("rb") as pyproject_file:
+            config = tomllib.load(pyproject_file)
+
+        self.assertIn("Validação Opcional Playwright Collection", readme)
+        self.assertIn("NVIDIA_STARTUP_INTEL_RUN_PLAYWRIGHT_COLLECTION_SMOKE", readme)
+        self.assertIn("python -m nvidia_startup_intel.playwright_collection_smoke", readme)
+        self.assertIn("tests/integration/test_playwright_collection_integration_smoke.py", readme)
+        self.assertIn("não faz parte da suíte local padrão", readme)
+        self.assertIn(
+            "playwright_collection_integration: optional real Playwright collection smoke tests, "
+            "skipped unless explicitly enabled",
+            config["tool"]["pytest"]["ini_options"]["markers"],
+        )
+
     def test_downstream_docs_mark_walking_skeleton_capabilities_as_implemented(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         readme = (project_root / "README.md").read_text(encoding="utf-8")

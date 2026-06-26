@@ -85,7 +85,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-render-js",
         action="store_false",
         dest="render_js",
-        help="Disable Playwright rendering and keep only the deterministic HTTP/static path.",
+        help="Disable Playwright rendering and use only the deterministic debug/test harness.",
     )
     collect.set_defaults(render_js=True)
     collect.add_argument(
