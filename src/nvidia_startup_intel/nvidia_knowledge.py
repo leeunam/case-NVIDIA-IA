@@ -19,6 +19,51 @@ from nvidia_startup_intel.normalization import normalize_text
 
 
 SCHEMA_VERSION = "nvidia_knowledge.v1"
+SUPPORTED_NVIDIA_SOURCE_TYPES = frozenset(
+    {
+        "official_nvidia_developer_page",
+        "official_nvidia_documentation",
+        "official_nvidia_product_page",
+        "official_nvidia_program_page",
+        "official_nvidia_industry_page",
+    }
+)
+SUPPORTED_NVIDIA_KNOWLEDGE_TARGETS = frozenset(
+    {
+        "model_serving",
+        "llm_customization",
+        "data_acceleration",
+        "voice_ai",
+        "computer_vision",
+        "robotics_simulation",
+        "healthcare_ai",
+        "cybersecurity_ai",
+        "inception_program_fit",
+        "partner_ecosystem",
+    }
+)
+REQUIRED_STACK_METADATA_FIELDS = (
+    "stack_id",
+    "stack_name",
+    "topic",
+    "brief_description",
+    "technical_description",
+    "categories",
+    "use_cases",
+    "supported_gap_types",
+)
+LEXICAL_STOP_WORDS = frozenset(
+    {
+        "need",
+        "needs",
+        "support",
+        "supports",
+        "supported",
+        "supporting",
+        "workflow",
+        "workflows",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -95,6 +140,25 @@ class NVIDIAKnowledgeCorpus:
 
 
 @dataclass(frozen=True)
+class NVIDIAStackProfile:
+    schema_version: str
+    corpus_version: str
+    stack_id: str
+    stack_name: str
+    document_id: str
+    topic: str
+    brief_description: str
+    technical_description: str
+    categories: tuple[str, ...]
+    use_cases: tuple[str, ...]
+    supported_gap_types: tuple[str, ...]
+    source_url: str
+    source_type: str
+    ingested_at: str
+    citation_chunk_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class NVIDIAKnowledgeValidationIssue:
     document_id: str
     reason: str
@@ -125,6 +189,40 @@ def nvidia_knowledge_corpus_to_dict(corpus: NVIDIAKnowledgeCorpus) -> dict[str, 
     return _to_plain_data(corpus)
 
 
+def nvidia_stack_profiles_from_corpus(corpus: NVIDIAKnowledgeCorpus) -> tuple[NVIDIAStackProfile, ...]:
+    """Return structured stack profiles exposed by the loaded NVIDIA corpus."""
+
+    chunks_by_document_id: dict[str, list[NVIDIAKnowledgeChunk]] = {}
+    for chunk in corpus.chunks:
+        chunks_by_document_id.setdefault(chunk.document_id, []).append(chunk)
+
+    profiles: list[NVIDIAStackProfile] = []
+    for document in corpus.documents:
+        document_chunks = tuple(chunks_by_document_id.get(document.document_id, ()))
+        topic = str(document.metadata.get("topic", document_chunks[0].topic if document_chunks else ""))
+        profiles.append(
+            NVIDIAStackProfile(
+                schema_version=SCHEMA_VERSION,
+                corpus_version=document.corpus_version,
+                stack_id=str(document.metadata.get("stack_id", document.document_id)),
+                stack_name=str(document.metadata.get("stack_name", document.title)),
+                document_id=document.document_id,
+                topic=topic,
+                brief_description=str(document.metadata.get("brief_description", "")),
+                technical_description=str(document.metadata.get("technical_description", "")),
+                categories=_metadata_tuple(document.metadata, "categories"),
+                use_cases=_metadata_tuple(document.metadata, "use_cases"),
+                supported_gap_types=_metadata_tuple(document.metadata, "supported_gap_types"),
+                source_url=document.source_url,
+                source_type=document.source_type,
+                ingested_at=document.ingested_at,
+                citation_chunk_ids=tuple(chunk.chunk_id for chunk in document_chunks),
+            )
+        )
+
+    return tuple(profiles)
+
+
 def load_nvidia_knowledge_corpus(path: str | Path) -> NVIDIAKnowledgeCorpus:
     """Load a local NVIDIA knowledge corpus from JSON without network access."""
 
@@ -137,12 +235,18 @@ def load_nvidia_knowledge_corpus(path: str | Path) -> NVIDIAKnowledgeCorpus:
         reasons = ", ".join(f"{issue.document_id}:{issue.reason}" for issue in validation.issues)
         raise ValueError(f"invalid_nvidia_knowledge_corpus:{reasons}")
 
-    return NVIDIAKnowledgeCorpus(
+    corpus = NVIDIAKnowledgeCorpus(
         schema_version=data["schema_version"],
         corpus_version=data["corpus_version"],
         documents=documents,
         chunks=tuple(_chunk_from_dict(item) for item in data["chunks"]),
     )
+    corpus_validation = validate_nvidia_knowledge_corpus(corpus)
+    if not corpus_validation.is_valid:
+        reasons = ", ".join(f"{issue.document_id}:{issue.reason}" for issue in corpus_validation.issues)
+        raise ValueError(f"invalid_nvidia_knowledge_corpus:{reasons}")
+
+    return corpus
 
 
 def chunk_nvidia_knowledge_document(
@@ -304,19 +408,128 @@ def validate_nvidia_knowledge_documents(
     accepted_documents: list[NVIDIAKnowledgeDocument] = []
     issues: list[NVIDIAKnowledgeValidationIssue] = []
     for document in documents:
-        if _is_official_nvidia_url(document.source_url):
-            accepted_documents.append(document)
-            continue
-        issues.append(
-            NVIDIAKnowledgeValidationIssue(
-                document_id=document.document_id,
-                reason="source_url_not_official_nvidia",
+        if not document.source_url:
+            issues.append(
+                NVIDIAKnowledgeValidationIssue(
+                    document_id=document.document_id,
+                    reason="missing_source_url",
+                )
             )
-        )
+            continue
+        if not _is_official_nvidia_url(document.source_url):
+            issues.append(
+                NVIDIAKnowledgeValidationIssue(
+                    document_id=document.document_id,
+                    reason="source_url_not_official_nvidia",
+                )
+            )
+            continue
+        if document.source_type not in SUPPORTED_NVIDIA_SOURCE_TYPES:
+            issues.append(
+                NVIDIAKnowledgeValidationIssue(
+                    document_id=document.document_id,
+                    reason="unsupported_source_type",
+                )
+            )
+            continue
+        accepted_documents.append(document)
 
     return NVIDIAKnowledgeDocumentValidation(
         is_valid=not issues,
         accepted_documents=tuple(accepted_documents),
+        issues=tuple(issues),
+    )
+
+
+def validate_nvidia_knowledge_corpus(
+    corpus: NVIDIAKnowledgeCorpus,
+) -> NVIDIAKnowledgeDocumentValidation:
+    """Validate source support and stack metadata for a loaded NVIDIA corpus."""
+
+    document_validation = validate_nvidia_knowledge_documents(corpus.documents)
+    accepted_document_ids = {document.document_id for document in document_validation.accepted_documents}
+    chunks_by_document_id: dict[str, list[NVIDIAKnowledgeChunk]] = {}
+    issues = list(document_validation.issues)
+
+    for chunk in corpus.chunks:
+        if chunk.document_id not in accepted_document_ids:
+            issues.append(
+                NVIDIAKnowledgeValidationIssue(
+                    document_id=chunk.document_id,
+                    reason=f"chunk_document_id_not_found:{chunk.chunk_id}",
+                )
+            )
+            continue
+        chunks_by_document_id.setdefault(chunk.document_id, []).append(chunk)
+        if chunk.schema_version != corpus.schema_version:
+            issues.append(
+                NVIDIAKnowledgeValidationIssue(
+                    document_id=chunk.document_id,
+                    reason=f"chunk_schema_version_mismatch:{chunk.chunk_id}",
+                )
+            )
+        if chunk.corpus_version != corpus.corpus_version:
+            issues.append(
+                NVIDIAKnowledgeValidationIssue(
+                    document_id=chunk.document_id,
+                    reason=f"chunk_corpus_version_mismatch:{chunk.chunk_id}",
+                )
+            )
+
+    for document in document_validation.accepted_documents:
+        document_chunks = tuple(chunks_by_document_id.get(document.document_id, ()))
+        if document.schema_version != corpus.schema_version:
+            issues.append(
+                NVIDIAKnowledgeValidationIssue(
+                    document_id=document.document_id,
+                    reason="document_schema_version_mismatch",
+                )
+            )
+        if document.corpus_version != corpus.corpus_version:
+            issues.append(
+                NVIDIAKnowledgeValidationIssue(
+                    document_id=document.document_id,
+                    reason="document_corpus_version_mismatch",
+                )
+            )
+        if not document_chunks:
+            issues.append(
+                NVIDIAKnowledgeValidationIssue(
+                    document_id=document.document_id,
+                    reason="missing_citable_chunk",
+                )
+            )
+        for metadata_field in REQUIRED_STACK_METADATA_FIELDS:
+            if not _metadata_has_value(document.metadata, metadata_field):
+                issues.append(
+                    NVIDIAKnowledgeValidationIssue(
+                        document_id=document.document_id,
+                        reason=f"missing_stack_metadata:{metadata_field}",
+                    )
+                )
+
+        topic = str(document.metadata.get("topic", ""))
+        for chunk in document_chunks:
+            if topic and chunk.topic != topic:
+                issues.append(
+                    NVIDIAKnowledgeValidationIssue(
+                        document_id=document.document_id,
+                        reason=f"chunk_topic_mismatch:{chunk.chunk_id}",
+                    )
+                )
+
+        for gap_type in _metadata_tuple(document.metadata, "supported_gap_types"):
+            if gap_type not in SUPPORTED_NVIDIA_KNOWLEDGE_TARGETS:
+                issues.append(
+                    NVIDIAKnowledgeValidationIssue(
+                        document_id=document.document_id,
+                        reason=f"unsupported_gap_type:{gap_type}",
+                    )
+                )
+
+    return NVIDIAKnowledgeDocumentValidation(
+        is_valid=not issues,
+        accepted_documents=document_validation.accepted_documents,
         issues=tuple(issues),
     )
 
@@ -347,6 +560,24 @@ def nvidia_citation_from_chunk(
 def _is_official_nvidia_url(source_url: str) -> bool:
     host = urlparse(source_url).hostname or ""
     return host == "nvidia.com" or host.endswith(".nvidia.com")
+
+
+def _metadata_has_value(metadata: dict[str, object], key: str) -> bool:
+    value = metadata.get(key)
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple)):
+        return bool(value) and all(str(item).strip() for item in value)
+    return value is not None
+
+
+def _metadata_tuple(metadata: dict[str, object], key: str) -> tuple[str, ...]:
+    value = metadata.get(key, ())
+    if isinstance(value, str):
+        return (value,) if value else ()
+    if isinstance(value, (list, tuple)):
+        return tuple(str(item) for item in value if str(item))
+    return ()
 
 
 def _document_from_dict(data: dict[str, object]) -> NVIDIAKnowledgeDocument:
@@ -460,7 +691,11 @@ def _bm25_term_score(
 
 
 def _tokenize(value: str) -> tuple[str, ...]:
-    return tuple(re.findall(r"[a-z0-9]+", normalize_text(value)))
+    return tuple(
+        token
+        for token in re.findall(r"[a-z0-9]+", normalize_text(value))
+        if token not in LEXICAL_STOP_WORDS
+    )
 
 
 def _to_plain_data(value: object) -> object:
