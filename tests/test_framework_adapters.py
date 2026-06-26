@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import unittest
 
+from nvidia_startup_intel.ai_native_assessment import TechnicalGap
 from nvidia_startup_intel.framework_adapters import (
     DeterministicFakeLLMClient,
     DeterministicTopKReranker,
     LangChainLLMClient,
     LLMGenerationRequest,
     LiteLLMClient,
+    RankBM25NVIDIAKnowledgeRetriever,
     llm_provider_config_from_env,
     llm_generation_response_to_dict,
     nvidia_rerank_result_to_dict,
@@ -17,13 +19,55 @@ from nvidia_startup_intel.framework_adapters import (
 from nvidia_startup_intel.nvidia_knowledge import (
     NVIDIACitation,
     NVIDIAKnowledgeChunk,
+    NVIDIAKnowledgeCorpus,
     NVIDIAKnowledgeDocument,
     NVIDIAKnowledgeRetrieval,
     RetrievedNVIDIAKnowledge,
+    nvidia_knowledge_retrieval_to_dict,
 )
 
 
 class FrameworkAdapterContractTests(unittest.TestCase):
+    def test_rank_bm25_adapter_returns_project_retrieval_without_requiring_dependency_in_tests(
+        self,
+    ) -> None:
+        corpus = _adapter_corpus()
+        fake_ranker = _FakeBM25Okapi(scores=(0.2, 1.4, 0.0))
+        adapter = RankBM25NVIDIAKnowledgeRetriever(
+            corpus=corpus,
+            bm25_factory=lambda tokenized_corpus: fake_ranker.capture(tokenized_corpus),
+        )
+
+        retrieval = adapter.retrieve_for_gap(
+            run_id="run-rank-bm25-001",
+            gap=TechnicalGap(
+                gap_type="model_serving",
+                description="Needs production inference with low latency.",
+                severity="high",
+                confidence=0.9,
+                evidences=(),
+            ),
+            startup_signals=("inference", "latency"),
+            top_k=2,
+        )
+
+        self.assertEqual(retrieval.schema_version, "nvidia_knowledge.v1")
+        self.assertEqual(retrieval.run_id, "run-rank-bm25-001")
+        self.assertEqual(retrieval.corpus_version, "test-corpus.v1")
+        self.assertEqual([result.chunk.chunk_id for result in retrieval.results], ["doc-a:1", "doc-a:0"])
+        self.assertEqual(retrieval.results[0].retrieval_strategy, "rank_bm25_lexical")
+        self.assertEqual(retrieval.results[0].bm25_score, 1.4)
+        self.assertEqual(retrieval.results[0].score, 1.4)
+        self.assertEqual(retrieval.results[0].ranking_strategy, "rank_bm25.BM25Okapi")
+        self.assertEqual(
+            retrieval.results[0].tie_breakers,
+            ("bm25_score_desc", "document_id", "chunk_index", "chunk_id"),
+        )
+        self.assertEqual(retrieval.results[0].index_parameters["library"], "rank_bm25")
+        self.assertEqual(retrieval.results[0].citation.source_url, "https://developer.nvidia.com/doc-a")
+        self.assertIn("model", fake_ranker.query_tokens)
+        self.assertNotIn("_FakeBM25Okapi", json.dumps(nvidia_knowledge_retrieval_to_dict(retrieval)))
+
     def test_llm_client_response_is_swappable_and_decoupled_from_embedding_contracts(self) -> None:
         request = LLMGenerationRequest(
             schema_version="llm_generation_request.v1",
@@ -277,6 +321,28 @@ def _retrieval_with_ranked_candidates() -> NVIDIAKnowledgeRetrieval:
     )
 
 
+def _adapter_corpus() -> NVIDIAKnowledgeCorpus:
+    document = NVIDIAKnowledgeDocument(
+        schema_version="nvidia_knowledge.v1",
+        corpus_version="test-corpus.v1",
+        document_id="doc-a",
+        title="Document A",
+        source_url="https://developer.nvidia.com/doc-a",
+        source_type="official_nvidia_developer_page",
+        ingested_at="2026-06-23T00:00:00Z",
+    )
+    return NVIDIAKnowledgeCorpus(
+        schema_version="nvidia_knowledge.v1",
+        corpus_version="test-corpus.v1",
+        documents=(document,),
+        chunks=(
+            _chunk("doc-a:0", "doc-a", 0, "NVIDIA NIM inference microservices."),
+            _chunk("doc-a:1", "doc-a", 1, "NVIDIA TensorRT optimizes inference latency."),
+            _chunk("doc-a:2", "doc-a", 2, "NVIDIA Inception supports startup ecosystem access."),
+        ),
+    )
+
+
 def _chunk(chunk_id: str, document_id: str, chunk_index: int, text: str) -> NVIDIAKnowledgeChunk:
     return NVIDIAKnowledgeChunk(
         schema_version="nvidia_knowledge.v1",
@@ -336,6 +402,21 @@ class _FakeLangChainChatModel:
     def invoke(self, messages: list[tuple[str, str]]) -> _FakeLangChainMessage:
         self.messages = tuple(messages)
         return self.response
+
+
+class _FakeBM25Okapi:
+    def __init__(self, *, scores: tuple[float, ...]) -> None:
+        self.scores = scores
+        self.tokenized_corpus: list[list[str]] = []
+        self.query_tokens: list[str] = []
+
+    def capture(self, tokenized_corpus: list[list[str]]) -> "_FakeBM25Okapi":
+        self.tokenized_corpus = tokenized_corpus
+        return self
+
+    def get_scores(self, query_tokens: list[str]) -> tuple[float, ...]:
+        self.query_tokens = query_tokens
+        return self.scores
 
 
 if __name__ == "__main__":

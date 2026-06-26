@@ -8,18 +8,22 @@ them. The default local path remains deterministic and framework-free.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Protocol
 
 from nvidia_startup_intel.ai_native_assessment import TechnicalGap
+from nvidia_startup_intel.normalization import normalize_text
 from nvidia_startup_intel.nvidia_knowledge import (
     NVIDIACitation,
     NVIDIAKnowledgeChunk,
     NVIDIAKnowledgeCorpus,
     NVIDIAKnowledgeRetrieval,
     RetrievedNVIDIAKnowledge,
+    build_nvidia_knowledge_query,
+    nvidia_citation_from_chunk,
     retrieve_nvidia_knowledge_by_gap,
 )
 
@@ -64,6 +68,93 @@ class LocalBM25NVIDIAKnowledgeRetriever:
             description=gap.description,
             startup_signals=startup_signals,
             top_k=top_k,
+        )
+
+
+@dataclass(frozen=True)
+class RankBM25NVIDIAKnowledgeRetriever:
+    """Optional rank-bm25 adapter that returns project-owned retrieval contracts."""
+
+    corpus: NVIDIAKnowledgeCorpus
+    bm25_factory: Callable[[list[list[str]]], object] | None = None
+
+    def retrieve_for_gap(
+        self,
+        *,
+        run_id: str,
+        gap: TechnicalGap,
+        startup_signals: tuple[str, ...],
+        top_k: int,
+    ) -> NVIDIAKnowledgeRetrieval:
+        query = build_nvidia_knowledge_query(
+            gap_type=gap.gap_type,
+            description=gap.description,
+            startup_signals=startup_signals,
+        )
+        return self._retrieve(run_id=run_id, query=query, top_k=top_k)
+
+    def _retrieve(self, *, run_id: str, query: str, top_k: int) -> NVIDIAKnowledgeRetrieval:
+        query_tokens = _lexical_tokens(query)
+        if not self.corpus.chunks or not query_tokens:
+            return NVIDIAKnowledgeRetrieval(
+                schema_version="nvidia_knowledge.v1",
+                run_id=run_id,
+                corpus_version=self.corpus.corpus_version,
+                query=query,
+                results=(),
+                documents=(),
+            )
+
+        tokenized_corpus = [
+            list(_lexical_tokens(f"{chunk.topic.replace('_', ' ')} {chunk.text}"))
+            for chunk in self.corpus.chunks
+        ]
+        bm25 = (self.bm25_factory or _load_rank_bm25_okapi())(tokenized_corpus)
+        raw_scores = list(_rank_bm25_scores(bm25, query_tokens))
+        documents_by_id = {document.document_id: document for document in self.corpus.documents}
+        ranked_chunks = sorted(
+            (
+                (chunk, float(score))
+                for chunk, score in zip(self.corpus.chunks, raw_scores, strict=True)
+                if float(score) > 0
+            ),
+            key=lambda item: (-item[1], item[0].document_id, item[0].chunk_index, item[0].chunk_id),
+        )
+
+        results: list[RetrievedNVIDIAKnowledge] = []
+        result_documents: dict[str, object] = {}
+        for chunk, score in ranked_chunks[:top_k]:
+            document = documents_by_id.get(chunk.document_id)
+            if document is None:
+                continue
+            rounded_score = round(score, 6)
+            result_documents[document.document_id] = document
+            results.append(
+                RetrievedNVIDIAKnowledge(
+                    chunk=chunk,
+                    citation=nvidia_citation_from_chunk(document, chunk),
+                    score=rounded_score,
+                    retrieval_strategy="rank_bm25_lexical",
+                    rationale="Chunk topic and text matched the rank-bm25 lexical query.",
+                    rank=len(results) + 1,
+                    bm25_score=rounded_score,
+                    index_parameters={
+                        "library": "rank_bm25",
+                        "implementation": "BM25Okapi",
+                        "tokenizer": "normalize_text_regex_alnum",
+                    },
+                    ranking_strategy="rank_bm25.BM25Okapi",
+                    tie_breakers=("bm25_score_desc", "document_id", "chunk_index", "chunk_id"),
+                )
+            )
+
+        return NVIDIAKnowledgeRetrieval(
+            schema_version="nvidia_knowledge.v1",
+            run_id=run_id,
+            corpus_version=self.corpus.corpus_version,
+            query=query,
+            results=tuple(results),
+            documents=tuple(result_documents.values()),
         )
 
 
@@ -301,6 +392,25 @@ def _load_litellm_completion() -> Callable[..., object]:
     from litellm import completion
 
     return completion
+
+
+def _load_rank_bm25_okapi() -> Callable[[list[list[str]]], object]:
+    try:
+        from rank_bm25 import BM25Okapi  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise RuntimeError("Install rank-bm25 to use RankBM25NVIDIAKnowledgeRetriever") from exc
+    return BM25Okapi
+
+
+def _rank_bm25_scores(bm25: object, query_tokens: tuple[str, ...]) -> tuple[float, ...]:
+    get_scores = getattr(bm25, "get_scores", None)
+    if not callable(get_scores):
+        raise TypeError("rank_bm25_object_missing_get_scores")
+    return tuple(float(score) for score in get_scores(list(query_tokens)))
+
+
+def _lexical_tokens(value: str) -> tuple[str, ...]:
+    return tuple(re.findall(r"[a-z0-9]+", normalize_text(value)))
 
 
 def _optional_float(raw_value: str | None) -> float | None:
