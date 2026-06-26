@@ -46,6 +46,7 @@ class RetrievalMetricCase:
     matched_expected_citation_count: int
     recall: float
     precision: float
+    f1: float
     covered: bool
     failure_reasons: tuple[str, ...]
     improvement_targets: tuple[str, ...]
@@ -64,6 +65,7 @@ class DownstreamRetrievalMetrics:
     matched_expected_citation_count: int
     recall: float
     precision: float
+    f1: float
     coverage: float
     cases: tuple[RetrievalMetricCase, ...]
     failure_reasons: tuple[str, ...]
@@ -145,6 +147,8 @@ def summarize_downstream_retrieval_metrics(
     retrieved_count = sum(case.retrieved_citation_count for case in cases)
     matched_count = sum(case.matched_expected_citation_count for case in cases)
     covered_count = sum(1 for case in cases if case.covered)
+    recall = _ratio(matched_count, expected_count)
+    precision = _ratio(matched_count, retrieved_count)
     return DownstreamRetrievalMetrics(
         schema_version=SCHEMA_VERSION,
         run_id=run_id,
@@ -155,8 +159,9 @@ def summarize_downstream_retrieval_metrics(
         expected_citation_count=expected_count,
         retrieved_citation_count=retrieved_count,
         matched_expected_citation_count=matched_count,
-        recall=_ratio(matched_count, expected_count),
-        precision=_ratio(matched_count, retrieved_count),
+        recall=recall,
+        precision=precision,
+        f1=_f1(precision=precision, recall=recall),
         coverage=_ratio(covered_count, len(cases)),
         cases=cases,
         failure_reasons=_deduplicate(reason for case in cases for reason in case.failure_reasons),
@@ -247,6 +252,7 @@ def _retrieval_metric_case(
         matched_expected_citation_count=matched_count,
         recall=recall,
         precision=precision,
+        f1=_f1(precision=precision, recall=recall),
         covered=covered,
         failure_reasons=failure_reasons,
         improvement_targets=_case_improvement_targets(
@@ -396,6 +402,12 @@ def _ratio(numerator: int, denominator: int) -> float:
     if denominator == 0:
         return 0.0
     return round(numerator / denominator, 6)
+
+
+def _f1(*, precision: float, recall: float) -> float:
+    if precision + recall == 0:
+        return 0.0
+    return round((2 * precision * recall) / (precision + recall), 6)
 
 
 def _deduplicate(values: Iterable[object]) -> tuple[str, ...]:

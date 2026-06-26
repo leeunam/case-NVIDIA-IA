@@ -66,6 +66,7 @@ class DownstreamMetricsTests(unittest.TestCase):
         self.assertEqual(report.retrieval_metrics.retrieval_strategy, "bm25_lexical")
         self.assertEqual(report.retrieval_metrics.recall, 1.0)
         self.assertEqual(report.retrieval_metrics.precision, 1.0)
+        self.assertEqual(report.retrieval_metrics.f1, 1.0)
         self.assertEqual(report.retrieval_metrics.coverage, 1.0)
         self.assertEqual(report.retrieval_metrics.matched_expected_citation_count, 1)
         self.assertEqual(report.retrieval_metrics.failure_reasons, ())
@@ -83,6 +84,8 @@ class DownstreamMetricsTests(unittest.TestCase):
         serialized = downstream_quality_report_to_dict(report)
         json.dumps(serialized)
         self.assertEqual(serialized["retrieval_metrics"]["cases"][0]["target"], "model_serving")
+        self.assertEqual(serialized["retrieval_metrics"]["cases"][0]["f1"], 1.0)
+        self.assertEqual(serialized["retrieval_metrics"]["f1"], 1.0)
         self.assertEqual(
             serialized["recommendation_metrics"]["recommendations_with_official_nvidia_citation_count"],
             1,
@@ -127,6 +130,7 @@ class DownstreamMetricsTests(unittest.TestCase):
         self.assertEqual(report.retrieval_metrics.retrieval_strategy, "no_results")
         self.assertEqual(report.retrieval_metrics.recall, 0.0)
         self.assertEqual(report.retrieval_metrics.precision, 0.0)
+        self.assertEqual(report.retrieval_metrics.f1, 0.0)
         self.assertEqual(report.retrieval_metrics.coverage, 0.0)
         self.assertEqual(
             report.retrieval_metrics.failure_reasons,
@@ -152,6 +156,48 @@ class DownstreamMetricsTests(unittest.TestCase):
                 ("missing_official_nvidia_citation", 1),
             ),
         )
+
+    def test_retrieval_metrics_report_f1_when_precision_and_recall_diverge(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao."
+        )
+        gap = _model_serving_gap(startup_evidence)
+        corpus = load_nvidia_knowledge_corpus(_fixture_path())
+        retrieval = retrieve_nvidia_knowledge_by_gap(
+            corpus,
+            run_id="run-metrics-003",
+            gap_type=gap.gap_type,
+            description=gap.description,
+            startup_signals=("inference", "latency"),
+            top_k=2,
+        )
+        recommendation_set = build_nvidia_recommendations(
+            profile=_profile(startup_evidence),
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=_assessment(gap, run_id="run-metrics-003"),
+            retrievals=(retrieval,),
+        )
+
+        report = build_downstream_quality_report(
+            run_id="run-metrics-003",
+            startup_identifier="VetAI",
+            retrievals=(retrieval,),
+            retrieval_expectations=(
+                RetrievalMetricExpectation(
+                    expectation_id="model-serving-nim",
+                    target_type="technical_gap",
+                    target="model_serving",
+                    expected_chunk_ids=("nvidia-nim-developers:0",),
+                ),
+            ),
+            recommendation_set=recommendation_set,
+        )
+
+        self.assertEqual(report.retrieval_metrics.recall, 1.0)
+        self.assertEqual(report.retrieval_metrics.precision, 0.5)
+        self.assertEqual(report.retrieval_metrics.f1, 0.666667)
+        self.assertEqual(report.retrieval_metrics.cases[0].f1, 0.666667)
 
 
 def _fixture_path() -> Path:
