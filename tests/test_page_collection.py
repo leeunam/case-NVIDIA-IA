@@ -4,8 +4,11 @@ import pytest
 
 from nvidia_startup_intel.page_collection import (
     FetchResponse,
+    HTMLExtractionResult,
+    StaticHTMLExtractionAdapter,
     _ReadableHTMLParser,
     collect_public_pages,
+    extract_readable_html,
 )
 
 
@@ -76,6 +79,73 @@ def test_collect_simple_html_page_and_relevant_links() -> None:
     assert "Plataforma de IA" in result.pages[0].main_text
     assert result.pages[0].collected_at == "2026-06-14T12:00:00+00:00"
     assert result.pages[0].status_code == 200
+
+
+def test_collect_pages_uses_injected_html_extractor_without_changing_output_contract() -> None:
+    pages = {
+        "https://startup.ai": FetchResponse(
+            url="https://startup.ai/",
+            status_code=200,
+            body="<html><body><div id='root'></div><script>render()</script></body></html>",
+        ),
+        "https://startup.ai/sobre": FetchResponse(
+            url="https://startup.ai/sobre",
+            status_code=200,
+            body="<html><body>ignored by fixture extractor</body></html>",
+        ),
+    }
+
+    def fixture_extractor(html: str) -> HTMLExtractionResult:
+        if "root" in html:
+            return HTMLExtractionResult(
+                title="Startup AI",
+                main_text="Texto limpo vindo do extrator robusto.",
+                links=("/sobre",),
+                extraction_strategy="fixture_static_extractor",
+                needs_js_rendering=True,
+            )
+        return extract_readable_html(html)
+
+    result = collect_public_pages(
+        "https://startup.ai/",
+        fetcher=make_fetcher(pages),
+        html_extractor=fixture_extractor,
+        max_pages=2,
+        max_depth=1,
+        clock=fixed_clock,
+    )
+
+    assert result.errors == ()
+    assert result.pages[0].title == "Startup AI"
+    assert result.pages[0].main_text == "Texto limpo vindo do extrator robusto."
+    assert result.pages[0].extraction_strategy == "fixture_static_extractor"
+    assert result.pages[0].needs_js_rendering is True
+    assert [page.url for page in result.pages] == ["https://startup.ai", "https://startup.ai/sobre"]
+
+
+def test_static_html_extraction_adapter_combines_trafilatura_text_and_beautifulsoup_links() -> None:
+    html = """
+    <html>
+      <head><title>Fallback Title</title></head>
+      <body>
+        <nav>Menu ruidoso</nav>
+        <main>Texto ruidoso de fallback</main>
+        <a href="/sobre">Sobre</a>
+      </body>
+    </html>
+    """
+    adapter = StaticHTMLExtractionAdapter(
+        trafilatura_extract=lambda body: "Texto principal limpo por trafilatura.",
+        beautiful_soup_factory=lambda body, parser: _FakeBeautifulSoup(),
+    )
+
+    result = adapter(html)
+
+    assert result.title == "Titulo via BeautifulSoup"
+    assert result.main_text == "Texto principal limpo por trafilatura."
+    assert result.links == ("/sobre-bs", "/produto-bs")
+    assert result.extraction_strategy == "trafilatura+beautifulsoup"
+    assert result.needs_js_rendering is False
 
 
 def test_collect_page_with_missing_content_as_unknown() -> None:
@@ -231,3 +301,33 @@ def test_respects_max_depth() -> None:
 def test_max_pages_must_be_positive() -> None:
     with pytest.raises(ValueError, match="max_pages must be greater than zero"):
         collect_public_pages("https://startup.ai/", max_pages=0)
+
+
+class _FakeBeautifulSoup:
+    def find(self, tag_name: str) -> "_FakeSoupNode | None":
+        if tag_name == "title":
+            return _FakeSoupNode(text="Titulo via BeautifulSoup")
+        return None
+
+    def find_all(self, tag_name: str) -> list["_FakeSoupNode"]:
+        if tag_name == "a":
+            return [
+                _FakeSoupNode(attrs={"href": "/sobre-bs"}),
+                _FakeSoupNode(attrs={"href": "/produto-bs"}),
+            ]
+        return []
+
+    def get_text(self, separator: str = " ", strip: bool = True) -> str:
+        return "Texto fallback via BeautifulSoup"
+
+
+class _FakeSoupNode:
+    def __init__(self, *, text: str = "", attrs: dict[str, str] | None = None) -> None:
+        self.text = text
+        self.attrs = attrs or {}
+
+    def get_text(self, separator: str = " ", strip: bool = True) -> str:
+        return self.text
+
+    def get(self, key: str) -> str | None:
+        return self.attrs.get(key)

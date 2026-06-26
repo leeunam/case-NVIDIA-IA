@@ -35,6 +35,7 @@ from nvidia_startup_intel.search_params import UNKNOWN
 
 
 Fetcher = Callable[[str], "FetchResponse"]
+HTMLExtractor = Callable[[str], "HTMLExtractionResult"]
 Clock = Callable[[], datetime]
 Sleeper = Callable[[float], None]
 
@@ -48,12 +49,23 @@ class FetchResponse:
 
 
 @dataclass(frozen=True)
+class HTMLExtractionResult:
+    title: str
+    main_text: str
+    links: tuple[str, ...]
+    extraction_strategy: str
+    needs_js_rendering: bool = False
+
+
+@dataclass(frozen=True)
 class CollectedPage:
     url: str
     title: str
     main_text: str
     collected_at: str
     status_code: int
+    extraction_strategy: str = "stdlib_html_parser"
+    needs_js_rendering: bool = False
 
 
 @dataclass(frozen=True)
@@ -119,6 +131,7 @@ def collect_public_pages(
     start_url: str,
     *,
     fetcher: Fetcher | None = None,
+    html_extractor: HTMLExtractor | None = None,
     max_pages: int = 5,
     max_depth: int = 1,
     clock: Clock | None = None,
@@ -134,6 +147,7 @@ def collect_public_pages(
         raise ValueError("max_depth must be zero or greater")
 
     fetch = fetcher or fetch_url
+    extract_html = html_extractor or extract_readable_html
     now = clock or _utc_now
     wait = sleeper or sleep
     active_policy = scraping_policy or ScrapingPolicy()
@@ -184,25 +198,23 @@ def collect_public_pages(
             )
             continue
 
-        parser = _ReadableHTMLParser()
-        parser.feed(response.body)
-        parser.close()
-
-        main_text = normalize_whitespace(" ".join(parser.text_parts))
+        extracted = extract_html(response.body)
         pages.append(
             CollectedPage(
                 url=normalize_url(response.url),
-                title=parser.title or UNKNOWN,
-                main_text=main_text or UNKNOWN,
+                title=extracted.title or UNKNOWN,
+                main_text=extracted.main_text or UNKNOWN,
                 collected_at=collected_at,
                 status_code=response.status_code,
+                extraction_strategy=extracted.extraction_strategy,
+                needs_js_rendering=extracted.needs_js_rendering,
             )
         )
 
         if depth >= max_depth:
             continue
 
-        for link in _prioritized_links(response.url, parser.links, start_domain):
+        for link in _prioritized_links(response.url, list(extracted.links), start_domain):
             if len(pages) + len(queue) >= max_pages:
                 break
             if link in visited or link in queued:
@@ -230,6 +242,60 @@ def fetch_url(url: str, *, timeout: int = 15) -> FetchResponse:
         raise
     except URLError:
         raise
+
+
+def extract_readable_html(html: str) -> HTMLExtractionResult:
+    """Extract title, readable text, and links with the standard library parser."""
+
+    parser = _ReadableHTMLParser()
+    parser.feed(html)
+    parser.close()
+    main_text = normalize_whitespace(" ".join(parser.text_parts)) or UNKNOWN
+    return HTMLExtractionResult(
+        title=parser.title or UNKNOWN,
+        main_text=main_text,
+        links=tuple(parser.links),
+        extraction_strategy="stdlib_html_parser",
+        needs_js_rendering=_needs_js_rendering(html, main_text),
+    )
+
+
+@dataclass(frozen=True)
+class StaticHTMLExtractionAdapter:
+    """Optional trafilatura and BeautifulSoup adapter with stdlib fallback."""
+
+    trafilatura_extract: Callable[[str], str | None] | None = None
+    beautiful_soup_factory: Callable[[str, str], object] | None = None
+
+    def __call__(self, html: str) -> HTMLExtractionResult:
+        fallback = extract_readable_html(html)
+        trafilatura_text = _extract_with_trafilatura(html, self.trafilatura_extract)
+        soup_extraction = _extract_with_beautifulsoup(html, self.beautiful_soup_factory)
+        main_text = normalize_whitespace(
+            trafilatura_text or soup_extraction.main_text or fallback.main_text
+        )
+        title = soup_extraction.title or fallback.title
+        links = soup_extraction.links or fallback.links
+        strategy = _static_extraction_strategy(
+            used_trafilatura=bool(trafilatura_text),
+            used_beautifulsoup=soup_extraction.used,
+            fallback_strategy=fallback.extraction_strategy,
+        )
+        return HTMLExtractionResult(
+            title=title or UNKNOWN,
+            main_text=main_text or UNKNOWN,
+            links=links,
+            extraction_strategy=strategy,
+            needs_js_rendering=_needs_js_rendering(html, main_text),
+        )
+
+
+@dataclass(frozen=True)
+class _BeautifulSoupExtraction:
+    title: str
+    main_text: str
+    links: tuple[str, ...]
+    used: bool
 
 
 class _ReadableHTMLParser(HTMLParser):
@@ -316,6 +382,100 @@ def _format_time(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return value.isoformat()
+
+
+def _extract_with_trafilatura(
+    html: str,
+    extract: Callable[[str], str | None] | None,
+) -> str:
+    extractor = extract or _optional_trafilatura_extract()
+    if extractor is None:
+        return ""
+    try:
+        return normalize_whitespace(extractor(html) or "")
+    except Exception:
+        return ""
+
+
+def _extract_with_beautifulsoup(
+    html: str,
+    beautiful_soup_factory: Callable[[str, str], object] | None,
+) -> _BeautifulSoupExtraction:
+    soup_factory = beautiful_soup_factory or _optional_beautiful_soup_factory()
+    if soup_factory is None:
+        return _BeautifulSoupExtraction(title="", main_text="", links=(), used=False)
+    try:
+        soup = soup_factory(html, "html.parser")
+        title_node = soup.find("title") if hasattr(soup, "find") else None
+        title = normalize_whitespace(title_node.get_text(" ", strip=True)) if title_node else ""
+        links = tuple(
+            str(href)
+            for href in (
+                link.get("href")
+                for link in soup.find_all("a")
+                if hasattr(link, "get")
+            )
+            if href
+        )
+        main_text = (
+            normalize_whitespace(soup.get_text(" ", strip=True))
+            if hasattr(soup, "get_text")
+            else ""
+        )
+        return _BeautifulSoupExtraction(
+            title=title,
+            main_text=main_text,
+            links=links,
+            used=True,
+        )
+    except Exception:
+        return _BeautifulSoupExtraction(title="", main_text="", links=(), used=False)
+
+
+def _optional_trafilatura_extract() -> Callable[[str], str | None] | None:
+    try:
+        from trafilatura import extract
+    except ImportError:
+        return None
+    return extract
+
+
+def _optional_beautiful_soup_factory() -> Callable[[str, str], object] | None:
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return None
+    return BeautifulSoup
+
+
+def _static_extraction_strategy(
+    *,
+    used_trafilatura: bool,
+    used_beautifulsoup: bool,
+    fallback_strategy: str,
+) -> str:
+    strategies: list[str] = []
+    if used_trafilatura:
+        strategies.append("trafilatura")
+    if used_beautifulsoup:
+        strategies.append("beautifulsoup")
+    return "+".join(strategies) if strategies else fallback_strategy
+
+
+def _needs_js_rendering(html: str, main_text: str) -> bool:
+    normalized_html = normalize_text(html)
+    if main_text != UNKNOWN and len(main_text) >= 80:
+        return False
+    js_shell_markers = (
+        'id="root"',
+        "id='root'",
+        'id="__next"',
+        "id='__next'",
+        "__next_data__",
+        "window.__nuxt__",
+        "data-reactroot",
+    )
+    return any(marker in normalized_html for marker in js_shell_markers)
 
 
 def _policy_error_type(reason: ScrapeDecisionReason) -> str:
