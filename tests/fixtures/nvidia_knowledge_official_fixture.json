@@ -6,9 +6,9 @@
       "schema_version": "nvidia_knowledge.v1",
       "corpus_version": "official-nvidia-fixture.v1",
       "document_id": "nvidia-nim-developers",
-      "title": "NVIDIA NIM for Developers",
-      "source_url": "https://developer.nvidia.com/nim",
-      "source_type": "official_nvidia_developer_page",
+      "title": "NVIDIA NIM Microservices",
+      "source_url": "https://www.nvidia.com/en-us/ai-data-science/products/nim-microservices/",
+      "source_type": "official_nvidia_product_page",
       "ingested_at": "2026-06-23T00:00:00Z",
       "metadata": {
         "official_source": true,
@@ -17,7 +17,7 @@
         "stack_name": "NVIDIA NIM",
         "topic": "model_serving",
         "brief_description": "Containerized NVIDIA inference microservices for production model serving.",
-        "technical_description": "NVIDIA NIM is represented in this corpus as the stack for self-hosted, GPU-accelerated inference APIs, latency-sensitive deployment, model serving throughput, and operationalized foundation model endpoints.",
+        "technical_description": "NVIDIA NIM is represented in this corpus as the stack for self-hosted, GPU-accelerated inference APIs, lower latency deployment, model serving throughput, and operationalized foundation model endpoints.",
         "categories": [
           "inference",
           "deployment",
@@ -37,9 +37,9 @@
       "schema_version": "nvidia_knowledge.v1",
       "corpus_version": "official-nvidia-fixture.v1",
       "document_id": "nvidia-nemo-framework",
-      "title": "NVIDIA NeMo Framework User Guide",
-      "source_url": "https://docs.nvidia.com/nemo-framework/user-guide/latest/overview.html",
-      "source_type": "official_nvidia_documentation",
+      "title": "NVIDIA NeMo",
+      "source_url": "https://www.nvidia.com/en-us/ai-data-science/products/nemo/",
+      "source_type": "official_nvidia_product_page",
       "ingested_at": "2026-06-23T00:00:00Z",
       "metadata": {
         "official_source": true,
@@ -132,8 +132,8 @@
       "corpus_version": "official-nvidia-fixture.v1",
       "document_id": "nvidia-riva",
       "title": "NVIDIA Riva",
-      "source_url": "https://docs.nvidia.com/deeplearning/riva/user-guide/docs/index.html",
-      "source_type": "official_nvidia_documentation",
+      "source_url": "https://developer.nvidia.com/riva",
+      "source_type": "official_nvidia_developer_page",
       "ingested_at": "2026-06-23T00:00:00Z",
       "metadata": {
         "official_source": true,
@@ -162,15 +162,15 @@
       "schema_version": "nvidia_knowledge.v1",
       "corpus_version": "official-nvidia-fixture.v1",
       "document_id": "nvidia-isaac-sim",
-      "title": "NVIDIA Isaac Sim",
-      "source_url": "https://developer.nvidia.com/isaac/sim",
+      "title": "NVIDIA Isaac",
+      "source_url": "https://developer.nvidia.com/isaac",
       "source_type": "official_nvidia_developer_page",
       "ingested_at": "2026-06-23T00:00:00Z",
       "metadata": {
         "official_source": true,
         "language": "en",
         "stack_id": "nvidia-isaac-sim",
-        "stack_name": "NVIDIA Isaac Sim",
+        "stack_name": "NVIDIA Isaac",
         "topic": "robotics_simulation",
         "brief_description": "NVIDIA robotics simulation stack for testing, validation, and synthetic data generation.",
         "technical_description": "NVIDIA Isaac Sim is represented in this corpus as the stack for robotics simulation, physically based virtual environments, synthetic data generation, robot learning, sensor simulation, software-in-the-loop testing, and hardware-in-the-loop validation.",
@@ -193,18 +193,18 @@
       "schema_version": "nvidia_knowledge.v1",
       "corpus_version": "official-nvidia-fixture.v1",
       "document_id": "nvidia-healthcare-ai",
-      "title": "Healthcare and Life Sciences Developer Resources",
-      "source_url": "https://developer.nvidia.com/industries/healthcare",
-      "source_type": "official_nvidia_industry_page",
+      "title": "NVIDIA Clara",
+      "source_url": "https://www.nvidia.com/en-us/clara/",
+      "source_type": "official_nvidia_product_page",
       "ingested_at": "2026-06-23T00:00:00Z",
       "metadata": {
         "official_source": true,
         "language": "en",
-        "stack_id": "nvidia-healthcare-ai",
-        "stack_name": "NVIDIA Healthcare AI",
+        "stack_id": "nvidia-clara",
+        "stack_name": "NVIDIA Clara",
         "topic": "healthcare_ai",
-        "brief_description": "NVIDIA healthcare and life sciences resources for imaging, genomics, medical devices, and digital health AI.",
-        "technical_description": "NVIDIA Healthcare AI is represented in this corpus as the stack for healthcare and life sciences workloads, including medical imaging, AI-assisted annotation, genomics, digital biology, digital health agents, and edge AI processing for medical devices.",
+        "brief_description": "NVIDIA Clara healthcare and life sciences stack for imaging, genomics, medical devices, and digital health AI.",
+        "technical_description": "NVIDIA Clara is represented in this corpus as the stack for healthcare and life sciences workloads, including medical imaging, AI-assisted annotation, genomics, digital biology, digital health agents, and edge AI processing for medical devices.",
         "categories": [
           "healthcare",
           "life sciences",
@@ -254,6 +254,481 @@
     {
       "schema_version": "nvidia_knowledge.v1",
       "corpus_version": "official-nvidia-fixture.v1",
+      "document_id": "nvidia-api-catalog",
+      "title": "NVIDIA API Catalog",
+      "source_url": "https://build.nvidia.com/",
+      "source_type": "official_nvidia_product_page",
+      "ingested_at": "2026-06-23T00:00:00Z",
+      "metadata": {
+        "official_source": true,
+        "language": "en",
+        "stack_id": "nvidia-api-catalog",
+        "stack_name": "NVIDIA API Catalog",
+        "topic": "model_serving",
+        "brief_description": "NVIDIA catalog for discovering and trying AI models and inference APIs.",
+        "technical_description": "NVIDIA API Catalog is represented in this corpus as a discovery and prototyping surface for foundation models, hosted endpoints, model APIs, and early validation before moving into production deployment with NVIDIA inference infrastructure.",
+        "categories": [
+          "AI APIs",
+          "model discovery",
+          "prototyping"
+        ],
+        "use_cases": [
+          "model API exploration",
+          "prototype inference",
+          "foundation model evaluation"
+        ],
+        "supported_gap_types": [
+          "model_serving",
+          "llm_customization"
+        ]
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "document_id": "nemo-guardrails",
+      "title": "NeMo Guardrails",
+      "source_url": "https://github.com/NVIDIA/NeMo-Guardrails",
+      "source_type": "official_nvidia_code_repository",
+      "ingested_at": "2026-06-23T00:00:00Z",
+      "metadata": {
+        "official_source": true,
+        "language": "en",
+        "stack_id": "nemo-guardrails",
+        "stack_name": "NeMo Guardrails",
+        "topic": "llm_customization",
+        "brief_description": "Open-source NVIDIA toolkit for controlling conversational AI assistant and agent behavior.",
+        "technical_description": "NeMo Guardrails is represented in this corpus as the stack for adding programmable safety, topical, dialog, and execution controls around assistants, copilots, and agentic LLM applications.",
+        "categories": [
+          "guardrails",
+          "LLM safety",
+          "agent control"
+        ],
+        "use_cases": [
+          "assistant behavior control",
+          "agent policy enforcement",
+          "LLM safety rails"
+        ],
+        "supported_gap_types": [
+          "llm_customization"
+        ]
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "document_id": "nvidia-triton-inference-server",
+      "title": "NVIDIA Triton Inference Server",
+      "source_url": "https://developer.nvidia.com/triton-inference-server",
+      "source_type": "official_nvidia_developer_page",
+      "ingested_at": "2026-06-23T00:00:00Z",
+      "metadata": {
+        "official_source": true,
+        "language": "en",
+        "stack_id": "nvidia-triton-inference-server",
+        "stack_name": "NVIDIA Triton Inference Server",
+        "topic": "model_serving",
+        "brief_description": "NVIDIA inference server for deploying and serving models in production.",
+        "technical_description": "NVIDIA Triton Inference Server is represented in this corpus as the production serving stack for models across frameworks, batching, concurrent model execution, scalable inference APIs, and operational deployment.",
+        "categories": [
+          "inference serving",
+          "production deployment",
+          "MLOps"
+        ],
+        "use_cases": [
+          "production model serving",
+          "multi-framework inference",
+          "batching and concurrency"
+        ],
+        "supported_gap_types": [
+          "model_serving"
+        ]
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "document_id": "triton-docs",
+      "title": "Triton Inference Server Documentation",
+      "source_url": "https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/",
+      "source_type": "official_nvidia_documentation",
+      "ingested_at": "2026-06-23T00:00:00Z",
+      "metadata": {
+        "official_source": true,
+        "language": "en",
+        "stack_id": "nvidia-triton-docs",
+        "stack_name": "Triton Docs",
+        "topic": "model_serving",
+        "brief_description": "Official Triton documentation for serving configuration and production inference behavior.",
+        "technical_description": "Triton documentation is represented in this corpus as the deeper implementation reference for model repositories, serving configuration, inference protocols, scheduling, batching, and deployment operations.",
+        "categories": [
+          "documentation",
+          "inference serving",
+          "deployment"
+        ],
+        "use_cases": [
+          "serving configuration",
+          "model repository setup",
+          "production inference operations"
+        ],
+        "supported_gap_types": [
+          "model_serving"
+        ]
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "document_id": "tensorrt-llm",
+      "title": "TensorRT-LLM",
+      "source_url": "https://github.com/NVIDIA/TensorRT-LLM",
+      "source_type": "official_nvidia_code_repository",
+      "ingested_at": "2026-06-23T00:00:00Z",
+      "metadata": {
+        "official_source": true,
+        "language": "en",
+        "stack_id": "tensorrt-llm",
+        "stack_name": "TensorRT-LLM",
+        "topic": "model_serving",
+        "brief_description": "NVIDIA open-source stack for optimizing LLM inference performance.",
+        "technical_description": "TensorRT-LLM is represented in this corpus as the stack for optimizing large language model inference, throughput, and efficient GPU execution for LLM workloads.",
+        "categories": [
+          "LLM inference",
+          "optimization",
+          "GPU acceleration"
+        ],
+        "use_cases": [
+          "LLM inference optimization",
+          "latency reduction",
+          "throughput improvement"
+        ],
+        "supported_gap_types": [
+          "model_serving",
+          "llm_customization"
+        ]
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "document_id": "nvidia-rapids",
+      "title": "NVIDIA RAPIDS",
+      "source_url": "https://rapids.ai/",
+      "source_type": "official_nvidia_project_page",
+      "ingested_at": "2026-06-23T00:00:00Z",
+      "metadata": {
+        "official_source": true,
+        "language": "en",
+        "stack_id": "nvidia-rapids",
+        "stack_name": "NVIDIA RAPIDS",
+        "topic": "data_acceleration",
+        "brief_description": "GPU-accelerated open-source data science and analytics ecosystem.",
+        "technical_description": "NVIDIA RAPIDS is represented in this corpus as the GPU data acceleration stack for dataframe processing, machine learning, graph analytics, ETL, and end-to-end data science pipelines.",
+        "categories": [
+          "data science",
+          "analytics",
+          "GPU acceleration"
+        ],
+        "use_cases": [
+          "GPU data pipelines",
+          "accelerated ETL",
+          "large-scale analytics"
+        ],
+        "supported_gap_types": [
+          "data_acceleration"
+        ]
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "document_id": "rapids-cudf",
+      "title": "cuDF",
+      "source_url": "https://docs.rapids.ai/api/cudf/stable/",
+      "source_type": "official_nvidia_documentation",
+      "ingested_at": "2026-06-23T00:00:00Z",
+      "metadata": {
+        "official_source": true,
+        "language": "en",
+        "stack_id": "rapids-cudf",
+        "stack_name": "cuDF",
+        "topic": "data_acceleration",
+        "brief_description": "RAPIDS GPU dataframe library for accelerating dataframe operations.",
+        "technical_description": "cuDF is represented in this corpus as the dataframe acceleration layer for pandas-like data manipulation on GPUs, including filtering, joins, aggregations, feature engineering, and data preparation for ML workloads.",
+        "categories": [
+          "dataframes",
+          "ETL",
+          "GPU acceleration"
+        ],
+        "use_cases": [
+          "GPU dataframe processing",
+          "feature engineering",
+          "analytics ETL"
+        ],
+        "supported_gap_types": [
+          "data_acceleration"
+        ]
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "document_id": "rapids-cuml",
+      "title": "cuML",
+      "source_url": "https://docs.rapids.ai/api/cuml/stable/",
+      "source_type": "official_nvidia_documentation",
+      "ingested_at": "2026-06-23T00:00:00Z",
+      "metadata": {
+        "official_source": true,
+        "language": "en",
+        "stack_id": "rapids-cuml",
+        "stack_name": "cuML",
+        "topic": "data_acceleration",
+        "brief_description": "RAPIDS machine learning library for GPU-accelerated classical ML workflows.",
+        "technical_description": "cuML is represented in this corpus as the machine learning acceleration layer for GPU-accelerated estimators, clustering, dimensionality reduction, nearest neighbors, and classical ML pipelines.",
+        "categories": [
+          "machine learning",
+          "GPU acceleration",
+          "RAPIDS"
+        ],
+        "use_cases": [
+          "accelerated ML training",
+          "clustering",
+          "nearest neighbors"
+        ],
+        "supported_gap_types": [
+          "data_acceleration"
+        ]
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "document_id": "cuda-toolkit",
+      "title": "CUDA Toolkit",
+      "source_url": "https://developer.nvidia.com/cuda-toolkit",
+      "source_type": "official_nvidia_developer_page",
+      "ingested_at": "2026-06-23T00:00:00Z",
+      "metadata": {
+        "official_source": true,
+        "language": "en",
+        "stack_id": "cuda-toolkit",
+        "stack_name": "CUDA Toolkit",
+        "topic": "data_acceleration",
+        "brief_description": "NVIDIA toolkit for GPU parallel programming and accelerated computing.",
+        "technical_description": "CUDA Toolkit is represented in this corpus as the low-level GPU programming foundation for parallel computing, custom kernels, accelerated libraries, and performance-sensitive workloads that need direct NVIDIA GPU control.",
+        "categories": [
+          "parallel programming",
+          "accelerated computing",
+          "GPU development"
+        ],
+        "use_cases": [
+          "custom GPU kernels",
+          "parallel computation",
+          "accelerated application development"
+        ],
+        "supported_gap_types": [
+          "data_acceleration"
+        ]
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "document_id": "nvidia-omniverse",
+      "title": "NVIDIA Omniverse",
+      "source_url": "https://www.nvidia.com/en-us/omniverse/",
+      "source_type": "official_nvidia_product_page",
+      "ingested_at": "2026-06-23T00:00:00Z",
+      "metadata": {
+        "official_source": true,
+        "language": "en",
+        "stack_id": "nvidia-omniverse",
+        "stack_name": "NVIDIA Omniverse",
+        "topic": "robotics_simulation",
+        "brief_description": "NVIDIA platform for 3D workflows, simulation, and industrial digital twins.",
+        "technical_description": "NVIDIA Omniverse is represented in this corpus as the simulation and 3D collaboration stack for digital twins, synthetic environments, physically based simulation, visualization, and industrial AI workflows.",
+        "categories": [
+          "3D simulation",
+          "digital twins",
+          "industrial AI"
+        ],
+        "use_cases": [
+          "digital twin simulation",
+          "3D synthetic environments",
+          "industrial visualization"
+        ],
+        "supported_gap_types": [
+          "robotics_simulation"
+        ]
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "document_id": "nvidia-ai-enterprise",
+      "title": "NVIDIA AI Enterprise",
+      "source_url": "https://www.nvidia.com/en-us/data-center/products/ai-enterprise/",
+      "source_type": "official_nvidia_product_page",
+      "ingested_at": "2026-06-23T00:00:00Z",
+      "metadata": {
+        "official_source": true,
+        "language": "en",
+        "stack_id": "nvidia-ai-enterprise",
+        "stack_name": "NVIDIA AI Enterprise",
+        "topic": "model_serving",
+        "brief_description": "NVIDIA enterprise software platform for AI development and production deployment.",
+        "technical_description": "NVIDIA AI Enterprise is represented in this corpus as the enterprise platform layer for production AI, validated software, security, support, operations, and deployment across data center, cloud, and enterprise environments.",
+        "categories": [
+          "enterprise AI",
+          "production platform",
+          "validated software"
+        ],
+        "use_cases": [
+          "enterprise AI deployment",
+          "production support",
+          "validated AI software stack"
+        ],
+        "supported_gap_types": [
+          "model_serving",
+          "llm_customization",
+          "data_acceleration"
+        ]
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "document_id": "nvidia-ai-5-layer-cake",
+      "title": "NVIDIA AI 5-Layer Cake",
+      "source_url": "https://blogs.nvidia.com/blog/ai-5-layer-cake/",
+      "source_type": "official_nvidia_blog",
+      "ingested_at": "2026-06-23T00:00:00Z",
+      "metadata": {
+        "official_source": true,
+        "language": "en",
+        "stack_id": "nvidia-ai-5-layer-cake",
+        "stack_name": "NVIDIA AI 5-Layer Cake",
+        "topic": "model_serving",
+        "brief_description": "NVIDIA framing for the layered AI stack from infrastructure through applications.",
+        "technical_description": "NVIDIA AI 5-Layer Cake is represented in this corpus as strategic architecture context for connecting compute, systems software, models, tools, and applications when explaining where a startup's AI stack has gaps.",
+        "categories": [
+          "AI architecture",
+          "stack strategy",
+          "platform layers"
+        ],
+        "use_cases": [
+          "AI stack framing",
+          "architecture briefing",
+          "gap explanation"
+        ],
+        "supported_gap_types": [
+          "model_serving",
+          "llm_customization",
+          "data_acceleration"
+        ]
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "document_id": "nvidia-technology-playlist",
+      "title": "NVIDIA Technology Playlist",
+      "source_url": "https://youtube.com/playlist?list=PLBaUJRFQ-j_WJZdZfFNsgUWDWF1Ldjp_X",
+      "source_type": "official_nvidia_video",
+      "ingested_at": "2026-06-23T00:00:00Z",
+      "metadata": {
+        "official_source": true,
+        "language": "pt-BR",
+        "stack_id": "nvidia-technology-playlist",
+        "stack_name": "NVIDIA Technology Playlist",
+        "topic": "model_serving",
+        "brief_description": "Curated NVIDIA technology video playlist for explaining the stack to startups.",
+        "technical_description": "The NVIDIA technology playlist is represented in this corpus as educational source material for briefing conversations about NVIDIA AI technologies, product fit, and technical stack choices.",
+        "categories": [
+          "education",
+          "video",
+          "technology overview"
+        ],
+        "use_cases": [
+          "startup education",
+          "technical briefing",
+          "technology overview"
+        ],
+        "supported_gap_types": [
+          "model_serving",
+          "llm_customization",
+          "data_acceleration"
+        ]
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "document_id": "nvidia-startup-community",
+      "title": "NVIDIA Startup Community",
+      "source_url": "https://youtu.be/NmZDQSdUVUQ",
+      "source_type": "official_nvidia_video",
+      "ingested_at": "2026-06-23T00:00:00Z",
+      "metadata": {
+        "official_source": true,
+        "language": "pt-BR",
+        "stack_id": "nvidia-startup-community",
+        "stack_name": "NVIDIA Startup Community",
+        "topic": "startup_program",
+        "brief_description": "NVIDIA startup community source for ecosystem and founder engagement context.",
+        "technical_description": "NVIDIA Startup Community is represented in this corpus as program context for community access, ecosystem engagement, founder-facing support, and commercial enablement discussions.",
+        "categories": [
+          "startup program",
+          "community",
+          "ecosystem"
+        ],
+        "use_cases": [
+          "community access",
+          "founder engagement",
+          "ecosystem support"
+        ],
+        "supported_gap_types": [
+          "inception_program_fit",
+          "partner_ecosystem"
+        ]
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "document_id": "nvidia-inception-benefits-video",
+      "title": "NVIDIA Inception Benefits",
+      "source_url": "https://www.youtube.com/live/fWfkE6cibwQ",
+      "source_type": "official_nvidia_video",
+      "ingested_at": "2026-06-23T00:00:00Z",
+      "metadata": {
+        "official_source": true,
+        "language": "pt-BR",
+        "stack_id": "nvidia-inception-benefits-video",
+        "stack_name": "NVIDIA Inception Benefits",
+        "topic": "startup_program",
+        "brief_description": "NVIDIA Inception benefits source for credits, technical support, and go-to-market context.",
+        "technical_description": "NVIDIA Inception Benefits is represented in this corpus as program context for benefits, credits, technical enablement, community, partner access, and go-to-market support for startups.",
+        "categories": [
+          "startup program",
+          "benefits",
+          "go-to-market"
+        ],
+        "use_cases": [
+          "credits discussion",
+          "technical support explanation",
+          "go-to-market support"
+        ],
+        "supported_gap_types": [
+          "inception_program_fit",
+          "partner_ecosystem"
+        ]
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
       "document_id": "nvidia-inception",
       "title": "Inception Program for Startups",
       "source_url": "https://www.nvidia.com/en-us/startups/",
@@ -265,8 +740,8 @@
         "stack_id": "nvidia-inception",
         "stack_name": "NVIDIA Inception",
         "topic": "startup_program",
-        "brief_description": "NVIDIA startup program for AI companies seeking technical and ecosystem support.",
-        "technical_description": "NVIDIA Inception is represented in this corpus as the program stack for qualified startups that need ecosystem access, technical resources, partner support, go-to-market support, or a commercial path linked to a specific technical or business opportunity.",
+        "brief_description": "NVIDIA startup program for AI companies seeking benefits, community, credits, technical support, and go-to-market help.",
+        "technical_description": "NVIDIA Inception is represented in this corpus as the program stack for qualified startups that need ecosystem access, technical resources, credits, partner support, community, go-to-market support, or a commercial path linked to a specific technical or business opportunity.",
         "categories": [
           "startup program",
           "ecosystem",
@@ -292,10 +767,10 @@
       "document_id": "nvidia-nim-developers",
       "chunk_index": 0,
       "topic": "model_serving",
-      "text": "NVIDIA NIM supports production model serving with GPU-accelerated inference microservices, self-hosted deployment, and latency or throughput optimization.",
+      "text": "NVIDIA NIM supports production model serving with GPU-accelerated inference microservices, self-hosted deployment, lower latency, and throughput optimization.",
       "metadata": {
-        "source_url": "https://developer.nvidia.com/nim",
-        "source_type": "official_nvidia_developer_page",
+        "source_url": "https://www.nvidia.com/en-us/ai-data-science/products/nim-microservices/",
+        "source_type": "official_nvidia_product_page",
         "ingested_at": "2026-06-23T00:00:00Z",
         "stack_id": "nvidia-nim"
       }
@@ -309,8 +784,8 @@
       "topic": "model_serving",
       "text": "NIM maps to product gaps about model serving, hosted inference APIs, deployment control, scaling, observability, response latency, and inference throughput.",
       "metadata": {
-        "source_url": "https://developer.nvidia.com/nim",
-        "source_type": "official_nvidia_developer_page",
+        "source_url": "https://www.nvidia.com/en-us/ai-data-science/products/nim-microservices/",
+        "source_type": "official_nvidia_product_page",
         "ingested_at": "2026-06-23T00:00:00Z",
         "stack_id": "nvidia-nim"
       }
@@ -324,8 +799,8 @@
       "topic": "llm_customization",
       "text": "NVIDIA NeMo supports creating, customizing, evaluating, and deploying generative AI models, including domain adaptation and fine-tuning workflows.",
       "metadata": {
-        "source_url": "https://docs.nvidia.com/nemo-framework/user-guide/latest/overview.html",
-        "source_type": "official_nvidia_documentation",
+        "source_url": "https://www.nvidia.com/en-us/ai-data-science/products/nemo/",
+        "source_type": "official_nvidia_product_page",
         "ingested_at": "2026-06-23T00:00:00Z",
         "stack_id": "nvidia-nemo"
       }
@@ -339,8 +814,8 @@
       "topic": "llm_customization",
       "text": "NeMo maps to product gaps about LLM customization, model evaluation, domain-specific training, adapters, speech model customization, and deployment preparation.",
       "metadata": {
-        "source_url": "https://docs.nvidia.com/nemo-framework/user-guide/latest/overview.html",
-        "source_type": "official_nvidia_documentation",
+        "source_url": "https://www.nvidia.com/en-us/ai-data-science/products/nemo/",
+        "source_type": "official_nvidia_product_page",
         "ingested_at": "2026-06-23T00:00:00Z",
         "stack_id": "nvidia-nemo"
       }
@@ -414,8 +889,8 @@
       "topic": "voice_ai",
       "text": "NVIDIA Riva supports production speech AI inference, including automatic speech recognition, text-to-speech, translation, streaming, and batch speech workloads.",
       "metadata": {
-        "source_url": "https://docs.nvidia.com/deeplearning/riva/user-guide/docs/index.html",
-        "source_type": "official_nvidia_documentation",
+        "source_url": "https://developer.nvidia.com/riva",
+        "source_type": "official_nvidia_developer_page",
         "ingested_at": "2026-06-23T00:00:00Z",
         "stack_id": "nvidia-riva"
       }
@@ -429,8 +904,8 @@
       "topic": "voice_ai",
       "text": "Riva maps to product gaps about voice AI, ASR, TTS, conversational AI, speech model customization, real-time audio inference, and scalable voice assistant deployment.",
       "metadata": {
-        "source_url": "https://docs.nvidia.com/deeplearning/riva/user-guide/docs/index.html",
-        "source_type": "official_nvidia_documentation",
+        "source_url": "https://developer.nvidia.com/riva",
+        "source_type": "official_nvidia_developer_page",
         "ingested_at": "2026-06-23T00:00:00Z",
         "stack_id": "nvidia-riva"
       }
@@ -444,7 +919,7 @@
       "topic": "robotics_simulation",
       "text": "NVIDIA Isaac Sim supports robotics simulation, physically based virtual environments, testing, validation, robot learning, and synthetic data generation.",
       "metadata": {
-        "source_url": "https://developer.nvidia.com/isaac/sim",
+        "source_url": "https://developer.nvidia.com/isaac",
         "source_type": "official_nvidia_developer_page",
         "ingested_at": "2026-06-23T00:00:00Z",
         "stack_id": "nvidia-isaac-sim"
@@ -459,7 +934,7 @@
       "topic": "robotics_simulation",
       "text": "Isaac Sim maps to product gaps about robotics simulation, autonomy validation, digital twins, sensor simulation, sim-to-real workflows, and synthetic training data.",
       "metadata": {
-        "source_url": "https://developer.nvidia.com/isaac/sim",
+        "source_url": "https://developer.nvidia.com/isaac",
         "source_type": "official_nvidia_developer_page",
         "ingested_at": "2026-06-23T00:00:00Z",
         "stack_id": "nvidia-isaac-sim"
@@ -472,12 +947,12 @@
       "document_id": "nvidia-healthcare-ai",
       "chunk_index": 0,
       "topic": "healthcare_ai",
-      "text": "NVIDIA Healthcare AI resources cover healthcare and life sciences AI, including medical imaging, genomics, digital biology, digital health, and medical device workloads.",
+      "text": "NVIDIA Clara resources cover healthcare and life sciences AI, including medical imaging, genomics, digital biology, digital health, and medical device workloads.",
       "metadata": {
-        "source_url": "https://developer.nvidia.com/industries/healthcare",
-        "source_type": "official_nvidia_industry_page",
+        "source_url": "https://www.nvidia.com/en-us/clara/",
+        "source_type": "official_nvidia_product_page",
         "ingested_at": "2026-06-23T00:00:00Z",
-        "stack_id": "nvidia-healthcare-ai"
+        "stack_id": "nvidia-clara"
       }
     },
     {
@@ -489,10 +964,10 @@
       "topic": "healthcare_ai",
       "text": "Healthcare AI maps to product gaps about medical imaging, AI-assisted annotation, genomics pipelines, digital health agents, clinical workflows, and life sciences AI.",
       "metadata": {
-        "source_url": "https://developer.nvidia.com/industries/healthcare",
-        "source_type": "official_nvidia_industry_page",
+        "source_url": "https://www.nvidia.com/en-us/clara/",
+        "source_type": "official_nvidia_product_page",
         "ingested_at": "2026-06-23T00:00:00Z",
-        "stack_id": "nvidia-healthcare-ai"
+        "stack_id": "nvidia-clara"
       }
     },
     {
@@ -532,7 +1007,7 @@
       "document_id": "nvidia-inception",
       "chunk_index": 0,
       "topic": "startup_program",
-      "text": "NVIDIA Inception supports startups building AI, with program resources for technical support, ecosystem access, go-to-market preparation, partners, and growth.",
+      "text": "NVIDIA Inception supports startups building AI, with program benefits for technical support, ecosystem community access, credits, go-to-market preparation, partners, and growth.",
       "metadata": {
         "source_url": "https://www.nvidia.com/en-us/startups/",
         "source_type": "official_nvidia_program_page",
@@ -547,12 +1022,237 @@
       "document_id": "nvidia-inception",
       "chunk_index": 1,
       "topic": "startup_program",
-      "text": "Inception maps to commercial opportunities about startup program fit, partner ecosystem support, NVIDIA technical resources, founder validation, and go-to-market assistance.",
+      "text": "Inception maps to commercial opportunities about startup program fit, partner ecosystem support, NVIDIA technical resources, founder validation, go-to-market assistance, and program access without application fees, deadlines, or cohorts.",
       "metadata": {
         "source_url": "https://www.nvidia.com/en-us/startups/",
         "source_type": "official_nvidia_program_page",
         "ingested_at": "2026-06-23T00:00:00Z",
         "stack_id": "nvidia-inception"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "chunk_id": "nvidia-api-catalog:0",
+      "document_id": "nvidia-api-catalog",
+      "chunk_index": 0,
+      "topic": "model_serving",
+      "text": "NVIDIA API Catalog maps to model API exploration, hosted inference prototypes, foundation model evaluation, and early validation before production deployment.",
+      "metadata": {
+        "source_url": "https://build.nvidia.com/",
+        "source_type": "official_nvidia_product_page",
+        "ingested_at": "2026-06-23T00:00:00Z",
+        "stack_id": "nvidia-api-catalog"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "chunk_id": "nemo-guardrails:0",
+      "document_id": "nemo-guardrails",
+      "chunk_index": 0,
+      "topic": "llm_customization",
+      "text": "NeMo Guardrails maps to assistant behavior control, agent guardrails, topical policy enforcement, dialog safety, and execution controls for generative AI applications.",
+      "metadata": {
+        "source_url": "https://github.com/NVIDIA/NeMo-Guardrails",
+        "source_type": "official_nvidia_code_repository",
+        "ingested_at": "2026-06-23T00:00:00Z",
+        "stack_id": "nemo-guardrails"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "chunk_id": "nvidia-triton-inference-server:0",
+      "document_id": "nvidia-triton-inference-server",
+      "chunk_index": 0,
+      "topic": "model_serving",
+      "text": "NVIDIA Triton Inference Server maps to production model serving, multi-framework inference, batching, concurrency, model repository management, and scalable inference APIs.",
+      "metadata": {
+        "source_url": "https://developer.nvidia.com/triton-inference-server",
+        "source_type": "official_nvidia_developer_page",
+        "ingested_at": "2026-06-23T00:00:00Z",
+        "stack_id": "nvidia-triton-inference-server"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "chunk_id": "triton-docs:0",
+      "document_id": "triton-docs",
+      "chunk_index": 0,
+      "topic": "model_serving",
+      "text": "Triton documentation maps to serving configuration, inference protocols, model repositories, scheduling, dynamic batching, and production deployment operations.",
+      "metadata": {
+        "source_url": "https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/",
+        "source_type": "official_nvidia_documentation",
+        "ingested_at": "2026-06-23T00:00:00Z",
+        "stack_id": "nvidia-triton-docs"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "chunk_id": "tensorrt-llm:0",
+      "document_id": "tensorrt-llm",
+      "chunk_index": 0,
+      "topic": "model_serving",
+      "text": "TensorRT-LLM maps to LLM inference optimization, higher throughput, GPU execution efficiency, and optimized execution of large language models.",
+      "metadata": {
+        "source_url": "https://github.com/NVIDIA/TensorRT-LLM",
+        "source_type": "official_nvidia_code_repository",
+        "ingested_at": "2026-06-23T00:00:00Z",
+        "stack_id": "tensorrt-llm"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "chunk_id": "nvidia-rapids:0",
+      "document_id": "nvidia-rapids",
+      "chunk_index": 0,
+      "topic": "data_acceleration",
+      "text": "NVIDIA RAPIDS maps to GPU data pipelines, accelerated ETL, analytics, dataframe processing, machine learning, graph workloads, and end-to-end data science acceleration.",
+      "metadata": {
+        "source_url": "https://rapids.ai/",
+        "source_type": "official_nvidia_project_page",
+        "ingested_at": "2026-06-23T00:00:00Z",
+        "stack_id": "nvidia-rapids"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "chunk_id": "rapids-cudf:0",
+      "document_id": "rapids-cudf",
+      "chunk_index": 0,
+      "topic": "data_acceleration",
+      "text": "cuDF maps to GPU dataframe processing, pandas-like operations, joins, aggregations, feature engineering, and analytics ETL acceleration.",
+      "metadata": {
+        "source_url": "https://docs.rapids.ai/api/cudf/stable/",
+        "source_type": "official_nvidia_documentation",
+        "ingested_at": "2026-06-23T00:00:00Z",
+        "stack_id": "rapids-cudf"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "chunk_id": "rapids-cuml:0",
+      "document_id": "rapids-cuml",
+      "chunk_index": 0,
+      "topic": "data_acceleration",
+      "text": "cuML maps to GPU-accelerated machine learning, estimators, clustering, dimensionality reduction, nearest neighbors, and classical ML pipeline acceleration.",
+      "metadata": {
+        "source_url": "https://docs.rapids.ai/api/cuml/stable/",
+        "source_type": "official_nvidia_documentation",
+        "ingested_at": "2026-06-23T00:00:00Z",
+        "stack_id": "rapids-cuml"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "chunk_id": "cuda-toolkit:0",
+      "document_id": "cuda-toolkit",
+      "chunk_index": 0,
+      "topic": "data_acceleration",
+      "text": "CUDA Toolkit maps to GPU parallel programming, custom kernels, accelerated computing, direct GPU control, and performance-sensitive application development.",
+      "metadata": {
+        "source_url": "https://developer.nvidia.com/cuda-toolkit",
+        "source_type": "official_nvidia_developer_page",
+        "ingested_at": "2026-06-23T00:00:00Z",
+        "stack_id": "cuda-toolkit"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "chunk_id": "nvidia-omniverse:0",
+      "document_id": "nvidia-omniverse",
+      "chunk_index": 0,
+      "topic": "robotics_simulation",
+      "text": "NVIDIA Omniverse maps to 3D simulation, industrial digital twins, synthetic environments, physical simulation, visualization, and collaborative simulation workflows.",
+      "metadata": {
+        "source_url": "https://www.nvidia.com/en-us/omniverse/",
+        "source_type": "official_nvidia_product_page",
+        "ingested_at": "2026-06-23T00:00:00Z",
+        "stack_id": "nvidia-omniverse"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "chunk_id": "nvidia-ai-enterprise:0",
+      "document_id": "nvidia-ai-enterprise",
+      "chunk_index": 0,
+      "topic": "model_serving",
+      "text": "NVIDIA AI Enterprise maps to enterprise AI deployment, validated software, production support, security, operations, and production AI platform requirements.",
+      "metadata": {
+        "source_url": "https://www.nvidia.com/en-us/data-center/products/ai-enterprise/",
+        "source_type": "official_nvidia_product_page",
+        "ingested_at": "2026-06-23T00:00:00Z",
+        "stack_id": "nvidia-ai-enterprise"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "chunk_id": "nvidia-ai-5-layer-cake:0",
+      "document_id": "nvidia-ai-5-layer-cake",
+      "chunk_index": 0,
+      "topic": "model_serving",
+      "text": "NVIDIA AI 5-Layer Cake maps to AI stack architecture, platform layers, infrastructure, models, tooling, applications, and executive explanation of technical gaps.",
+      "metadata": {
+        "source_url": "https://blogs.nvidia.com/blog/ai-5-layer-cake/",
+        "source_type": "official_nvidia_blog",
+        "ingested_at": "2026-06-23T00:00:00Z",
+        "stack_id": "nvidia-ai-5-layer-cake"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "chunk_id": "nvidia-technology-playlist:0",
+      "document_id": "nvidia-technology-playlist",
+      "chunk_index": 0,
+      "topic": "model_serving",
+      "text": "NVIDIA Technology Playlist maps to startup education, technology overview, briefing support, and founder-facing explanation of NVIDIA AI stack options.",
+      "metadata": {
+        "source_url": "https://youtube.com/playlist?list=PLBaUJRFQ-j_WJZdZfFNsgUWDWF1Ldjp_X",
+        "source_type": "official_nvidia_video",
+        "ingested_at": "2026-06-23T00:00:00Z",
+        "stack_id": "nvidia-technology-playlist"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "chunk_id": "nvidia-startup-community:0",
+      "document_id": "nvidia-startup-community",
+      "chunk_index": 0,
+      "topic": "startup_program",
+      "text": "NVIDIA Startup Community maps to community access, ecosystem engagement, founder support, partner introductions, and startup program context.",
+      "metadata": {
+        "source_url": "https://youtu.be/NmZDQSdUVUQ",
+        "source_type": "official_nvidia_video",
+        "ingested_at": "2026-06-23T00:00:00Z",
+        "stack_id": "nvidia-startup-community"
+      }
+    },
+    {
+      "schema_version": "nvidia_knowledge.v1",
+      "corpus_version": "official-nvidia-fixture.v1",
+      "chunk_id": "nvidia-inception-benefits-video:0",
+      "document_id": "nvidia-inception-benefits-video",
+      "chunk_index": 0,
+      "topic": "startup_program",
+      "text": "NVIDIA Inception Benefits maps to credits, benefits, technical support, community, partner access, go-to-market support, and startup growth enablement.",
+      "metadata": {
+        "source_url": "https://www.youtube.com/live/fWfkE6cibwQ",
+        "source_type": "official_nvidia_video",
+        "ingested_at": "2026-06-23T00:00:00Z",
+        "stack_id": "nvidia-inception-benefits-video"
       }
     }
   ]

@@ -182,6 +182,43 @@ class NVIDIAKnowledgeSchemaTests(unittest.TestCase):
         self.assertEqual(validation.issues[0].document_id, "nvidia-community-summary")
         self.assertEqual(validation.issues[0].reason, "unsupported_source_type")
 
+    def test_document_validation_accepts_curated_nvidia_ecosystem_sources(self) -> None:
+        documents = (
+            NVIDIAKnowledgeDocument(
+                schema_version="nvidia_knowledge.v1",
+                corpus_version="official-nvidia-fixture.v1",
+                document_id="nemo-guardrails",
+                title="NeMo Guardrails",
+                source_url="https://github.com/NVIDIA/NeMo-Guardrails",
+                source_type="official_nvidia_code_repository",
+                ingested_at="2026-06-23T00:00:00Z",
+            ),
+            NVIDIAKnowledgeDocument(
+                schema_version="nvidia_knowledge.v1",
+                corpus_version="official-nvidia-fixture.v1",
+                document_id="rapids",
+                title="NVIDIA RAPIDS",
+                source_url="https://rapids.ai/",
+                source_type="official_nvidia_project_page",
+                ingested_at="2026-06-23T00:00:00Z",
+            ),
+            NVIDIAKnowledgeDocument(
+                schema_version="nvidia_knowledge.v1",
+                corpus_version="official-nvidia-fixture.v1",
+                document_id="inception-benefits-video",
+                title="NVIDIA Inception Benefits",
+                source_url="https://www.youtube.com/live/fWfkE6cibwQ",
+                source_type="official_nvidia_video",
+                ingested_at="2026-06-23T00:00:00Z",
+            ),
+        )
+
+        validation = validate_nvidia_knowledge_documents(documents)
+
+        self.assertTrue(validation.is_valid)
+        self.assertEqual(validation.accepted_documents, documents)
+        self.assertEqual(validation.issues, ())
+
     def test_corpus_load_rejects_missing_source_reference_with_auditable_reason(self) -> None:
         corpus_payload = {
             "schema_version": "nvidia_knowledge.v1",
@@ -254,6 +291,7 @@ class NVIDIAKnowledgeSchemaTests(unittest.TestCase):
         profiles = nvidia_stack_profiles_from_corpus(corpus)
 
         profiles_by_topic = {profile.topic: profile for profile in profiles}
+        profiles_by_stack_name = {profile.stack_name: profile for profile in profiles}
         self.assertTrue(
             {
                 "model_serving",
@@ -269,18 +307,56 @@ class NVIDIAKnowledgeSchemaTests(unittest.TestCase):
             <= set(profiles_by_topic)
         )
 
-        nim_profile = profiles_by_topic["model_serving"]
+        nim_profile = profiles_by_stack_name["NVIDIA NIM"]
         self.assertEqual(nim_profile.schema_version, "nvidia_knowledge.v1")
         self.assertEqual(nim_profile.corpus_version, "official-nvidia-fixture.v1")
         self.assertEqual(nim_profile.stack_name, "NVIDIA NIM")
-        self.assertEqual(nim_profile.source_url, "https://developer.nvidia.com/nim")
-        self.assertEqual(nim_profile.source_type, "official_nvidia_developer_page")
+        self.assertEqual(
+            nim_profile.source_url,
+            "https://www.nvidia.com/en-us/ai-data-science/products/nim-microservices/",
+        )
+        self.assertEqual(nim_profile.source_type, "official_nvidia_product_page")
         self.assertIn("model_serving", nim_profile.supported_gap_types)
         self.assertIn("inference", nim_profile.categories)
         self.assertIn("production model serving", nim_profile.use_cases)
         self.assertTrue(nim_profile.brief_description)
         self.assertTrue(nim_profile.technical_description)
         self.assertIn("nvidia-nim-developers:0", nim_profile.citation_chunk_ids)
+
+    def test_official_fixture_includes_requested_nvidia_stack_sources(self) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "nvidia_knowledge_official_fixture.json"
+        corpus = load_nvidia_knowledge_corpus(fixture_path)
+
+        profiles = nvidia_stack_profiles_from_corpus(corpus)
+        sources_by_stack = {profile.stack_name: profile.source_url for profile in profiles}
+
+        expected_sources = {
+            "NVIDIA Inception": "https://www.nvidia.com/en-us/startups/",
+            "NVIDIA NIM": "https://www.nvidia.com/en-us/ai-data-science/products/nim-microservices/",
+            "NVIDIA API Catalog": "https://build.nvidia.com/",
+            "NVIDIA NeMo": "https://www.nvidia.com/en-us/ai-data-science/products/nemo/",
+            "NeMo Guardrails": "https://github.com/NVIDIA/NeMo-Guardrails",
+            "NVIDIA Triton Inference Server": "https://developer.nvidia.com/triton-inference-server",
+            "TensorRT-LLM": "https://github.com/NVIDIA/TensorRT-LLM",
+            "NVIDIA RAPIDS": "https://rapids.ai/",
+            "cuDF": "https://docs.rapids.ai/api/cudf/stable/",
+            "cuML": "https://docs.rapids.ai/api/cuml/stable/",
+            "CUDA Toolkit": "https://developer.nvidia.com/cuda-toolkit",
+            "NVIDIA Riva": "https://developer.nvidia.com/riva",
+            "NVIDIA Omniverse": "https://www.nvidia.com/en-us/omniverse/",
+            "NVIDIA Isaac": "https://developer.nvidia.com/isaac",
+            "NVIDIA Clara": "https://www.nvidia.com/en-us/clara/",
+            "NVIDIA Morpheus": "https://developer.nvidia.com/morpheus-cybersecurity",
+            "NVIDIA AI Enterprise": "https://www.nvidia.com/en-us/data-center/products/ai-enterprise/",
+            "NVIDIA AI 5-Layer Cake": "https://blogs.nvidia.com/blog/ai-5-layer-cake/",
+            "NVIDIA Technology Playlist": "https://youtube.com/playlist?list=PLBaUJRFQ-j_WJZdZfFNsgUWDWF1Ldjp_X",
+            "NVIDIA Startup Community": "https://youtu.be/NmZDQSdUVUQ",
+            "NVIDIA Inception Benefits": "https://www.youtube.com/live/fWfkE6cibwQ",
+        }
+
+        for stack_name, source_url in expected_sources.items():
+            with self.subTest(stack_name=stack_name):
+                self.assertEqual(sources_by_stack[stack_name], source_url)
 
     def test_loaded_corpus_serializes_auditable_citation_metadata(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "nvidia_knowledge_official_fixture.json"
@@ -293,11 +369,11 @@ class NVIDIAKnowledgeSchemaTests(unittest.TestCase):
 
         json.dumps(serialized)
         self.assertEqual(document["metadata"]["official_source"], True)
-        self.assertEqual(chunk["metadata"]["source_type"], "official_nvidia_developer_page")
+        self.assertEqual(chunk["metadata"]["source_type"], "official_nvidia_product_page")
         self.assertEqual(citation.schema_version, "nvidia_knowledge.v1")
         self.assertEqual(citation.corpus_version, "official-nvidia-fixture.v1")
         self.assertEqual(citation.chunk_id, "nvidia-nim-developers:0")
-        self.assertEqual(citation.source_type, "official_nvidia_developer_page")
+        self.assertEqual(citation.source_type, "official_nvidia_product_page")
         self.assertEqual(citation.ingested_at, "2026-06-23T00:00:00Z")
 
     def test_chunking_discards_empty_blocks_and_preserves_stable_order(self) -> None:

@@ -26,6 +26,10 @@ SUPPORTED_NVIDIA_SOURCE_TYPES = frozenset(
         "official_nvidia_product_page",
         "official_nvidia_program_page",
         "official_nvidia_industry_page",
+        "official_nvidia_code_repository",
+        "official_nvidia_project_page",
+        "official_nvidia_blog",
+        "official_nvidia_video",
     }
 )
 SUPPORTED_NVIDIA_KNOWLEDGE_TARGETS = frozenset(
@@ -62,6 +66,13 @@ LEXICAL_STOP_WORDS = frozenset(
         "supporting",
         "workflow",
         "workflows",
+    }
+)
+OFFICIAL_NVIDIA_VIDEO_URLS = frozenset(
+    {
+        "https://youtube.com/playlist?list=PLBaUJRFQ-j_WJZdZfFNsgUWDWF1Ldjp_X",
+        "https://youtu.be/NmZDQSdUVUQ",
+        "https://www.youtube.com/live/fWfkE6cibwQ",
     }
 )
 
@@ -558,8 +569,15 @@ def nvidia_citation_from_chunk(
 
 
 def _is_official_nvidia_url(source_url: str) -> bool:
-    host = urlparse(source_url).hostname or ""
-    return host == "nvidia.com" or host.endswith(".nvidia.com")
+    parsed_url = urlparse(source_url)
+    host = parsed_url.hostname or ""
+    if host == "nvidia.com" or host.endswith(".nvidia.com"):
+        return True
+    if host == "github.com":
+        return parsed_url.path.startswith("/NVIDIA/")
+    if host == "rapids.ai" or host.endswith(".rapids.ai"):
+        return True
+    return source_url in OFFICIAL_NVIDIA_VIDEO_URLS
 
 
 def _metadata_has_value(metadata: dict[str, object], key: str) -> bool:
