@@ -11,13 +11,20 @@ from nvidia_startup_intel.ai_native_assessment import (
     WrapperDependencyRisk,
 )
 from nvidia_startup_intel.briefing import (
+    briefing_narrative_to_dict,
     executive_briefing_to_dict,
+    generate_briefing_narrative,
     generate_executive_briefing,
     generate_human_review_briefing,
     human_review_briefing_to_dict,
 )
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
+from nvidia_startup_intel.framework_adapters import (
+    DeterministicFakeLLMClient,
+    LLMGenerationRequest,
+    LLMGenerationResponse,
+)
 from nvidia_startup_intel.nvidia_knowledge import (
     load_nvidia_knowledge_corpus,
     retrieve_nvidia_knowledge_by_gap,
@@ -112,6 +119,94 @@ class ExecutiveBriefingTests(unittest.TestCase):
         self.assertEqual(serialized["claims"][0]["claim_type"], "observed")
         self.assertEqual(serialized["citation_references"][0]["document_id"], "nvidia-nim-developers")
         self.assertEqual(serialized["evidence_references"][0]["url"], "https://vetai.example/product")
+
+    def test_llm_ready_narrative_preserves_executive_briefing_contract(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
+        )
+        profile = _profile(startup_evidence)
+        evidence_groups = (
+            FieldEvidenceGroup(
+                field_name="ai_signals",
+                value="inferencia em producao",
+                evidences=(startup_evidence,),
+                has_conflict=False,
+                conflicting_values=(),
+            ),
+        )
+        assessment = _assessment(_model_serving_gap(startup_evidence))
+        recommendation_set = _supported_recommendation_set(profile, evidence_groups, assessment)
+        briefing = generate_executive_briefing(
+            profile=profile,
+            evidence_groups=evidence_groups,
+            collection_quality=_collection_quality(),
+            assessment=assessment,
+            recommendation_set=recommendation_set,
+        )
+
+        narrative = generate_briefing_narrative(
+            briefing=briefing,
+            llm_client=DeterministicFakeLLMClient(),
+        )
+
+        self.assertEqual(narrative.schema_version, "briefing_narrative.v1")
+        self.assertEqual(narrative.run_id, briefing.run_id)
+        self.assertEqual(narrative.startup_identifier, briefing.startup_identifier)
+        self.assertEqual(narrative.source_briefing_schema_version, "executive_briefing.v1")
+        self.assertEqual(narrative.source_briefing_status, "ready_for_use")
+        self.assertEqual(narrative.next_action, "prepare_technical_outreach")
+        self.assertEqual(narrative.claims, briefing.claims)
+        self.assertEqual(narrative.evidence_references, briefing.evidence_references)
+        self.assertEqual(narrative.citation_references, briefing.citation_references)
+        self.assertTrue(any("funding" in unknown for unknown in narrative.unknowns))
+        self.assertEqual(narrative.llm_response.request_purpose, "briefing_narrative")
+        self.assertEqual(narrative.llm_request.structured_output_schema, "briefing_narrative.v1")
+        self.assertEqual(narrative.llm_request.metadata["source_briefing_schema_version"], "executive_briefing.v1")
+        self.assertNotIn("Series A", narrative.llm_request.user_prompt)
+        self.assertNotIn("Fortune 500", narrative.llm_request.user_prompt)
+
+        serialized = briefing_narrative_to_dict(narrative)
+        json.dumps(serialized)
+        self.assertEqual(serialized["claims"][0]["claim_type"], "observed")
+        self.assertEqual(serialized["citation_references"][0]["document_id"], "nvidia-nim-developers")
+        self.assertEqual(serialized["llm_response"]["provider"], "local_fake")
+
+    def test_llm_ready_narrative_rejects_unsupported_llm_facts(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
+        )
+        profile = _profile(startup_evidence)
+        evidence_groups = (
+            FieldEvidenceGroup(
+                field_name="ai_signals",
+                value="inferencia em producao",
+                evidences=(startup_evidence,),
+                has_conflict=False,
+                conflicting_values=(),
+            ),
+        )
+        assessment = _assessment(_model_serving_gap(startup_evidence))
+        recommendation_set = _supported_recommendation_set(profile, evidence_groups, assessment)
+        briefing = generate_executive_briefing(
+            profile=profile,
+            evidence_groups=evidence_groups,
+            collection_quality=_collection_quality(),
+            assessment=assessment,
+            recommendation_set=recommendation_set,
+        )
+
+        narrative = generate_briefing_narrative(
+            briefing=briefing,
+            llm_client=_UnsupportedFactLLMClient(),
+        )
+
+        self.assertNotIn("Series A", narrative.narrative_text)
+        self.assertNotIn("Fortune 500", narrative.narrative_text)
+        self.assertNotIn("Series A", narrative.llm_response.content)
+        self.assertNotIn("Fortune 500", narrative.llm_response.content)
+        self.assertIn("funding is unknown", narrative.narrative_text)
+        self.assertIn("llm_narrative_rejected_unsupported_terms", narrative.audit_reasons)
+        self.assertEqual(narrative.claims, briefing.claims)
 
     def test_blocked_recommendation_generates_human_review_briefing(self) -> None:
         profile_evidence = _startup_evidence(
@@ -353,8 +448,67 @@ class ExecutiveBriefingTests(unittest.TestCase):
         self.assertEqual(serialized["blocked_recommendations"][0]["state"], "blocked")
         self.assertEqual(serialized["citation_references"][0]["document_id"], "nvidia-nim-developers")
 
+    def test_llm_ready_narrative_preserves_human_review_context(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI usa OpenAI API sem evidencias de dados proprietarios."
+        )
+        profile = _profile(startup_evidence)
+        gap = _model_serving_gap(startup_evidence)
+        risk = WrapperDependencyRisk(
+            risk_type="external_api_dependency",
+            severity="high",
+            confidence=0.81,
+            rationale="Evidence suggests dependency on an external API without proprietary data.",
+            evidences=(startup_evidence,),
+        )
+        assessment = _assessment(gap, wrapper_dependency_risks=(risk,))
+        recommendation_set = _recommendation_set_for_gap(
+            profile=profile,
+            gap=gap,
+            evidence_groups=(),
+            assessment=assessment,
+        )
+        briefing = generate_human_review_briefing(
+            profile=profile,
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=assessment,
+            recommendation_set=recommendation_set,
+        )
+
+        narrative = generate_briefing_narrative(
+            briefing=briefing,
+            llm_client=DeterministicFakeLLMClient(),
+        )
+
+        self.assertEqual(narrative.source_briefing_schema_version, "human_review_briefing.v1")
+        self.assertEqual(narrative.source_briefing_status, "ready_for_human_review")
+        self.assertEqual(narrative.claims, briefing.discoveries)
+        self.assertEqual(narrative.review_reasons, briefing.review_reasons)
+        self.assertEqual(narrative.unknowns, briefing.unknowns)
+        self.assertTrue(any("external_api_dependency" in risk_text for risk_text in narrative.risks))
+        self.assertEqual(narrative.evidence_references, briefing.evidence_references)
+        self.assertEqual(narrative.citation_references, briefing.citation_references)
+        self.assertEqual(narrative.next_action, briefing.next_action)
+        self.assertIn("high_wrapper_risk_requires_human_review", narrative.llm_request.user_prompt)
+
 def _fixture_path() -> Path:
     return Path(__file__).parent / "fixtures" / "nvidia_knowledge_official_fixture.json"
+
+
+class _UnsupportedFactLLMClient:
+    def generate(self, request: LLMGenerationRequest) -> LLMGenerationResponse:
+        return LLMGenerationResponse(
+            schema_version="llm_generation_response.v1",
+            request_purpose=request.purpose,
+            provider="local_fake",
+            model="unsupported-fact-fixture",
+            model_version="v1",
+            content="VetAI raised a Series A and serves Fortune 500 customers.",
+            structured_output_schema=request.structured_output_schema,
+            finish_reason="stop",
+            metadata={"attempted_unsupported_fact": True},
+        )
 
 
 def _supported_recommendation_set(
