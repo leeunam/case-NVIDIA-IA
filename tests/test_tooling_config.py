@@ -29,13 +29,23 @@ class ToolingConfigTests(unittest.TestCase):
 
     def test_readme_documents_optional_llm_adapter_validation_separately(self) -> None:
         readme_path = Path(__file__).resolve().parents[1] / "README.md"
+        pyproject_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
 
         readme = readme_path.read_text(encoding="utf-8")
+        with pyproject_path.open("rb") as pyproject_file:
+            config = tomllib.load(pyproject_file)
 
         self.assertIn("Validação Opcional LLM Adapters", readme)
         self.assertIn("NVIDIA_STARTUP_INTEL_LLM_PROVIDER", readme)
         self.assertIn("NVIDIA_STARTUP_INTEL_LLM_API_KEY_ENV", readme)
+        self.assertIn("NVIDIA_STARTUP_INTEL_RUN_LLM_ADAPTER_SMOKE", readme)
+        self.assertIn("tests/integration/test_llm_adapter_integration_smoke.py", readme)
         self.assertIn("LiteLLM e LangChain não fazem parte da suíte local padrão", readme)
+        self.assertIn(
+            "llm_adapter_integration: optional real LLM/framework adapter smoke tests, "
+            "skipped unless explicitly enabled",
+            config["tool"]["pytest"]["ini_options"]["markers"],
+        )
 
     def test_downstream_docs_mark_walking_skeleton_capabilities_as_implemented(self) -> None:
         project_root = Path(__file__).resolve().parents[1]

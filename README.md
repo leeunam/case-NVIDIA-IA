@@ -171,6 +171,15 @@ export OPENROUTER_API_KEY=<secret>
 
 Para LangChain, configure `NVIDIA_STARTUP_INTEL_LLM_PROVIDER=langchain` e passe um chat model já instanciado para `LangChainLLMClient`. Objetos LiteLLM ou LangChain devem ser convertidos para `LLMGenerationResponse` antes de qualquer Recommendation, Briefing, workflow state ou payload de persistência.
 
+Também existe um smoke test opcional isolado para validar essas fronteiras fora da suíte default:
+
+```bash
+NVIDIA_STARTUP_INTEL_RUN_LLM_ADAPTER_SMOKE=1 \
+python -m pytest -q tests/integration/test_llm_adapter_integration_smoke.py -m llm_adapter_integration
+```
+
+Com `NVIDIA_STARTUP_INTEL_LLM_PROVIDER=litellm`, o smoke usa a configuração real do LiteLLM e exige que a dependência e a credencial apontada por `NVIDIA_STARTUP_INTEL_LLM_API_KEY_ENV` estejam disponíveis no ambiente. Com `NVIDIA_STARTUP_INTEL_LLM_PROVIDER=langchain`, o smoke valida um chat model localmente fornecido pelo próprio teste, sem credencial externa. Em ambos os casos, o teste afirma que a saída cruza a fronteira como `LLMGenerationResponse` serializável, não como objeto de provider.
+
 ## Validação Opcional Pgvector
 
 A persistência de embeddings em Postgres/pgvector é um caminho de integração, não uma dependência da suíte local padrão. Para validar quando Docker e Postgres estiverem disponíveis:
