@@ -21,7 +21,11 @@ from typing import Any
 from uuid import uuid4
 
 from nvidia_startup_intel.ai_native_assessment import AINativeAssessment
-from nvidia_startup_intel.briefing import executive_briefing_to_dict, human_review_briefing_to_dict
+from nvidia_startup_intel.briefing import (
+    briefing_narrative_to_dict,
+    executive_briefing_to_dict,
+    human_review_briefing_to_dict,
+)
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.discovery import CandidateStartup, RawDiscoveryResult
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
@@ -262,10 +266,12 @@ class SqlPipelineRepository:
         recommendation_set = state.get("recommendation_set")
         executive_briefing = state.get("executive_briefing")
         human_review_briefing = state.get("human_review_briefing")
+        briefing_narrative = state.get("briefing_narrative")
         startup_identifier = _downstream_startup_identifier(
             recommendation_set=recommendation_set,
             executive_briefing=executive_briefing,
             human_review_briefing=human_review_briefing,
+            briefing_narrative=briefing_narrative,
         )
         run_id = str(state["run_id"])
 
@@ -282,6 +288,8 @@ class SqlPipelineRepository:
                 self.save_downstream_briefing(run_id, executive_briefing)
             if human_review_briefing is not None:
                 self.save_downstream_briefing(run_id, human_review_briefing)
+            if briefing_narrative is not None:
+                self.save_downstream_briefing(run_id, briefing_narrative)
 
     def save_downstream_retrievals(
         self,
@@ -360,7 +368,7 @@ class SqlPipelineRepository:
                 run_id,
                 briefing.startup_identifier,
                 briefing_type,
-                briefing.status,
+                _briefing_status(briefing),
                 _dumps(_briefing_payload(briefing)),
             ),
         )
@@ -963,8 +971,9 @@ def _downstream_startup_identifier(
     recommendation_set: Any,
     executive_briefing: Any,
     human_review_briefing: Any,
+    briefing_narrative: Any = None,
 ) -> str:
-    for artifact in (recommendation_set, executive_briefing, human_review_briefing):
+    for artifact in (recommendation_set, executive_briefing, human_review_briefing, briefing_narrative):
         startup_identifier = getattr(artifact, "startup_identifier", None)
         if startup_identifier:
             return startup_identifier
@@ -978,14 +987,27 @@ def _retrieval_strategy(retrieval: Any) -> str:
 
 
 def _briefing_type(briefing: Any) -> str:
-    if getattr(briefing, "schema_version", "") == "human_review_briefing.v1":
+    schema_version = getattr(briefing, "schema_version", "")
+    if schema_version == "human_review_briefing.v1":
         return "human_review"
+    if schema_version == "briefing_narrative.v1":
+        return "briefing_narrative"
     return "executive"
 
 
+def _briefing_status(briefing: Any) -> str:
+    status = getattr(briefing, "status", None)
+    if status:
+        return str(status)
+    return str(getattr(briefing, "source_briefing_status", "unknown"))
+
+
 def _briefing_payload(briefing: Any) -> dict[str, object]:
-    if _briefing_type(briefing) == "human_review":
+    briefing_type = _briefing_type(briefing)
+    if briefing_type == "human_review":
         return human_review_briefing_to_dict(briefing)
+    if briefing_type == "briefing_narrative":
+        return briefing_narrative_to_dict(briefing)
     return executive_briefing_to_dict(briefing)
 
 
