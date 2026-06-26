@@ -6,6 +6,29 @@ Este roadmap começa pequeno, mas o alvo de `NVIDIA Knowledge` é busca híbrida
 
 A estratégia de frameworks, LiteLLM, BM25, busca vetorial, Postgres/pgvector, busca híbrida, LlamaIndex e reranking está em `context/frameworks-and-retrieval-strategy.md`.
 
+## Status Atual
+
+O walking skeleton downstream deste roadmap está implementado no pacote `src/nvidia_startup_intel` e coberto pela suíte local padrão. Ele mantém o caminho default sem rede, credenciais, Postgres real, LangGraph obrigatório, LlamaIndex, LangChain, LiteLLM, LLM real ou embedding provider real.
+
+Implementado no core local:
+
+- `NVIDIA Knowledge`: schema versionado, corpus fixture oficial, chunking determinístico, BM25 lexical, qualidade de retrieval, contrato de embedding, fake embedding determinístico, busca vetorial local e retrieval híbrido.
+- `Recommendation`: recomendações técnicas por gap, recomendações de programa/Inception com gate específico, hipóteses, bloqueios, prioridade final, quality gate e métricas.
+- `Briefing`: `ExecutiveBriefing` determinístico e `HumanReviewBriefing` versionado para baixo sinal, alto wrapper risk, conflitos, unknowns, hipóteses ou falta de citação oficial.
+- `Workflow`: runner downstream local com branches auditáveis `ready_for_recommendation`, `ready_for_briefing`, `briefing_generated`, `human_review_requested` e `needs_more_collection_or_human_review`.
+- `Persistence`: snapshots JSON e payloads SQL downstream por run e startup, permitindo reprocessamento sem repetir scraping.
+- `Framework adapters`: contratos opcionais para `LLMClient`, LiteLLM, LangChain, retrievers framework-free e reranking top K sem vazar objetos externos para o domínio.
+- `Postgres/pgvector`: schema, Docker Compose e adapter de busca exata SQL existem como caminho opcional; validação com Postgres real continua fora da suíte default.
+
+Follow-ups recomendados:
+
+- Expandir corpus oficial NVIDIA e expectativas de métricas para mais tecnologias, programas e gaps.
+- Calibrar thresholds de retrieval, recomendação, wrapper risk e human review com casos revisados.
+- Validar Postgres/pgvector com instância real quando houver ambiente de integração.
+- Adicionar grafo downstream LangGraph somente quando checkpoints, retry ou human-in-the-loop reais forem necessários.
+- Implementar adapter LlamaIndex real apenas se ingestão, índices persistentes, metadados, citações ou reranking justificarem a complexidade.
+- Integrar provedores reais de LLM, embedding ou reranking somente atrás dos contratos atuais e fora da suíte padrão.
+
 ## Contrato De Entrada
 
 - `StartupProfile` `startup_profile.v1`
@@ -293,18 +316,18 @@ Critérios de aceite:
 
 ## Definition Of Done
 
-- [ ] Base NVIDIA local versionada e carregável em testes.
-- [ ] Retrieval BM25 lexical retorna citações auditáveis.
-- [ ] Retrieval vetorial local retorna citações auditáveis com embedding versionado.
-- [ ] Postgres/pgvector está planejado como vector DB local antes de qualquer serviço externo.
-- [ ] Retrieval híbrido lexical + vetorial retorna ranking reprodutível.
-- [ ] Contrato de retrieval permite LlamaIndex e reranking sem quebrar Recommendation.
-- [ ] Recomendação técnica liga gap da startup a fonte oficial NVIDIA.
-- [ ] Recomendação de programa liga oportunidade comercial a fonte oficial NVIDIA.
-- [ ] Recomendação sem fonte é hipótese ou bloqueio, não fato.
-- [ ] Inception só é recomendado com gap específico.
-- [ ] Briefing diferencia observado, inferido, recomendado e desconhecido.
-- [ ] Human review gera briefing detalhado com contexto suficiente para decisão humana.
-- [ ] Workflow possui branch `ready_for_briefing`.
-- [ ] Persistência downstream permite reprocessamento.
-- [ ] Nova suíte local de validação continua sem rede, credenciais ou serviços externos obrigatórios.
+- [x] Base NVIDIA local versionada e carregável em testes.
+- [x] Retrieval BM25 lexical retorna citações auditáveis.
+- [x] Retrieval vetorial local retorna citações auditáveis com embedding versionado.
+- [x] Postgres/pgvector está planejado como vector DB local antes de qualquer serviço externo.
+- [x] Retrieval híbrido lexical + vetorial retorna ranking reprodutível.
+- [x] Contrato de retrieval permite LlamaIndex e reranking sem quebrar Recommendation.
+- [x] Recomendação técnica liga gap da startup a fonte oficial NVIDIA.
+- [x] Recomendação de programa liga oportunidade comercial a fonte oficial NVIDIA.
+- [x] Recomendação sem fonte é hipótese ou bloqueio, não fato.
+- [x] Inception só é recomendado com gap específico.
+- [x] Briefing diferencia observado, inferido, recomendado e desconhecido.
+- [x] Human review gera briefing detalhado com contexto suficiente para decisão humana.
+- [x] Workflow possui branch `ready_for_briefing`.
+- [x] Persistência downstream permite reprocessamento.
+- [x] Nova suíte local de validação continua sem rede, credenciais ou serviços externos obrigatórios.

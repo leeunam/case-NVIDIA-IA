@@ -68,7 +68,7 @@ Em termos práticos:
 
 ## Status Atual
 
-Já existe walking skeleton implementado para:
+Já existe walking skeleton implementado para o fluxo upstream e downstream local:
 
 - planejamento de busca;
 - descoberta de candidatas;
@@ -85,39 +85,41 @@ Já existe walking skeleton implementado para:
 - runner local compatível com LangGraph;
 - contrato local de `NVIDIA Knowledge` com corpus fixture oficial e BM25 lexical;
 - contrato de embeddings com fake determinístico, busca vetorial local e retrieval híbrido reprodutível;
-- caminho opcional de persistência de embeddings em Postgres/pgvector;
-- `nvidia_recommendation.v1` para recomendação técnica citada, hipótese e bloqueio;
-- `executive_briefing.v1` determinístico para recommendation set suportado.
+- caminho opcional de persistência de embeddings em Postgres/pgvector, com schema e adapter SQL;
+- contrato de adapter para retrieval framework-free e futuros retrievers como LlamaIndex;
+- contrato de reranking top K, preservando chunk, citação, score original e rationale;
+- adapters opcionais `LLMClient` para LiteLLM e LangChain, sem entrar no caminho padrão;
+- `nvidia_recommendation.v1` para recomendação técnica citada, hipótese, bloqueio e métricas;
+- recomendações de programa/Inception com gate por gap técnico ou oportunidade comercial específica;
+- `executive_briefing.v1` determinístico para recommendation set suportado;
+- `Human Review Briefing` versionado para baixo sinal, alto wrapper risk, conflito, unknowns ou falta de citação;
+- workflow downstream local com branches auditáveis `ready_for_recommendation`, `ready_for_briefing`, `briefing_generated`, `human_review_requested` e `needs_more_collection_or_human_review`;
+- persistência downstream JSON/SQL de retrievals, recommendation sets e briefings por run e startup;
+- métricas downstream para retrieval, recomendação, gaps sem recomendação, bloqueios e motivos de revisão humana;
+- suíte local focada no downstream atual, sem rede, credenciais, Postgres real, LangGraph obrigatório ou provedores externos.
 
-Ainda não está implementado:
+## Follow-ups Recomendados
 
-- `Human Review Briefing`;
-- workflow completo `ready_for_briefing` / `human_review_requested`;
-- validação de integração real com Postgres/pgvector fora do caminho local padrão;
-- recomendações de programa/Inception;
-- persistência downstream de knowledge, recommendations e briefings;
-- suíte ampla de regressão para scraping e assessment.
+As próximas lacunas são hardening ou integrações opcionais, não ausência do core downstream:
 
-## Próximo Escopo Recomendado
-
-O próximo ciclo deve completar as lacunas downstream restantes:
-
-1. Garantir briefing detalhado quando o resultado for `human_review_requested`.
-2. Criar workflow downstream local com branches `ready_for_briefing` e `human_review_requested`.
-3. Adicionar persistência JSON/SQL para retrievals, recommendations e briefings.
-4. Implementar busca vetorial e retrieval híbrido quando houver métricas/fixtures.
-5. Separar `Program Recommendation` e gate de NVIDIA Inception.
+1. Expandir corpus oficial NVIDIA, fixtures e métricas de recall/precision para mais gaps e programas.
+2. Calibrar quality gates de recomendação e human review com mais casos reais revisados.
+3. Validar a integração real com Postgres/pgvector fora da suíte local padrão.
+4. Adicionar grafo downstream LangGraph quando checkpoints, retries ou human-in-the-loop reais forem necessários.
+5. Evoluir geração narrativa via LiteLLM/LangChain apenas atrás de `LLMClient` e sem inventar fatos.
+6. Adotar LlamaIndex somente se ingestão, índices persistentes, metadados ou reranking justificarem o adapter.
+7. Reconstruir uma suíte ampla de regressão para scraping e assessment em fatias específicas.
 
 ## Frameworks E Retrieval
 
-- `LangGraph` será o orquestrador principal do workflow: estado, branches, checkpoints, retries e human-in-the-loop.
-- `LangChain` pode entrar dentro de adaptadores para LLMs, prompts, tools, structured output e retrievers.
-- `LiteLLM` pode entrar como gateway/adaptador para Grok, Groq, OpenRouter, Ollama ou outros modelos gratuitos/baratos.
-- `LlamaIndex` é candidato para a camada RAG de `NVIDIA Knowledge` quando ingestão, índices, busca vetorial/híbrida, citações e reranking ficarem mais complexos.
-- `Pydantic` pode validar novos schemas versionados.
-- A busca NVIDIA deve cobrir BM25 lexical e vetorial de forma reprodutível, com ranking híbrido; reranking do top K entra quando houver métricas.
-- O vector DB preferido é Postgres local com `pgvector`, aproveitando o Docker/Postgres já planejado antes de considerar serviço externo dedicado.
-- O LLM gerador, como Grok ou outro modelo gratuito, deve ficar desacoplado do modelo de embedding. O embedding deve ser escolhido por qualidade de recuperação, idioma, custo e estabilidade.
+- `LangGraph` é caminho opcional de orquestração com estado, branches, checkpoints, retries e human-in-the-loop; a validação padrão usa runners locais sem LangGraph instalado.
+- `LangChain` pode entrar apenas dentro de adapters para LLMs, prompts, tools, structured output ou retrievers; objetos do framework não entram em schemas de domínio.
+- `LiteLLM` pode entrar como gateway/adaptador para Grok, Groq, OpenRouter, Ollama ou outros modelos gratuitos/baratos, sempre atrás de `LLMClient`.
+- `LlamaIndex` é candidato opcional para `NVIDIA Knowledge` quando ingestão, índices, busca vetorial/híbrida, citações ou reranking ficarem complexos demais para o adapter local.
+- `Pydantic` pode validar novos schemas versionados quando houver benefício concreto.
+- A busca NVIDIA já possui BM25 lexical, busca vetorial local e ranking híbrido reprodutíveis; reranking top K existe como contrato/adaptador determinístico e pode receber provider real depois.
+- O vector DB preferido continua sendo Postgres local com `pgvector`, mas a integração real é opcional e não faz parte da suíte padrão.
+- LLM gerador e modelo de embedding permanecem desacoplados. Real LLM, real embedding provider, LangGraph, LangChain, LiteLLM, LlamaIndex e Postgres real são caminhos de integração explícitos, não dependências default.
 
 O guia completo está em [Frameworks de IA, Orquestração e Retrieval](context/frameworks-and-retrieval-strategy.md).
 
@@ -137,7 +139,9 @@ O guia completo está em [Frameworks de IA, Orquestração e Retrieval](context/
 
 ## Validação
 
-A suíte antiga ampla de scraping/assessment foi removida por estar inválida para o escopo atual. Existe uma suíte local focada no downstream atual, sem rede, credenciais, Postgres real ou LangGraph obrigatório:
+A suíte antiga ampla de scraping/assessment foi removida por estar inválida para o escopo atual. Existe uma suíte local focada no downstream atual, sem rede, credenciais, Postgres real ou LangGraph obrigatório.
+
+Depois do ajuste de import path em `pyproject.toml`, `pytest` encontra `src` pelo próprio projeto. O comando padrão não precisa de `PYTHONPATH` manual:
 
 ```bash
 python -m pytest -q
