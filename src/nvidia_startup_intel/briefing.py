@@ -1,16 +1,24 @@
-"""Deterministic executive briefing contracts.
+"""Deterministic briefing contracts and LLM-ready narrative seam.
 
-The first briefing slice summarizes existing structured artifacts. It does not
-call LLMs, retrievers, network services, or workflow frameworks.
+Structured briefing generation remains deterministic. Optional narrative drafts
+consume an existing briefing artifact through the project-owned LLMClient seam
+without calling retrievers, network services, or workflow frameworks directly.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, fields, is_dataclass
 
 from nvidia_startup_intel.ai_native_assessment import AINativeAssessment, TechnicalGap, WrapperDependencyRisk
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
+from nvidia_startup_intel.framework_adapters import (
+    LLMClient,
+    LLMGenerationRequest,
+    LLMGenerationResponse,
+    LLM_REQUEST_SCHEMA_VERSION,
+)
 from nvidia_startup_intel.nvidia_knowledge import NVIDIACitation
 from nvidia_startup_intel.nvidia_recommendation import NVIDIARecommendationSet, NVIDIATechnicalRecommendation
 from nvidia_startup_intel.search_params import UNKNOWN
@@ -19,6 +27,7 @@ from nvidia_startup_intel.startup_profile import FieldEvidence, ProfileField, St
 
 SCHEMA_VERSION = "executive_briefing.v1"
 HUMAN_REVIEW_SCHEMA_VERSION = "human_review_briefing.v1"
+BRIEFING_NARRATIVE_SCHEMA_VERSION = "briefing_narrative.v1"
 UNKNOWN_PROFILE_FIELDS = ("funding", "customers", "founders", "technologies_used")
 
 
@@ -82,6 +91,27 @@ class HumanReviewBriefing:
     evidence_references: tuple[FieldEvidence, ...]
     citation_references: tuple[NVIDIACitation, ...]
     next_action: str
+    audit_reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BriefingNarrative:
+    schema_version: str
+    run_id: str
+    startup_identifier: str
+    source_briefing_schema_version: str
+    source_briefing_status: str
+    narrative_text: str
+    claims: tuple[BriefingClaim, ...]
+    unknowns: tuple[str, ...]
+    risks: tuple[str, ...]
+    review_reasons: tuple[str, ...]
+    pending_questions: tuple[PendingQuestion, ...]
+    evidence_references: tuple[FieldEvidence, ...]
+    citation_references: tuple[NVIDIACitation, ...]
+    next_action: str
+    llm_request: LLMGenerationRequest
+    llm_response: LLMGenerationResponse
     audit_reasons: tuple[str, ...]
 
 
@@ -226,6 +256,68 @@ def generate_human_review_briefing(
     )
 
 
+def generate_briefing_narrative(
+    *,
+    briefing: ExecutiveBriefing | HumanReviewBriefing,
+    llm_client: LLMClient,
+) -> BriefingNarrative:
+    """Generate an optional narrative draft from an existing briefing contract."""
+
+    claims = _source_briefing_claims(briefing)
+    request = LLMGenerationRequest(
+        schema_version=LLM_REQUEST_SCHEMA_VERSION,
+        purpose="briefing_narrative",
+        system_prompt=(
+            "Draft a concise narrative only from the supplied validated briefing claims. "
+            "Do not add startup facts, NVIDIA facts, technologies, funding, customers, "
+            "founders, priorities, or recommendations that are not in the source briefing. "
+            "Preserve unknowns, risks, source references, claim types, and next action."
+        ),
+        user_prompt=_briefing_narrative_prompt(briefing, claims),
+        structured_output_schema=BRIEFING_NARRATIVE_SCHEMA_VERSION,
+        metadata={
+            "run_id": briefing.run_id,
+            "startup_identifier": briefing.startup_identifier,
+            "source_briefing_schema_version": briefing.schema_version,
+            "source_briefing_status": briefing.status,
+            "claim_count": len(claims),
+            "evidence_reference_count": len(briefing.evidence_references),
+            "citation_reference_count": len(briefing.citation_references),
+        },
+    )
+    response = llm_client.generate(request)
+    narrative_text, safe_response, narrative_audit_reasons = _safe_narrative_output(
+        response=response,
+        briefing=briefing,
+        claims=claims,
+        prompt=request.user_prompt,
+    )
+
+    return BriefingNarrative(
+        schema_version=BRIEFING_NARRATIVE_SCHEMA_VERSION,
+        run_id=briefing.run_id,
+        startup_identifier=briefing.startup_identifier,
+        source_briefing_schema_version=briefing.schema_version,
+        source_briefing_status=briefing.status,
+        narrative_text=narrative_text,
+        claims=claims,
+        unknowns=_source_briefing_unknowns(briefing, claims),
+        risks=_source_briefing_risks(briefing),
+        review_reasons=_source_briefing_review_reasons(briefing),
+        pending_questions=briefing.pending_questions,
+        evidence_references=briefing.evidence_references,
+        citation_references=briefing.citation_references,
+        next_action=briefing.next_action,
+        llm_request=request,
+        llm_response=safe_response,
+        audit_reasons=_dedupe_reasons(
+            ("llm_narrative_generated_from_validated_briefing",),
+            narrative_audit_reasons,
+            briefing.audit_reasons,
+        ),
+    )
+
+
 def executive_briefing_to_dict(briefing: ExecutiveBriefing) -> dict[str, object]:
     """Convert an executive briefing to JSON-serializable data."""
 
@@ -236,6 +328,12 @@ def human_review_briefing_to_dict(briefing: HumanReviewBriefing) -> dict[str, ob
     """Convert a human review briefing to JSON-serializable data."""
 
     return _to_plain_data(briefing)
+
+
+def briefing_narrative_to_dict(narrative: BriefingNarrative) -> dict[str, object]:
+    """Convert a briefing narrative draft to JSON-serializable data."""
+
+    return _to_plain_data(narrative)
 
 
 def _profile_claims(profile: StartupProfile) -> tuple[BriefingClaim, ...]:
@@ -561,6 +659,240 @@ def _dedupe_citations(citations: tuple[NVIDIACitation, ...]) -> tuple[NVIDIACita
 
 def _dedupe_reasons(*reason_groups: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(reason for group in reason_groups for reason in group))
+
+
+def _source_briefing_claims(
+    briefing: ExecutiveBriefing | HumanReviewBriefing,
+) -> tuple[BriefingClaim, ...]:
+    if isinstance(briefing, ExecutiveBriefing):
+        return briefing.claims
+    return briefing.discoveries
+
+
+def _source_briefing_unknowns(
+    briefing: ExecutiveBriefing | HumanReviewBriefing,
+    claims: tuple[BriefingClaim, ...],
+) -> tuple[str, ...]:
+    if isinstance(briefing, HumanReviewBriefing):
+        return briefing.unknowns
+    return tuple(claim.text for claim in claims if claim.claim_type == "unknown")
+
+
+def _source_briefing_risks(briefing: ExecutiveBriefing | HumanReviewBriefing) -> tuple[str, ...]:
+    if isinstance(briefing, ExecutiveBriefing):
+        return briefing.risks
+    return tuple(f"{risk.risk_type}: {risk.rationale}" for risk in briefing.wrapper_risks)
+
+
+def _source_briefing_review_reasons(
+    briefing: ExecutiveBriefing | HumanReviewBriefing,
+) -> tuple[str, ...]:
+    if isinstance(briefing, HumanReviewBriefing):
+        return briefing.review_reasons
+    return ()
+
+
+def _briefing_narrative_prompt(
+    briefing: ExecutiveBriefing | HumanReviewBriefing,
+    claims: tuple[BriefingClaim, ...],
+) -> str:
+    lines = [
+        f"source_schema: {briefing.schema_version}",
+        f"source_status: {briefing.status}",
+        f"startup_identifier: {briefing.startup_identifier}",
+        f"next_action: {briefing.next_action}",
+        "claims:",
+    ]
+    for index, claim in enumerate(claims, start=1):
+        lines.append(
+            " | ".join(
+                (
+                    f"claim_id: claim-{index}",
+                    f"type: {claim.claim_type}",
+                    f"section: {claim.section}",
+                    f"confidence: {claim.confidence:.2f}",
+                    f"evidence_refs: {_evidence_reference_text(claim.evidence_references)}",
+                    f"citation_refs: {_citation_reference_text(claim.citation_references)}",
+                    f"text: {claim.text}",
+                )
+            )
+        )
+
+    unknowns = _source_briefing_unknowns(briefing, claims)
+    if unknowns:
+        lines.append("unknowns:")
+        lines.extend(f"- {unknown}" for unknown in unknowns)
+
+    risks = _source_briefing_risks(briefing)
+    if risks:
+        lines.append("risks:")
+        lines.extend(f"- {risk}" for risk in risks)
+
+    review_reasons = _source_briefing_review_reasons(briefing)
+    if review_reasons:
+        lines.append("review_reasons:")
+        lines.extend(f"- {reason}" for reason in review_reasons)
+
+    if briefing.pending_questions:
+        lines.append("pending_questions:")
+        lines.extend(
+            f"- {question.priority}: {question.field_name}: {question.question}"
+            for question in briefing.pending_questions
+        )
+
+    return "\n".join(lines)
+
+
+def _evidence_reference_text(evidences: tuple[FieldEvidence, ...]) -> str:
+    if not evidences:
+        return "none"
+    return ",".join(f"{evidence.source_type}:{evidence.url}" for evidence in evidences)
+
+
+def _citation_reference_text(citations: tuple[NVIDIACitation, ...]) -> str:
+    if not citations:
+        return "none"
+    return ",".join(f"{citation.document_id}:{citation.chunk_id}" for citation in citations)
+
+
+_NARRATIVE_CONNECTIVE_TERMS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "based",
+        "briefing",
+        "but",
+        "by",
+        "claim",
+        "claims",
+        "evidence",
+        "for",
+        "from",
+        "has",
+        "have",
+        "in",
+        "is",
+        "it",
+        "next",
+        "no",
+        "of",
+        "on",
+        "or",
+        "public",
+        "recommend",
+        "recommendation",
+        "review",
+        "risk",
+        "should",
+        "source",
+        "startup",
+        "that",
+        "the",
+        "this",
+        "to",
+        "unknown",
+        "use",
+        "validated",
+        "with",
+    }
+)
+
+
+def _safe_narrative_output(
+    *,
+    response: LLMGenerationResponse,
+    briefing: ExecutiveBriefing | HumanReviewBriefing,
+    claims: tuple[BriefingClaim, ...],
+    prompt: str,
+) -> tuple[str, LLMGenerationResponse, tuple[str, ...]]:
+    unsupported_terms = _unsupported_narrative_terms(response.content, prompt)
+    if unsupported_terms:
+        return (
+            _fallback_narrative_text(briefing, claims),
+            _llm_response_without_unsafe_content(
+                response,
+                rejection_reason="unsupported_terms",
+                unsupported_terms=unsupported_terms,
+            ),
+            ("llm_narrative_rejected_unsupported_terms",),
+        )
+    if not response.content.strip():
+        return (
+            _fallback_narrative_text(briefing, claims),
+            _llm_response_without_unsafe_content(
+                response,
+                rejection_reason="empty_response",
+                unsupported_terms=(),
+            ),
+            ("llm_narrative_rejected_empty_response",),
+        )
+    return response.content, response, ("llm_narrative_accepted",)
+
+
+def _unsupported_narrative_terms(content: str, prompt: str) -> tuple[str, ...]:
+    if not content.strip():
+        return ()
+    allowed_terms = set(_significant_terms(prompt))
+    allowed_terms.update(_NARRATIVE_CONNECTIVE_TERMS)
+    unsupported = tuple(
+        dict.fromkeys(term for term in _significant_terms(content) if term not in allowed_terms)
+    )
+    return unsupported
+
+
+def _significant_terms(text: str) -> tuple[str, ...]:
+    return tuple(re.findall(r"[a-z0-9_]+", text.lower()))
+
+
+def _llm_response_without_unsafe_content(
+    response: LLMGenerationResponse,
+    *,
+    rejection_reason: str,
+    unsupported_terms: tuple[str, ...],
+) -> LLMGenerationResponse:
+    metadata = dict(response.metadata)
+    metadata.update(
+        {
+            "content_rejected": True,
+            "rejection_reason": rejection_reason,
+            "unsupported_terms": unsupported_terms,
+        }
+    )
+    return LLMGenerationResponse(
+        schema_version=response.schema_version,
+        request_purpose=response.request_purpose,
+        provider=response.provider,
+        model=response.model,
+        model_version=response.model_version,
+        content="",
+        structured_output_schema=response.structured_output_schema,
+        finish_reason=response.finish_reason,
+        usage=dict(response.usage),
+        metadata=metadata,
+    )
+
+
+def _fallback_narrative_text(
+    briefing: ExecutiveBriefing | HumanReviewBriefing,
+    claims: tuple[BriefingClaim, ...],
+) -> str:
+    lines: list[str] = []
+    if isinstance(briefing, ExecutiveBriefing):
+        lines.append(briefing.executive_summary)
+    else:
+        review_reasons = ", ".join(briefing.review_reasons) or "review required"
+        lines.append(
+            f"Human review briefing for {briefing.startup_identifier}: {review_reasons}."
+        )
+    lines.extend(f"{claim.claim_type}: {claim.text}" for claim in claims)
+    lines.extend(f"unknown: {unknown}" for unknown in _source_briefing_unknowns(briefing, claims))
+    lines.extend(f"risk: {risk}" for risk in _source_briefing_risks(briefing))
+    lines.append(f"next_action: {briefing.next_action}")
+    return " ".join(lines)
 
 
 def _to_plain_data(value: object) -> object:
