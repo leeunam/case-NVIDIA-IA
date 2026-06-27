@@ -97,8 +97,8 @@ class ToolingConfigTests(unittest.TestCase):
     def test_downstream_docs_mark_walking_skeleton_capabilities_as_implemented(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         readme = (project_root / "README.md").read_text(encoding="utf-8")
-        roadmap = (
-            project_root / "context" / "roadmap-nvidia-knowledge-recommendation-briefing.md"
+        production_architecture = (
+            project_root / "context" / "production-retrieval-and-scraping-architecture.md"
         ).read_text(encoding="utf-8")
 
         for implemented_capability in (
@@ -109,7 +109,7 @@ class ToolingConfigTests(unittest.TestCase):
         ):
             self.assertIn(implemented_capability, readme)
 
-        missing_core_section = readme.split("## Follow-ups Recomendados", maxsplit=1)[0]
+        missing_core_section = readme.split("## O Que Falta Para Ficar Inteiro", maxsplit=1)[0]
         for implemented_capability in (
             "Human Review Briefing",
             "workflow completo `ready_for_briefing` / `human_review_requested`",
@@ -118,13 +118,13 @@ class ToolingConfigTests(unittest.TestCase):
         ):
             self.assertNotIn(f"- {implemented_capability};", missing_core_section)
 
-        for checklist_item in (
-            "- [x] Human review gera briefing detalhado com contexto suficiente para decisão humana.",
-            "- [x] Workflow possui branch `ready_for_briefing`.",
-            "- [x] Persistência downstream permite reprocessamento.",
-            "- [x] Nova suíte local de validação continua sem rede, credenciais ou serviços externos obrigatórios.",
+        for production_follow_up in (
+            "Ampliar expectations",
+            "Criar adapter BM25 com `rank_bm25`",
+            "Persistir embeddings reais em Postgres/pgvector",
+            "Conectar LiteLLM/Groq",
         ):
-            self.assertIn(checklist_item, roadmap)
+            self.assertIn(production_follow_up, production_architecture)
 
 if __name__ == "__main__":
     unittest.main()

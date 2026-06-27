@@ -128,17 +128,22 @@ Embeddings reais e Postgres/pgvector também ficam fora da instalação default:
 python -m pip install -e ".[embeddings,pgvector]"
 ```
 
-## Follow-ups Recomendados
+## O Que Falta Para Ficar Inteiro
 
-As próximas lacunas são hardening ou integrações opcionais, não ausência do core downstream:
+Sem considerar frontend, o core local já existe. Para o projeto ficar operacionalmente completo em produção, ainda faltam estas frentes:
 
-1. Expandir corpus oficial NVIDIA, fixtures e métricas de recall/precision para mais gaps e programas.
-2. Calibrar quality gates de recomendação e human review com mais casos reais revisados.
-3. Validar a integração real com Postgres/pgvector fora da suíte local padrão.
-4. Adicionar grafo downstream LangGraph quando checkpoints, retries ou human-in-the-loop reais forem necessários.
-5. Evoluir geração narrativa via LiteLLM/LangChain apenas atrás de `LLMClient` e sem inventar fatos.
-6. Adotar LlamaIndex somente se ingestão, índices persistentes, metadados ou reranking justificarem o adapter.
-7. Reconstruir uma suíte ampla de regressão para scraping e assessment em fatias específicas.
+1. Validar scraping real com casos brasileiros e medir qualidade de Playwright, trafilatura e BeautifulSoup.
+2. Integrar Firecrawl e Scrapy apenas como adapters opcionais, quando houver ganho medido sobre o caminho local.
+3. Persistir runs reais completos em Postgres local, incluindo páginas, perfis, evidências, assessment, retrieval, recommendations e briefings.
+4. Expandir o corpus oficial NVIDIA com taxonomia, descrição curta e descrição profunda por stack, programa e caso de uso.
+5. Indexar o corpus NVIDIA em Postgres/pgvector com embedding real versionado e rebuild explícito.
+6. Tornar retrieval híbrido o caminho padrão de produção: BM25 lexical, busca vetorial pgvector, merge reprodutível, top K e métricas de precision, recall e F1.
+7. Habilitar reranking real opcional sobre o top K e manter comparação antes/depois.
+8. Calibrar o gap-space assessment com startups reais revisadas.
+9. Conectar LangGraph real com checkpoints, retries, branches e human-in-the-loop quando o fluxo operacional exigir.
+10. Conectar Groq/LiteLLM para narrativa técnica e comercial do briefing, sempre atrás de `LLMClient` e com fallback determinístico.
+11. Criar um endpoint ou comando operacional único para rodar a análise completa de uma startup ou consulta controlada.
+12. Ampliar validação de integração opt-in para Playwright real, Postgres/pgvector, embeddings reais, reranking real e LLM real sem colocar essas dependências na suíte default.
 
 ## Frameworks E Retrieval
 
@@ -151,20 +156,15 @@ As próximas lacunas são hardening ou integrações opcionais, não ausência d
 - O vector DB preferido continua sendo Postgres local com `pgvector`, mas a integração real é opcional e não faz parte da suíte padrão.
 - LLM gerador e modelo de embedding permanecem desacoplados. Real LLM, real embedding provider, LangGraph, LangChain, LiteLLM, LlamaIndex e Postgres real são caminhos de integração explícitos, não dependências default.
 
-O guia completo está em [Frameworks de IA, Orquestração e Retrieval](context/frameworks-and-retrieval-strategy.md).
+O guia operacional completo está em [Arquitetura de produção para scraping, retrieval, LangGraph e LLM](context/production-retrieval-and-scraping-architecture.md).
 
 ## Documentação Principal
 
 - [Glossário de domínio](CONTEXT.md)
-- [Escopo arquitetural](context/project-scope.md)
 - [Modelo de domínio detalhado](context/domain-model.md)
-- [Brief para próximas sessões](context/next-session.md)
-- [Grilling arquitetural e cobertura de escopo](context/architecture-grilling-coverage.md)
 - [Status do MVP de scraping](context/scraping-mvp-status.md)
 - [Roadmap de hardening de scraping](context/roadmap-scraping-hardening.md)
-- [Roadmap de avaliação AI-native](context/roadmap-pipeline-avaliação.md)
-- [Roadmap de NVIDIA Knowledge, Recommendation e Briefing](context/roadmap-nvidia-knowledge-recommendation-briefing.md)
-- [Frameworks de IA, orquestração e retrieval](context/frameworks-and-retrieval-strategy.md)
+- [Adapters de coleta](context/collection-adapters.md)
 - [Arquitetura de produção para scraping, retrieval, LangGraph e LLM](context/production-retrieval-and-scraping-architecture.md)
 - [ADRs](context/adr)
 

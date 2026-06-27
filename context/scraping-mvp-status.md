@@ -64,8 +64,8 @@ O plano para evoluir scraping além do MVP está em `context/roadmap-scraping-ha
 
 Esse hardening deve preservar os contratos atuais (`StartupProfile`, evidências por campo e `CollectionQualitySummary`) e deve ser guiado por falhas observadas: baixa completude, muitos `unknown`, páginas com pouco texto, erros por robots/política, conteúdo JS ausente ou fontes públicas importantes não coletadas.
 
-## Próxima Etapa Consumidora
+## Consumidores Atuais
 
-O épico de avaliação AI-native em `context/roadmap-pipeline-avaliação.md` já consome os artefatos acima e não repete scraping.
+O assessment AI-native já consome os artefatos acima e não repete scraping.
 
-A próxima etapa consumidora é `context/roadmap-nvidia-knowledge-recommendation-briefing.md`, que deve usar `AINativeAssessment`, gaps e evidências para recuperar conhecimento NVIDIA citável, recomendar tecnologias e gerar briefing.
+O downstream local também já usa `AINativeAssessment`, gaps e evidências para recuperar conhecimento NVIDIA citável, recomendar tecnologias e gerar briefing. O próximo trabalho sobre scraping deve ser hardening guiado por métricas e casos reais, descrito em `context/roadmap-scraping-hardening.md`.

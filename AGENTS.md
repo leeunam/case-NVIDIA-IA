@@ -12,7 +12,7 @@ O produto deve evoluir em quatro capacidades integradas, cada uma com contrato d
 
 1. **Descoberta e evidências públicas**: encontrar candidatas, coletar páginas públicas, extrair perfil estruturado e medir qualidade da coleta. Esta capacidade já possui MVP funcional, resumido em `context/scraping-mvp-status.md`. O MVP é um walking skeleton auditável, não scraping production-grade; o hardening incremental está planejado em `context/roadmap-scraping-hardening.md`.
 2. **Avaliação de maturidade AI-native**: transformar `StartupProfile` e evidências em diagnóstico de maturidade, gaps técnicos e riscos de dependência superficial de APIs ou wrappers. Esta capacidade já possui walking skeleton determinístico em `ai_native_assessment.v1`.
-3. **Conhecimento NVIDIA e recomendação**: consultar uma base versionada de tecnologias NVIDIA, recuperar trechos com citações e gerar recomendações técnicas e comerciais vinculadas aos gaps observados. O próximo roadmap está em `context/roadmap-nvidia-knowledge-recommendation-briefing.md`.
+3. **Conhecimento NVIDIA e recomendação**: consultar uma base versionada de tecnologias NVIDIA, recuperar trechos com citações e gerar recomendações técnicas e comerciais vinculadas aos gaps observados. O core local já existe; o hardening de produção está em `context/production-retrieval-and-scraping-architecture.md`.
 4. **Briefing executivo e workflow humano**: produzir um briefing com evidências, incertezas, recomendações, prioridade de abordagem e próximos passos para NVIDIA Inception.
 
 Fora do MVP imediato:
@@ -73,7 +73,7 @@ Dependências devem fluir nessa ordem. Evite ciclos entre contextos. Um contexto
 - A suíte local não deve depender de rede, credenciais, Postgres real, LangGraph instalado ou provedores externos.
 - Provedores externos entram por interfaces explícitas (`SearchClient`, futuros retrievers, futuros LLM clients).
 - Persistência JSON permanece útil para debug, mas o histórico auditável deve evoluir para Postgres.
-- Detalhes de framework e retrieval estão em `context/frameworks-and-retrieval-strategy.md`.
+- Detalhes de framework, retrieval e produção estão em `context/production-retrieval-and-scraping-architecture.md`.
 
 # Modo de Trabalho com IA
 
@@ -103,7 +103,7 @@ Nesse modo:
 - Testes devem usar interfaces públicas e fixtures locais; não dependa de rede, credenciais, Postgres real, LangGraph instalado, LLM real ou embedding real na suíte default.
 - Se a explicação envolver stack futura, diferencie o que já existe no código do que ainda é roadmap.
 
-Use `context/learning-path.md` como roteiro de estudo do projeto, especialmente para scraping, LangGraph, retrieval, embeddings, reranking, métricas e frameworks.
+Use `README.md`, `CONTEXT.md`, `context/domain-model.md`, os módulos em `src/nvidia_startup_intel` e seus testes correspondentes como roteiro de estudo. Diferencie sempre o que já existe no código do que está descrito como hardening de produção.
 
 # Comandos de Setup/Test
 
@@ -337,7 +337,7 @@ Definition of Done atual:
 
 - Consulta por região ou tema gera parâmetros, plano de busca e candidatas.
 - O plano de busca pode ser executado contra provedor real configurável via `SearchClient`.
-- O pipeline foi desenhado para aceitar fixtures locais de ponta a ponta, mas a suíte automatizada antiga foi removida e não deve ser tratada como validação atual.
+- O pipeline aceita fixtures locais de ponta a ponta e a suíte local atual é a validação padrão.
 - Perfil estruturado usa schema versionado `startup_profile.v1`.
 - Campos sem evidência suficiente retornam `unknown`.
 - Evidências são preservadas por campo e conflitos são marcados.
@@ -345,9 +345,8 @@ Definition of Done atual:
 - Execuções podem ser persistidas em tabelas relacionais e o projeto inclui `docker-compose.yml` com Postgres.
 - A coleta pode consultar e respeitar `robots.txt` automaticamente.
 - Existe relatório simples de qualidade da coleta.
-- Existe superfície de orquestração compatível com LangGraph e runner local, mas a validação automatizada precisa ser reconstruída.
-- O output já alimenta o assessment AI-native implementado.
-- O próximo consumidor é o roadmap `context/roadmap-nvidia-knowledge-recommendation-briefing.md`.
+- Existe superfície de orquestração compatível com LangGraph e runner local.
+- O output já alimenta assessment AI-native, retrieval NVIDIA, recommendation e briefing no fluxo local.
 
 Limitações conhecidas:
 

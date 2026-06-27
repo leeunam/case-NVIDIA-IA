@@ -203,7 +203,7 @@ O reranker so pode reordenar ou descartar chunks. Ele nao pode gerar novas afirm
 
 ## Metricas Obrigatorias
 
-O projeto ja mede recall e precision; precisa adicionar F1@K e explicitar metricas por etapa.
+O projeto ja mede recall, precision e F1 em fixtures locais. O proximo passo e ampliar expectations por etapa, casos reais revisados e comparacao entre estrategias.
 
 Metricas minimas:
 
@@ -332,7 +332,7 @@ Nem todas devem ir para a instalacao default. A instalacao default deve continua
 
 ## Ordem Recomendada De Implementacao
 
-1. Adicionar F1@K em `downstream_metrics.py` e expectations mais ricas.
+1. Ampliar expectations em `downstream_metrics.py` para mais gaps, programas e casos reais revisados.
 2. Criar adapter BM25 com `rank_bm25`, mantendo fixture local e contrato atual.
 3. Criar adapter LangChain BM25/EnsembleRetriever em paralelo, atras do mesmo contrato.
 4. Criar embedding client real local com `sentence-transformers`.
