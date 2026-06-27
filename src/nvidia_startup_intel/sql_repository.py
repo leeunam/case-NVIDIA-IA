@@ -21,22 +21,26 @@ from typing import Any
 from uuid import uuid4
 
 from nvidia_startup_intel.ai_native_assessment import AINativeAssessment
-from nvidia_startup_intel.briefing import (
-    briefing_narrative_to_dict,
-    executive_briefing_to_dict,
-    human_review_briefing_to_dict,
-)
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.discovery import CandidateStartup, RawDiscoveryResult
+from nvidia_startup_intel.downstream_artifacts import (
+    build_downstream_artifact_snapshot,
+    build_downstream_briefing_artifact,
+    build_downstream_recommendation_artifact,
+    build_downstream_retrieval_artifact,
+    downstream_briefing_payload,
+    downstream_briefing_status,
+    downstream_briefing_type,
+    downstream_retrieval_strategy,
+    downstream_startup_identifier,
+)
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
 from nvidia_startup_intel.nvidia_knowledge import (
     NVIDIAKnowledgeChunk,
     NVIDIAKnowledgeCorpus,
     NVIDIAKnowledgeDocument,
-    nvidia_knowledge_retrieval_to_dict,
     validate_nvidia_knowledge_corpus,
 )
-from nvidia_startup_intel.nvidia_recommendation import nvidia_recommendation_set_to_dict
 from nvidia_startup_intel.page_collection import PageCollectionResult
 from nvidia_startup_intel.pipeline import ScrapingPipelineResult, candidate_result_key, profile_result_key
 from nvidia_startup_intel.search_params import SearchParams
@@ -262,34 +266,20 @@ class SqlPipelineRepository:
     def save_downstream_state(self, state: Mapping[str, Any]) -> None:
         """Persist downstream workflow artifacts from the local runner state."""
 
-        retrievals = tuple(state.get("retrievals", ()))
-        recommendation_set = state.get("recommendation_set")
-        executive_briefing = state.get("executive_briefing")
-        human_review_briefing = state.get("human_review_briefing")
-        briefing_narrative = state.get("briefing_narrative")
-        startup_identifier = _downstream_startup_identifier(
-            recommendation_set=recommendation_set,
-            executive_briefing=executive_briefing,
-            human_review_briefing=human_review_briefing,
-            briefing_narrative=briefing_narrative,
-        )
-        run_id = str(state["run_id"])
+        snapshot = build_downstream_artifact_snapshot(state)
+        run_id = snapshot.run_id
 
         with self._transaction():
-            if retrievals:
+            if snapshot.retrievals:
                 self.save_downstream_retrievals(
                     run_id,
-                    startup_identifier=startup_identifier,
-                    retrievals=retrievals,
+                    startup_identifier=snapshot.startup_identifier,
+                    retrievals=tuple(item.retrieval for item in snapshot.retrievals),
                 )
-            if recommendation_set is not None:
-                self.save_downstream_recommendation_set(run_id, recommendation_set)
-            if executive_briefing is not None:
-                self.save_downstream_briefing(run_id, executive_briefing)
-            if human_review_briefing is not None:
-                self.save_downstream_briefing(run_id, human_review_briefing)
-            if briefing_narrative is not None:
-                self.save_downstream_briefing(run_id, briefing_narrative)
+            if snapshot.recommendation is not None:
+                self.save_downstream_recommendation_set(run_id, snapshot.recommendation.recommendation_set)
+            for briefing in snapshot.briefings:
+                self.save_downstream_briefing(run_id, briefing.briefing)
 
     def save_downstream_retrievals(
         self,
@@ -298,11 +288,12 @@ class SqlPipelineRepository:
         startup_identifier: str,
         retrievals: Sequence[Any],
     ) -> None:
+        retrieval_artifacts = tuple(build_downstream_retrieval_artifact(retrieval) for retrieval in retrievals)
         self._execute(
             "DELETE FROM downstream_retrievals WHERE run_id = ? AND startup_identifier = ?",
             (run_id, startup_identifier),
         )
-        for position, retrieval in enumerate(retrievals, start=1):
+        for position, retrieval in enumerate(retrieval_artifacts, start=1):
             self._execute(
                 """
                 INSERT INTO downstream_retrievals
@@ -313,17 +304,18 @@ class SqlPipelineRepository:
                     run_id,
                     startup_identifier,
                     retrieval.corpus_version,
-                    _retrieval_strategy(retrieval),
+                    retrieval.retrieval_strategy,
                     position,
-                    _dumps(nvidia_knowledge_retrieval_to_dict(retrieval)),
+                    _dumps(retrieval.payload),
                 ),
             )
         self._commit()
 
     def save_downstream_recommendation_set(self, run_id: str, recommendation_set: Any) -> None:
+        recommendation = build_downstream_recommendation_artifact(recommendation_set)
         self._execute(
             "DELETE FROM downstream_recommendations WHERE run_id = ? AND startup_identifier = ?",
-            (run_id, recommendation_set.startup_identifier),
+            (run_id, recommendation.startup_identifier),
         )
         self._execute(
             """
@@ -340,23 +332,23 @@ class SqlPipelineRepository:
             """,
             (
                 run_id,
-                recommendation_set.startup_identifier,
-                recommendation_set.corpus_version,
-                recommendation_set.final_nvidia_opportunity_priority,
-                int(recommendation_set.quality.ready_for_briefing),
-                _dumps(nvidia_recommendation_set_to_dict(recommendation_set)),
+                recommendation.startup_identifier,
+                recommendation.corpus_version,
+                recommendation.final_nvidia_opportunity_priority,
+                int(recommendation.ready_for_briefing),
+                _dumps(recommendation.payload),
             ),
         )
         self._commit()
 
     def save_downstream_briefing(self, run_id: str, briefing: Any) -> None:
-        briefing_type = _briefing_type(briefing)
+        artifact = build_downstream_briefing_artifact(briefing)
         self._execute(
             """
             DELETE FROM downstream_briefings
             WHERE run_id = ? AND startup_identifier = ? AND briefing_type = ?
             """,
-            (run_id, briefing.startup_identifier, briefing_type),
+            (run_id, artifact.startup_identifier, artifact.briefing_type),
         )
         self._execute(
             """
@@ -366,10 +358,10 @@ class SqlPipelineRepository:
             """,
             (
                 run_id,
-                briefing.startup_identifier,
-                briefing_type,
-                _briefing_status(briefing),
-                _dumps(_briefing_payload(briefing)),
+                artifact.startup_identifier,
+                artifact.briefing_type,
+                artifact.status,
+                _dumps(artifact.payload),
             ),
         )
         self._commit()
@@ -973,42 +965,28 @@ def _downstream_startup_identifier(
     human_review_briefing: Any,
     briefing_narrative: Any = None,
 ) -> str:
-    for artifact in (recommendation_set, executive_briefing, human_review_briefing, briefing_narrative):
-        startup_identifier = getattr(artifact, "startup_identifier", None)
-        if startup_identifier:
-            return startup_identifier
-    return "unknown"
+    return downstream_startup_identifier(
+        recommendation_set=recommendation_set,
+        executive_briefing=executive_briefing,
+        human_review_briefing=human_review_briefing,
+        briefing_narrative=briefing_narrative,
+    )
 
 
 def _retrieval_strategy(retrieval: Any) -> str:
-    if getattr(retrieval, "results", ()):
-        return str(retrieval.results[0].retrieval_strategy)
-    return "none"
+    return downstream_retrieval_strategy(retrieval)
 
 
 def _briefing_type(briefing: Any) -> str:
-    schema_version = getattr(briefing, "schema_version", "")
-    if schema_version == "human_review_briefing.v1":
-        return "human_review"
-    if schema_version == "briefing_narrative.v1":
-        return "briefing_narrative"
-    return "executive"
+    return downstream_briefing_type(briefing)
 
 
 def _briefing_status(briefing: Any) -> str:
-    status = getattr(briefing, "status", None)
-    if status:
-        return str(status)
-    return str(getattr(briefing, "source_briefing_status", "unknown"))
+    return downstream_briefing_status(briefing)
 
 
 def _briefing_payload(briefing: Any) -> dict[str, object]:
-    briefing_type = _briefing_type(briefing)
-    if briefing_type == "human_review":
-        return human_review_briefing_to_dict(briefing)
-    if briefing_type == "briefing_narrative":
-        return briefing_narrative_to_dict(briefing)
-    return executive_briefing_to_dict(briefing)
+    return downstream_briefing_payload(briefing)
 
 
 def _nvidia_knowledge_validation_error(issues: Sequence[Any]) -> str:

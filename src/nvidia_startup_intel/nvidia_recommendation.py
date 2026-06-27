@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields, is_dataclass
 import re
-from urllib.parse import urlparse
 
 from nvidia_startup_intel.ai_native_assessment import AINativeAssessment, TechnicalGap
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
@@ -22,6 +21,7 @@ from nvidia_startup_intel.nvidia_knowledge import (
     RetrievedNVIDIAKnowledge,
     summarize_nvidia_retrieval_quality,
 )
+from nvidia_startup_intel.nvidia_source_policy import is_official_nvidia_source_url
 from nvidia_startup_intel.search_params import UNKNOWN
 from nvidia_startup_intel.startup_profile import FieldEvidence, StartupProfile
 
@@ -869,7 +869,7 @@ def _rank_results_for_gap(
     assessment_confidence: float,
 ) -> tuple[RetrievedNVIDIAKnowledge, ...]:
     official_results = tuple(
-        result for result in retrieval.results if _is_official_nvidia_url(result.citation.source_url)
+        result for result in retrieval.results if is_official_nvidia_source_url(result.citation.source_url)
     )
     topic_matches = tuple(result for result in official_results if result.chunk.topic == gap.gap_type)
     candidates = topic_matches or official_results
@@ -895,7 +895,7 @@ def _rank_results_for_opportunity(
     retrieval: NVIDIAKnowledgeRetrieval,
 ) -> tuple[RetrievedNVIDIAKnowledge, ...]:
     official_results = tuple(
-        result for result in retrieval.results if _is_official_nvidia_url(result.citation.source_url)
+        result for result in retrieval.results if is_official_nvidia_source_url(result.citation.source_url)
     )
     program_matches = tuple(
         result for result in official_results if _program_result_matches_opportunity(opportunity, result)
@@ -1019,11 +1019,6 @@ def _source_quality_score(source_type: str) -> float:
     return 0.5
 
 
-def _is_official_nvidia_url(source_url: str) -> bool:
-    host = urlparse(source_url).hostname or ""
-    return host == "nvidia.com" or host.endswith(".nvidia.com")
-
-
 def _recommendation_quality(
     supported: tuple[NVIDIATechnicalRecommendation | NVIDIAProgramRecommendation, ...],
     hypotheses: tuple[NVIDIATechnicalRecommendation | NVIDIAProgramRecommendation, ...],
@@ -1128,7 +1123,10 @@ def _recommendation_metrics(
 def _has_official_citation(
     recommendation: NVIDIATechnicalRecommendation | NVIDIAProgramRecommendation,
 ) -> bool:
-    return any(_is_official_nvidia_url(citation.source_url) for citation in recommendation.nvidia_citations)
+    return any(
+        is_official_nvidia_source_url(citation.source_url)
+        for citation in recommendation.nvidia_citations
+    )
 
 
 def _quality_gate_reasons(
@@ -1288,7 +1286,7 @@ def _top_official_result(retrieval: NVIDIAKnowledgeRetrieval | None) -> Retrieve
     if retrieval is None:
         return None
     for result in retrieval.results:
-        if _is_official_nvidia_url(result.citation.source_url):
+        if is_official_nvidia_source_url(result.citation.source_url):
             return result
     return None
 

@@ -4,18 +4,20 @@ import json
 import unittest
 
 from nvidia_startup_intel.ai_native_assessment import TechnicalGap
-from nvidia_startup_intel.framework_adapters import (
+from nvidia_startup_intel.llm_adapters import (
     DeterministicFakeLLMClient,
-    DeterministicTopKReranker,
     LangChainLLMClient,
     LLMGenerationRequest,
     LiteLLMClient,
-    RankBM25NVIDIAKnowledgeRetriever,
-    llm_provider_config_from_env,
     llm_generation_response_to_dict,
+    llm_provider_config_from_env,
+)
+from nvidia_startup_intel.nvidia_reranking import (
+    DeterministicTopKReranker,
     nvidia_rerank_result_to_dict,
     rerank_nvidia_retrieval,
 )
+from nvidia_startup_intel.nvidia_retrievers import RankBM25NVIDIAKnowledgeRetriever
 from nvidia_startup_intel.nvidia_knowledge import (
     NVIDIACitation,
     NVIDIAKnowledgeChunk,

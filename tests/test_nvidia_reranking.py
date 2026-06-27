@@ -7,7 +7,7 @@ from nvidia_startup_intel.downstream_metrics import (
     compare_rerank_retrieval_quality,
     rerank_quality_comparison_to_dict,
 )
-from nvidia_startup_intel.framework_adapters import (
+from nvidia_startup_intel.nvidia_reranking import (
     NVIDIARerankRequest,
     NVIDIARerankResult,
     RerankedNVIDIAKnowledge,

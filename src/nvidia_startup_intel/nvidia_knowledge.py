@@ -13,25 +13,15 @@ import json
 import math
 from pathlib import Path
 import re
-from urllib.parse import urlparse
 
 from nvidia_startup_intel.normalization import normalize_text
+from nvidia_startup_intel.nvidia_source_policy import (
+    SUPPORTED_NVIDIA_SOURCE_TYPES,
+    is_official_nvidia_source_url,
+)
 
 
 SCHEMA_VERSION = "nvidia_knowledge.v1"
-SUPPORTED_NVIDIA_SOURCE_TYPES = frozenset(
-    {
-        "official_nvidia_developer_page",
-        "official_nvidia_documentation",
-        "official_nvidia_product_page",
-        "official_nvidia_program_page",
-        "official_nvidia_industry_page",
-        "official_nvidia_code_repository",
-        "official_nvidia_project_page",
-        "official_nvidia_blog",
-        "official_nvidia_video",
-    }
-)
 SUPPORTED_NVIDIA_KNOWLEDGE_TARGETS = frozenset(
     {
         "model_serving",
@@ -68,15 +58,6 @@ LEXICAL_STOP_WORDS = frozenset(
         "workflows",
     }
 )
-OFFICIAL_NVIDIA_VIDEO_URLS = frozenset(
-    {
-        "https://youtube.com/playlist?list=PLBaUJRFQ-j_WJZdZfFNsgUWDWF1Ldjp_X",
-        "https://youtu.be/NmZDQSdUVUQ",
-        "https://www.youtube.com/live/fWfkE6cibwQ",
-    }
-)
-
-
 @dataclass(frozen=True)
 class NVIDIAKnowledgeDocument:
     schema_version: str
@@ -186,6 +167,17 @@ class NVIDIAKnowledgeDocumentValidation:
 class NVIDIAKnowledgeRetrievalQuality:
     has_sufficient_citation: bool
     reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class NVIDIAKnowledgeQuery:
+    schema_version: str
+    gap_type: str
+    opportunity_type: str
+    description: str
+    startup_signals: tuple[str, ...]
+    query_terms: tuple[str, ...]
+    query: str
 
 
 def nvidia_knowledge_retrieval_to_dict(retrieval: NVIDIAKnowledgeRetrieval) -> dict[str, object]:
@@ -303,17 +295,26 @@ def retrieve_nvidia_knowledge(
     description: str = "",
     startup_signals: tuple[str, ...] = (),
     query_terms: tuple[str, ...] = (),
+    query_request: NVIDIAKnowledgeQuery | None = None,
     top_k: int = 3,
 ) -> NVIDIAKnowledgeRetrieval:
     """Retrieve citable NVIDIA chunks from gap, opportunity, or normalized terms."""
 
-    query = build_nvidia_knowledge_query(
-        gap_type=gap_type,
-        opportunity_type=opportunity_type,
-        description=description,
-        startup_signals=startup_signals,
-        query_terms=query_terms,
-    )
+    if query_request is not None:
+        gap_type = query_request.gap_type
+        opportunity_type = query_request.opportunity_type
+        description = query_request.description
+        startup_signals = query_request.startup_signals
+        query_terms = query_request.query_terms
+        query = query_request.query
+    else:
+        query = build_nvidia_knowledge_query(
+            gap_type=gap_type,
+            opportunity_type=opportunity_type,
+            description=description,
+            startup_signals=startup_signals,
+            query_terms=query_terms,
+        )
     query_tokens = _tokenize(query)
     documents_by_id = {document.document_id: document for document in corpus.documents}
     scored_chunks = _deduplicate_scored_chunks(_bm25_score_chunks(corpus.chunks, query_tokens))
@@ -388,6 +389,33 @@ def build_nvidia_knowledge_query(
     )
 
 
+def build_nvidia_knowledge_query_request(
+    *,
+    gap_type: str = "",
+    opportunity_type: str = "",
+    description: str = "",
+    startup_signals: tuple[str, ...] = (),
+    query_terms: tuple[str, ...] = (),
+) -> NVIDIAKnowledgeQuery:
+    """Build a replayable NVIDIA Knowledge query request."""
+
+    return NVIDIAKnowledgeQuery(
+        schema_version=SCHEMA_VERSION,
+        gap_type=gap_type,
+        opportunity_type=opportunity_type,
+        description=description,
+        startup_signals=startup_signals,
+        query_terms=query_terms,
+        query=build_nvidia_knowledge_query(
+            gap_type=gap_type,
+            opportunity_type=opportunity_type,
+            description=description,
+            startup_signals=startup_signals,
+            query_terms=query_terms,
+        ),
+    )
+
+
 def summarize_nvidia_retrieval_quality(
     retrieval: NVIDIAKnowledgeRetrieval,
 ) -> NVIDIAKnowledgeRetrievalQuality:
@@ -399,7 +427,7 @@ def summarize_nvidia_retrieval_quality(
             reasons=("no_retrieved_citation",),
         )
 
-    if any(_is_official_nvidia_url(result.citation.source_url) for result in retrieval.results):
+    if any(is_official_nvidia_source_url(result.citation.source_url) for result in retrieval.results):
         return NVIDIAKnowledgeRetrievalQuality(
             has_sufficient_citation=True,
             reasons=("citation_sufficient",),
@@ -427,7 +455,7 @@ def validate_nvidia_knowledge_documents(
                 )
             )
             continue
-        if not _is_official_nvidia_url(document.source_url):
+        if not is_official_nvidia_source_url(document.source_url):
             issues.append(
                 NVIDIAKnowledgeValidationIssue(
                     document_id=document.document_id,
@@ -566,18 +594,6 @@ def nvidia_citation_from_chunk(
         excerpt=chunk.text,
         chunk_index=chunk.chunk_index,
     )
-
-
-def _is_official_nvidia_url(source_url: str) -> bool:
-    parsed_url = urlparse(source_url)
-    host = parsed_url.hostname or ""
-    if host == "nvidia.com" or host.endswith(".nvidia.com"):
-        return True
-    if host == "github.com":
-        return parsed_url.path.startswith("/NVIDIA/")
-    if host == "rapids.ai" or host.endswith(".rapids.ai"):
-        return True
-    return source_url in OFFICIAL_NVIDIA_VIDEO_URLS
 
 
 def _metadata_has_value(metadata: dict[str, object], key: str) -> bool:

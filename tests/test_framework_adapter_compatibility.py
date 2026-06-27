@@ -1,0 +1,10 @@
+from nvidia_startup_intel import framework_adapters
+from nvidia_startup_intel.llm_adapters import LLMGenerationRequest
+from nvidia_startup_intel.nvidia_reranking import NVIDIARerankRequest
+from nvidia_startup_intel.nvidia_retrievers import LocalBM25NVIDIAKnowledgeRetriever
+
+
+def test_framework_adapters_reexports_seam_local_adapter_contracts() -> None:
+    assert framework_adapters.LLMGenerationRequest is LLMGenerationRequest
+    assert framework_adapters.NVIDIARerankRequest is NVIDIARerankRequest
+    assert framework_adapters.LocalBM25NVIDIAKnowledgeRetriever is LocalBM25NVIDIAKnowledgeRetriever

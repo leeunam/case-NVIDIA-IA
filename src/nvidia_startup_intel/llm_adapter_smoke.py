@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 
-from nvidia_startup_intel.framework_adapters import (
+from nvidia_startup_intel.llm_adapters import (
     LLM_RESPONSE_SCHEMA_VERSION,
     LLMGenerationRequest,
     LLMGenerationResponse,

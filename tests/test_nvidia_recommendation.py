@@ -690,6 +690,41 @@ class NVIDIARecommendationTests(unittest.TestCase):
         )
         self.assertEqual(recommendation_set.top_recommendations_by_gap, (recommendation,))
 
+    def test_recommendation_accepts_curated_official_nvidia_ecosystem_citations(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa customizar LLMs com guardrails e avaliacao de seguranca."
+        )
+        gap = TechnicalGap(
+            gap_type="llm_customization",
+            description="Needs LLM customization, guardrails, and evaluation support.",
+            severity="high",
+            confidence=0.86,
+            evidences=(startup_evidence,),
+        )
+        retrieval = _retrieval_with_source(
+            gap_type=gap.gap_type,
+            query=gap.description,
+            document_id="nemo-guardrails",
+            title="NeMo Guardrails",
+            source_url="https://github.com/NVIDIA/NeMo-Guardrails",
+            source_type="official_nvidia_code_repository",
+            score=0.91,
+        )
+
+        recommendation_set = build_nvidia_recommendations(
+            profile=_profile(startup_evidence),
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=_assessment(gap),
+            retrievals=(retrieval,),
+        )
+
+        self.assertEqual(recommendation_set.hypotheses, ())
+        self.assertTrue(recommendation_set.quality.ready_for_briefing)
+        recommendation = recommendation_set.technical_recommendations[0]
+        self.assertEqual(recommendation.nvidia_citations[0].source_url, "https://github.com/NVIDIA/NeMo-Guardrails")
+        self.assertIn("has_official_nvidia_citation", recommendation.selection_reasons)
+
     def test_missing_nvidia_citation_creates_hypothesis_not_supported_recommendation(self) -> None:
         startup_evidence = _startup_evidence(
             snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
@@ -1107,6 +1142,54 @@ def _retrieval_with_results(
         query=query,
         results=tuple(results),
         documents=tuple(documents),
+    )
+
+
+def _retrieval_with_source(
+    *,
+    gap_type: str,
+    query: str,
+    document_id: str,
+    title: str,
+    source_url: str,
+    source_type: str,
+    score: float,
+) -> NVIDIAKnowledgeRetrieval:
+    document = NVIDIAKnowledgeDocument(
+        schema_version="nvidia_knowledge.v1",
+        corpus_version="official-nvidia-fixture.v1",
+        document_id=document_id,
+        title=title,
+        source_url=source_url,
+        source_type=source_type,
+        ingested_at="2026-06-23T00:00:00Z",
+    )
+    chunk = NVIDIAKnowledgeChunk(
+        schema_version="nvidia_knowledge.v1",
+        corpus_version=document.corpus_version,
+        chunk_id=f"{document_id}:0",
+        document_id=document_id,
+        chunk_index=0,
+        topic=gap_type,
+        text=f"{title} supports {gap_type.replace('_', ' ')} workloads.",
+    )
+    return NVIDIAKnowledgeRetrieval(
+        schema_version="nvidia_knowledge.v1",
+        run_id="run-issue-12",
+        corpus_version="official-nvidia-fixture.v1",
+        query=query,
+        results=(
+            RetrievedNVIDIAKnowledge(
+                chunk=chunk,
+                citation=nvidia_citation_from_chunk(document, chunk),
+                score=score,
+                retrieval_strategy="bm25_lexical",
+                rationale="Fixture retrieval result.",
+                rank=1,
+                bm25_score=score,
+            ),
+        ),
+        documents=(document,),
     )
 
 

@@ -20,16 +20,17 @@ from nvidia_startup_intel.briefing import (
 )
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
-from nvidia_startup_intel.framework_adapters import (
+from nvidia_startup_intel.llm_adapters import (
     DeterministicFakeLLMClient,
     LLMGenerationRequest,
     LLMGenerationResponse,
 )
 from nvidia_startup_intel.nvidia_knowledge import (
     load_nvidia_knowledge_corpus,
+    retrieve_nvidia_knowledge,
     retrieve_nvidia_knowledge_by_gap,
 )
-from nvidia_startup_intel.nvidia_recommendation import build_nvidia_recommendations
+from nvidia_startup_intel.nvidia_recommendation import CommercialOpportunity, build_nvidia_recommendations
 from nvidia_startup_intel.search_params import UNKNOWN
 from nvidia_startup_intel.startup_profile import ClaimSource, FieldEvidence, ProfileField, StartupProfile
 
@@ -87,6 +88,39 @@ class ExecutiveBriefingTests(unittest.TestCase):
 
         self.assertEqual(briefing.evidence_references, (startup_evidence,))
         self.assertEqual(briefing.citation_references[0].chunk_id, "nvidia-nim-developers:0")
+
+    def test_program_recommendation_becomes_typed_executive_briefing(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI busca suporte comercial e conexao com parceiros NVIDIA."
+        )
+        profile = _profile(startup_evidence)
+        assessment = _assessment(_unknown_gap())
+        opportunity = CommercialOpportunity(
+            opportunity_type="inception_program_fit",
+            description="Needs startup program support, partner ecosystem, and go-to-market help.",
+            confidence=0.88,
+            evidences=(startup_evidence,),
+        )
+        recommendation_set = _program_recommendation_set(profile, assessment, opportunity)
+
+        briefing = generate_executive_briefing(
+            profile=profile,
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=assessment,
+            recommendation_set=recommendation_set,
+        )
+
+        self.assertEqual(briefing.status, "ready_for_use")
+        self.assertEqual(briefing.next_action, "prepare_program_outreach")
+        self.assertIn("Inception Program for Startups", briefing.executive_summary)
+        self.assertIn("inception_program_fit", briefing.executive_summary)
+        self.assertTrue(any("Inception Program for Startups" in item for item in briefing.recommendations))
+        recommended_claims = [claim for claim in briefing.claims if claim.claim_type == "recommended"]
+        self.assertEqual(len(recommended_claims), 1)
+        self.assertEqual(recommended_claims[0].reason, "supported_program_recommendation")
+        self.assertEqual(recommended_claims[0].evidence_references, (startup_evidence,))
+        self.assertEqual(recommended_claims[0].citation_references[0].document_id, "nvidia-inception")
 
     def test_executive_briefing_serializes_sources_without_losing_claim_types(self) -> None:
         startup_evidence = _startup_evidence(
@@ -293,6 +327,80 @@ class ExecutiveBriefingTests(unittest.TestCase):
             )
         )
         self.assertEqual(briefing.citation_references, ())
+
+    def test_program_hypothesis_generates_human_review_question_without_gap_assumption(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI busca comunidade e suporte para startups de IA."
+        )
+        profile = _profile(startup_evidence)
+        assessment = _assessment(_model_serving_gap(startup_evidence))
+        opportunity = CommercialOpportunity(
+            opportunity_type="inception_program_fit",
+            description="Needs startup community and program support.",
+            confidence=0.86,
+            evidences=(startup_evidence,),
+        )
+        recommendation_set = build_nvidia_recommendations(
+            profile=profile,
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=assessment,
+            retrievals=(),
+            commercial_opportunities=(opportunity,),
+        )
+
+        briefing = generate_human_review_briefing(
+            profile=profile,
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=assessment,
+            recommendation_set=recommendation_set,
+        )
+
+        self.assertEqual(briefing.hypothesis_recommendations, recommendation_set.hypotheses)
+        self.assertTrue(
+            any(question.field_name == "inception_program_fit" for question in briefing.pending_questions)
+        )
+        self.assertTrue(
+            any(
+                question.reason == "program_recommendation_hypothesis_requires_validation"
+                for question in briefing.pending_questions
+            )
+        )
+
+    def test_generic_inception_block_generates_human_review_question_without_gap_assumption(self) -> None:
+        startup_evidence = _startup_evidence(snippet="A VetAI usa inteligencia artificial no produto.")
+        profile = _profile(startup_evidence)
+        assessment = _assessment(_model_serving_gap(startup_evidence))
+        corpus = load_nvidia_knowledge_corpus(_fixture_path())
+        retrieval = retrieve_nvidia_knowledge(
+            corpus,
+            run_id="run-briefing-001",
+            query_terms=("inception", "startup program"),
+            top_k=1,
+        )
+        recommendation_set = build_nvidia_recommendations(
+            profile=profile,
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=_assessment(_unknown_gap()),
+            retrievals=(retrieval,),
+        )
+
+        briefing = generate_human_review_briefing(
+            profile=profile,
+            evidence_groups=(),
+            collection_quality=_collection_quality(),
+            assessment=assessment,
+            recommendation_set=recommendation_set,
+        )
+
+        self.assertEqual(briefing.blocked_recommendations, recommendation_set.blocked_recommendations)
+        self.assertTrue(
+            any(question.field_name == UNKNOWN for question in briefing.pending_questions)
+        )
+        self.assertIn("generic_inception_without_specific_gap_or_opportunity", briefing.review_reasons)
+
 
     def test_high_wrapper_risk_becomes_human_review_reason_and_question(self) -> None:
         startup_evidence = _startup_evidence(
@@ -535,6 +643,30 @@ def _supported_recommendation_set(
     )
 
 
+def _program_recommendation_set(
+    profile: StartupProfile,
+    assessment: AINativeAssessment,
+    opportunity: CommercialOpportunity,
+):
+    corpus = load_nvidia_knowledge_corpus(_fixture_path())
+    retrieval = retrieve_nvidia_knowledge(
+        corpus,
+        run_id="run-briefing-001",
+        opportunity_type=opportunity.opportunity_type,
+        description=opportunity.description,
+        startup_signals=("startup program", "partners", "go-to-market"),
+        top_k=1,
+    )
+    return build_nvidia_recommendations(
+        profile=profile,
+        evidence_groups=(),
+        collection_quality=_collection_quality(),
+        assessment=assessment,
+        retrievals=(retrieval,),
+        commercial_opportunities=(opportunity,),
+    )
+
+
 def _recommendation_set_for_gap(
     *,
     profile: StartupProfile,
@@ -568,6 +700,16 @@ def _model_serving_gap(evidence: FieldEvidence) -> TechnicalGap:
         severity="high",
         confidence=0.86,
         evidences=(evidence,),
+    )
+
+
+def _unknown_gap() -> TechnicalGap:
+    return TechnicalGap(
+        gap_type=UNKNOWN,
+        description=UNKNOWN,
+        severity=UNKNOWN,
+        confidence=0.0,
+        evidences=(),
     )
 
 

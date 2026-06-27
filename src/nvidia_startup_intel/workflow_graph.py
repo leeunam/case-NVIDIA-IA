@@ -22,9 +22,9 @@ from nvidia_startup_intel.briefing import (
 )
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
-from nvidia_startup_intel.framework_adapters import (
+from nvidia_startup_intel.llm_adapters import LLMClient
+from nvidia_startup_intel.nvidia_retrievers import (
     HybridNVIDIAPgvectorKnowledgeRetriever,
-    LLMClient,
     LocalBM25NVIDIAKnowledgeRetriever,
     NVIDIAKnowledgeRetriever,
     NVIDIAVectorKnowledgeStore,
@@ -293,10 +293,27 @@ def retrieve_nvidia_knowledge_node(
 
     assessment = state["assessment"]
     profile = state["profile"]
+    gap_space_assessment = state.get("gap_space_assessment")
+    gap_space_mappings = (
+        {mapping.gap_type: mapping for mapping in gap_space_assessment.mappings}
+        if gap_space_assessment is not None
+        else {}
+    )
     retrievals: list[NVIDIAKnowledgeRetrieval] = []
     try:
         for gap in assessment.technical_gaps:
             if gap.gap_type == UNKNOWN:
+                continue
+            mapping = gap_space_mappings.get(gap.gap_type)
+            retrieve_for_query = getattr(retriever, "retrieve_for_query", None)
+            if mapping is not None and callable(retrieve_for_query):
+                retrievals.append(
+                    retrieve_for_query(
+                        run_id=state.get("run_id", assessment.run_id),
+                        query=mapping.retrieval_request,
+                        top_k=runtime.retrieval_top_k,
+                    )
+                )
                 continue
             retrievals.append(
                 retriever.retrieve_for_gap(

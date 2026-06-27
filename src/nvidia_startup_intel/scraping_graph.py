@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, TypedDict
 
 from nvidia_startup_intel.ai_native_assessment import AINativeAssessment
+from nvidia_startup_intel.collection_adapters import CollectionAdapter
 from nvidia_startup_intel.collection_quality import summarize_collection_quality
 from nvidia_startup_intel.discovery import CandidateStartup, RawDiscoveryResult
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
@@ -52,6 +53,7 @@ class ScrapingGraphState(TypedDict, total=False):
 @dataclass
 class ScrapingGraphRuntime:
     search_client: SearchClient
+    collection_adapter: CollectionAdapter | None = None
     fetcher: Fetcher | None = None
     scraping_policy: ScrapingPolicy | None = None
     robots_cache: RobotsCache | None = None
@@ -146,6 +148,7 @@ def discover_candidates_node(state: ScrapingGraphState, runtime: ScrapingGraphRu
 def collect_pages_node(state: ScrapingGraphState, runtime: ScrapingGraphRuntime) -> ScrapingGraphState:
     collected = collect_pages_for_candidates(
         state.get("candidates", ()),
+        collection_adapter=runtime.collection_adapter,
         fetcher=runtime.fetcher,
         scraping_policy=runtime.scraping_policy,
         robots_cache=runtime.robots_cache,

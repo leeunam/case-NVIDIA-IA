@@ -13,8 +13,9 @@ from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
 from nvidia_startup_intel.nvidia_knowledge import (
     NVIDIAKnowledgeCorpus,
+    NVIDIAKnowledgeQuery,
     NVIDIAStackProfile,
-    build_nvidia_knowledge_query,
+    build_nvidia_knowledge_query_request,
     nvidia_stack_profiles_from_corpus,
 )
 from nvidia_startup_intel.search_params import UNKNOWN
@@ -53,6 +54,7 @@ class GapSpaceMapping:
     retrieval_description: str
     retrieval_startup_signals: tuple[str, ...]
     retrieval_query: str
+    retrieval_request: NVIDIAKnowledgeQuery
 
 
 @dataclass(frozen=True)
@@ -140,7 +142,7 @@ def _mapping_for_gap(
         dict.fromkeys((*_review_reasons(gap=gap, taxonomy_targets=targets), *context_review_reasons))
     )
     support_status = _support_status(review_reasons)
-    query = build_nvidia_knowledge_query(
+    query_request = build_nvidia_knowledge_query_request(
         gap_type=gap.gap_type,
         description=gap.description,
         startup_signals=startup_signals,
@@ -159,7 +161,8 @@ def _mapping_for_gap(
         retrieval_gap_type=gap.gap_type,
         retrieval_description=gap.description,
         retrieval_startup_signals=startup_signals,
-        retrieval_query=query,
+        retrieval_query=query_request.query,
+        retrieval_request=query_request,
     )
 
 

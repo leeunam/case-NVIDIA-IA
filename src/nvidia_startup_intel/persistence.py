@@ -17,13 +17,14 @@ import shutil
 from typing import Any
 from uuid import uuid4
 
-from nvidia_startup_intel.briefing import (
-    briefing_narrative_to_dict,
-    executive_briefing_to_dict,
-    human_review_briefing_to_dict,
+from nvidia_startup_intel.downstream_artifacts import (
+    build_downstream_artifact_snapshot,
+    build_downstream_briefing_artifact,
+    build_downstream_recommendation_artifact,
+    build_downstream_retrieval_artifact,
+    downstream_corpus_version,
+    downstream_startup_identifier,
 )
-from nvidia_startup_intel.nvidia_knowledge import nvidia_knowledge_retrieval_to_dict
-from nvidia_startup_intel.nvidia_recommendation import nvidia_recommendation_set_to_dict
 
 
 @dataclass(frozen=True)
@@ -42,34 +43,21 @@ class JsonDownstreamArtifactStore:
         self.run = run
 
     def save_downstream_state(self, state: dict[str, Any]) -> None:
-        retrievals = tuple(state.get("retrievals", ()))
-        recommendation_set = state.get("recommendation_set")
-        executive_briefing = state.get("executive_briefing")
-        human_review_briefing = state.get("human_review_briefing")
-        briefing_narrative = state.get("briefing_narrative")
-        startup_identifier = _downstream_startup_identifier(
-            recommendation_set=recommendation_set,
-            executive_briefing=executive_briefing,
-            human_review_briefing=human_review_briefing,
-            briefing_narrative=briefing_narrative,
-            profile=state.get("profile"),
-            assessment=state.get("assessment"),
-        )
+        snapshot = build_downstream_artifact_snapshot(state)
 
-        if retrievals:
+        if snapshot.retrievals:
             save_downstream_retrievals(
                 self.run,
-                retrievals,
-                startup_identifier=startup_identifier,
+                tuple(item.retrieval for item in snapshot.retrievals),
+                startup_identifier=snapshot.startup_identifier,
             )
-        if recommendation_set is not None:
-            save_downstream_recommendation_set(self.run, recommendation_set)
-        if executive_briefing is not None:
-            save_downstream_briefing(self.run, executive_briefing)
-        if human_review_briefing is not None:
-            save_downstream_briefing(self.run, human_review_briefing)
-        if briefing_narrative is not None:
-            save_downstream_briefing(self.run, briefing_narrative)
+        if snapshot.recommendation is not None:
+            save_downstream_recommendation_set(self.run, snapshot.recommendation.recommendation_set)
+        for briefing in snapshot.briefings:
+            _write_json(
+                _downstream_artifact_path(self.run, briefing.startup_identifier, briefing.filename),
+                briefing.payload,
+            )
 
 
 def create_pipeline_run(
@@ -147,38 +135,30 @@ def save_downstream_retrievals(
     *,
     startup_identifier: str,
 ) -> Path:
-    retrieval_items = tuple(retrievals)
-    corpus_version = _downstream_corpus_version(retrieval_items)
+    retrieval_items = tuple(build_downstream_retrieval_artifact(retrieval) for retrieval in retrievals)
+    corpus_version = downstream_corpus_version(retrieval_items)
     return _write_json(
         _downstream_artifact_path(run, startup_identifier, "retrievals.json"),
         {
             "run_id": run.run_id,
             "startup_identifier": startup_identifier,
             "corpus_version": corpus_version,
-            "items": tuple(nvidia_knowledge_retrieval_to_dict(retrieval) for retrieval in retrieval_items),
+            "items": tuple(item.payload for item in retrieval_items),
         },
     )
 
 
 def save_downstream_recommendation_set(run: PipelineRun, recommendation_set: Any) -> Path:
+    artifact = build_downstream_recommendation_artifact(recommendation_set)
     return _write_json(
-        _downstream_artifact_path(run, recommendation_set.startup_identifier, "recommendation_set.json"),
-        nvidia_recommendation_set_to_dict(recommendation_set),
+        _downstream_artifact_path(run, artifact.startup_identifier, "recommendation_set.json"),
+        artifact.payload,
     )
 
 
 def save_downstream_briefing(run: PipelineRun, briefing: Any) -> Path:
-    schema_version = getattr(briefing, "schema_version", "")
-    if schema_version == "human_review_briefing.v1":
-        payload = human_review_briefing_to_dict(briefing)
-        filename = "briefing.json"
-    elif schema_version == "briefing_narrative.v1":
-        payload = briefing_narrative_to_dict(briefing)
-        filename = "briefing_narrative.json"
-    else:
-        payload = executive_briefing_to_dict(briefing)
-        filename = "briefing.json"
-    return _write_json(_downstream_artifact_path(run, briefing.startup_identifier, filename), payload)
+    artifact = build_downstream_briefing_artifact(briefing)
+    return _write_json(_downstream_artifact_path(run, artifact.startup_identifier, artifact.filename), artifact.payload)
 
 
 def load_collected_pages(run: PipelineRun) -> dict[str, Any]:
@@ -210,17 +190,14 @@ def _downstream_startup_identifier(
     profile: Any = None,
     assessment: Any = None,
 ) -> str:
-    for artifact in (recommendation_set, executive_briefing, human_review_briefing, briefing_narrative):
-        startup_identifier = getattr(artifact, "startup_identifier", None)
-        if startup_identifier:
-            return str(startup_identifier)
-    profile_company_name = getattr(getattr(profile, "company_name", None), "value", None)
-    if profile_company_name:
-        return str(profile_company_name)
-    assessment_company_name = getattr(assessment, "company_name", None)
-    if assessment_company_name:
-        return str(assessment_company_name)
-    return "unknown"
+    return downstream_startup_identifier(
+        recommendation_set=recommendation_set,
+        executive_briefing=executive_briefing,
+        human_review_briefing=human_review_briefing,
+        briefing_narrative=briefing_narrative,
+        profile=profile,
+        assessment=assessment,
+    )
 
 
 def _downstream_artifact_path(run: PipelineRun, startup_identifier: str, filename: str) -> Path:
@@ -233,9 +210,7 @@ def _safe_path_segment(value: str) -> str:
 
 
 def _downstream_corpus_version(retrievals: tuple[Any, ...]) -> str:
-    if not retrievals:
-        return "unknown"
-    return str(getattr(retrievals[0], "corpus_version", "unknown"))
+    return downstream_corpus_version(retrievals)
 
 
 def _to_jsonable(value: Any) -> Any:

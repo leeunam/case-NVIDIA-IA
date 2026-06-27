@@ -70,6 +70,9 @@ class GapSpaceAssessmentTests(unittest.TestCase):
                 startup_signals=mapping.retrieval_startup_signals,
             ),
         )
+        self.assertEqual(mapping.retrieval_request.query, mapping.retrieval_query)
+        self.assertEqual(mapping.retrieval_request.gap_type, "model_serving")
+        self.assertEqual(mapping.retrieval_request.startup_signals, mapping.retrieval_startup_signals)
         self.assertEqual(gap_space.retrieval_queries, (mapping.retrieval_query,))
 
     def test_weak_gap_evidence_requires_human_review_before_recommendation(self) -> None:

@@ -1,7 +1,11 @@
 from datetime import UTC, datetime
 
-from nvidia_startup_intel.collection_adapters import FirecrawlCollectionAdapter, ScrapyCollectionAdapter
-from nvidia_startup_intel.page_collection import PageCollectionResult
+from nvidia_startup_intel.collection_adapters import (
+    FirecrawlCollectionAdapter,
+    PublicPageCollectionAdapter,
+    ScrapyCollectionAdapter,
+)
+from nvidia_startup_intel.page_collection import FetchResponse, PageCollectionResult
 
 
 FIXED_TIME = datetime(2026, 6, 26, 15, 30, tzinfo=UTC)
@@ -142,6 +146,29 @@ def test_scrapy_adapter_failure_returns_categorized_collection_error() -> None:
     assert result.errors[0].collected_at == "2026-06-26T15:30:00+00:00"
     assert result.errors[0].status_code is None
     assert result.errors[0].error_category == "scrapy_adapter_failed"
+
+
+def test_public_page_collection_adapter_wraps_local_collection_strategy() -> None:
+    adapter = PublicPageCollectionAdapter(
+        fetcher=lambda url: FetchResponse(
+            url=url,
+            status_code=200,
+            body="<html><head><title>Startup AI</title></head><body>Texto publico.</body></html>",
+        )
+    )
+
+    result = adapter.collect(
+        "https://startup.ai/",
+        max_pages=1,
+        max_depth=0,
+        clock=fixed_clock,
+    )
+
+    assert result.errors == ()
+    assert result.pages[0].url == "https://startup.ai"
+    assert result.pages[0].title == "Startup AI"
+    assert result.pages[0].main_text == "Texto publico."
+    assert result.pages[0].collected_at == "2026-06-26T15:30:00+00:00"
 
 
 class _FakeFirecrawlClient:

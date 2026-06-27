@@ -8,7 +8,17 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from nvidia_startup_intel.normalization import normalize_url, normalize_whitespace
-from nvidia_startup_intel.page_collection import CollectedPage, PageCollectionError, PageCollectionResult
+from nvidia_startup_intel.page_collection import (
+    Fetcher,
+    HTMLExtractor,
+    PlaywrightRenderer,
+    CollectedPage,
+    PageCollectionError,
+    PageCollectionResult,
+    collect_public_pages,
+)
+from nvidia_startup_intel.robots import RobotsCache
+from nvidia_startup_intel.scraping_policy import ScrapingPolicy
 from nvidia_startup_intel.search_params import UNKNOWN
 
 
@@ -45,6 +55,37 @@ class ScrapyCrawler(Protocol):
     """Minimal Scrapy boundary used by the adapter and fakes."""
 
     def crawl(self, start_url: str, *, max_pages: int, max_depth: int) -> Iterable[object]: ...
+
+
+@dataclass(frozen=True)
+class PublicPageCollectionAdapter:
+    """Local public-page collection strategy behind the CollectionAdapter seam."""
+
+    fetcher: Fetcher | None = None
+    playwright_renderer: PlaywrightRenderer | None = None
+    html_extractor: HTMLExtractor | None = None
+    scraping_policy: ScrapingPolicy | None = None
+    robots_cache: RobotsCache | None = None
+
+    def collect(
+        self,
+        start_url: str,
+        *,
+        max_pages: int = 5,
+        max_depth: int = 1,
+        clock: CollectionClock | None = None,
+    ) -> PageCollectionResult:
+        return collect_public_pages(
+            start_url,
+            fetcher=self.fetcher,
+            playwright_renderer=self.playwright_renderer,
+            html_extractor=self.html_extractor,
+            max_pages=max_pages,
+            max_depth=max_depth,
+            clock=clock,
+            scraping_policy=self.scraping_policy,
+            robots_cache=self.robots_cache,
+        )
 
 
 @dataclass(frozen=True)

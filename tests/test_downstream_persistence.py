@@ -7,7 +7,7 @@ import unittest
 from nvidia_startup_intel.ai_native_assessment import AINativeAssessment, DiagnosticQuality, TechnicalGap
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
-from nvidia_startup_intel.framework_adapters import LLMGenerationRequest, LLMGenerationResponse
+from nvidia_startup_intel.llm_adapters import LLMGenerationRequest, LLMGenerationResponse
 from nvidia_startup_intel.nvidia_knowledge import NVIDIAKnowledgeRetrieval, load_nvidia_knowledge_corpus
 from nvidia_startup_intel.persistence import JsonDownstreamArtifactStore, create_pipeline_run, load_json
 from nvidia_startup_intel.search_params import UNKNOWN

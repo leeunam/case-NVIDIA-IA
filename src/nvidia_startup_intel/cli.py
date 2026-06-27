@@ -12,12 +12,12 @@ from pathlib import Path
 import sys
 from typing import TextIO
 
+from nvidia_startup_intel.collection_adapters import PublicPageCollectionAdapter
 from nvidia_startup_intel.page_collection import (
     FetchResponse,
     PlaywrightPageRenderer,
     PlaywrightRenderer,
     StaticHTMLExtractionAdapter,
-    collect_public_pages,
     fetch_url,
 )
 from nvidia_startup_intel.discovery import RawDiscoveryResult
@@ -183,15 +183,16 @@ def _run_collect_pages(
     run_started_at = clock()
     active_fetcher = fetcher or (lambda url: fetch_url(url, timeout=args.timeout_seconds))
     active_renderer = _playwright_renderer(args, playwright_renderer)
-    result = collect_public_pages(
-        args.url,
+    result = PublicPageCollectionAdapter(
         fetcher=active_fetcher,
         playwright_renderer=active_renderer,
         html_extractor=StaticHTMLExtractionAdapter(),
+        robots_cache=_robots_cache(args, robots_fetcher),
+    ).collect(
+        args.url,
         max_pages=args.max_pages,
         max_depth=args.max_depth,
         clock=clock,
-        robots_cache=_robots_cache(args, robots_fetcher),
     )
     payload = {
         "schema_version": SCHEMA_VERSION,

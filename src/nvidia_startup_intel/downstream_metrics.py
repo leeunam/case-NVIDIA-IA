@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, fields, is_dataclass
 
-from nvidia_startup_intel.framework_adapters import NVIDIARerankResult
+from nvidia_startup_intel.nvidia_reranking import NVIDIARerankResult
 from nvidia_startup_intel.normalization import normalize_text
 from nvidia_startup_intel.nvidia_knowledge import NVIDIAKnowledgeRetrieval, RetrievedNVIDIAKnowledge
 from nvidia_startup_intel.nvidia_recommendation import NVIDIARecommendationSet

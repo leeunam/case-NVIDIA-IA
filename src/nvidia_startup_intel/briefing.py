@@ -13,7 +13,7 @@ from dataclasses import dataclass, fields, is_dataclass
 from nvidia_startup_intel.ai_native_assessment import AINativeAssessment, TechnicalGap, WrapperDependencyRisk
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
-from nvidia_startup_intel.framework_adapters import (
+from nvidia_startup_intel.llm_adapters import (
     LLMClient,
     LLMGenerationRequest,
     LLMGenerationResponse,
@@ -21,7 +21,11 @@ from nvidia_startup_intel.framework_adapters import (
 )
 from nvidia_startup_intel.nvidia_knowledge import NVIDIACitation
 from nvidia_startup_intel.nvidia_knowledge import NVIDIAKnowledgeRetrieval
-from nvidia_startup_intel.nvidia_recommendation import NVIDIARecommendationSet, NVIDIATechnicalRecommendation
+from nvidia_startup_intel.nvidia_recommendation import (
+    NVIDIAProgramRecommendation,
+    NVIDIARecommendationSet,
+    NVIDIATechnicalRecommendation,
+)
 from nvidia_startup_intel.search_params import UNKNOWN
 from nvidia_startup_intel.startup_profile import FieldEvidence, ProfileField, StartupProfile
 
@@ -30,6 +34,7 @@ SCHEMA_VERSION = "executive_briefing.v1"
 HUMAN_REVIEW_SCHEMA_VERSION = "human_review_briefing.v1"
 BRIEFING_NARRATIVE_SCHEMA_VERSION = "briefing_narrative.v1"
 UNKNOWN_PROFILE_FIELDS = ("funding", "customers", "founders", "technologies_used")
+BriefableRecommendation = NVIDIATechnicalRecommendation | NVIDIAProgramRecommendation
 
 
 @dataclass(frozen=True)
@@ -84,9 +89,9 @@ class HumanReviewBriefing:
     wrapper_risks: tuple[WrapperDependencyRisk, ...]
     conflicts: tuple[FieldEvidenceGroup, ...]
     unknowns: tuple[str, ...]
-    supported_recommendations: tuple[NVIDIATechnicalRecommendation, ...]
-    hypothesis_recommendations: tuple[NVIDIATechnicalRecommendation, ...]
-    blocked_recommendations: tuple[NVIDIATechnicalRecommendation, ...]
+    supported_recommendations: tuple[BriefableRecommendation, ...]
+    hypothesis_recommendations: tuple[BriefableRecommendation, ...]
+    blocked_recommendations: tuple[BriefableRecommendation, ...]
     review_reasons: tuple[str, ...]
     pending_questions: tuple[PendingQuestion, ...]
     evidence_references: tuple[FieldEvidence, ...]
@@ -210,6 +215,7 @@ def generate_human_review_briefing(
                 evidence
                 for recommendation in (
                     *recommendation_set.technical_recommendations,
+                    *recommendation_set.program_recommendations,
                     *recommendation_set.hypotheses,
                     *recommendation_set.blocked_recommendations,
                 )
@@ -222,6 +228,7 @@ def generate_human_review_briefing(
             citation
             for recommendation in (
                 *recommendation_set.technical_recommendations,
+                *recommendation_set.program_recommendations,
                 *recommendation_set.hypotheses,
                 *recommendation_set.blocked_recommendations,
             )
@@ -242,7 +249,10 @@ def generate_human_review_briefing(
         wrapper_risks=assessment.wrapper_dependency_risks,
         conflicts=conflicts,
         unknowns=unknowns,
-        supported_recommendations=recommendation_set.technical_recommendations,
+        supported_recommendations=(
+            *recommendation_set.technical_recommendations,
+            *recommendation_set.program_recommendations,
+        ),
         hypothesis_recommendations=recommendation_set.hypotheses,
         blocked_recommendations=recommendation_set.blocked_recommendations,
         review_reasons=review_reasons,
@@ -440,6 +450,22 @@ def _recommended_claims(recommendation_set: NVIDIARecommendationSet) -> tuple[Br
                 reason="supported_technical_recommendation",
             )
         )
+    for recommendation in recommendation_set.program_recommendations:
+        claims.append(
+            BriefingClaim(
+                text=(
+                    f"Recommend {recommendation.nvidia_program} for "
+                    f"{recommendation.opportunity.opportunity_type}: "
+                    f"{recommendation.commercial_rationale}"
+                ),
+                claim_type="recommended",
+                section="recommendations",
+                confidence=recommendation.opportunity.confidence,
+                evidence_references=recommendation.startup_evidences,
+                citation_references=recommendation.nvidia_citations,
+                reason="supported_program_recommendation",
+            )
+        )
     return tuple(claims)
 
 
@@ -513,26 +539,20 @@ def _human_review_pending_questions(
     for recommendation in recommendation_set.hypotheses:
         questions.append(
             PendingQuestion(
-                field_name=recommendation.gap.gap_type,
-                question=(
-                    "Validate whether the suspected "
-                    f"{recommendation.gap.gap_type} gap is real and which NVIDIA fit is supportable."
-                ),
+                field_name=_recommendation_target_field_name(recommendation),
+                question=_recommendation_validation_question(recommendation, blocked=False),
                 priority="critical",
-                reason="recommendation_hypothesis_requires_validation",
+                reason=_recommendation_validation_reason(recommendation, blocked=False),
             )
         )
 
     for recommendation in recommendation_set.blocked_recommendations:
         questions.append(
             PendingQuestion(
-                field_name=recommendation.gap.gap_type,
-                question=(
-                    "Collect or validate startup-side evidence for the "
-                    f"{recommendation.gap.gap_type} gap before outreach."
-                ),
+                field_name=_recommendation_target_field_name(recommendation),
+                question=_recommendation_validation_question(recommendation, blocked=True),
                 priority="critical",
-                reason="blocked_recommendation_requires_validation",
+                reason=_recommendation_validation_reason(recommendation, blocked=True),
             )
         )
 
@@ -607,7 +627,7 @@ def _unknown_field_names(
         field_value = getattr(profile, field_name)
         if isinstance(field_value, ProfileField) and field_value.value == UNKNOWN:
             unknowns.append(field_name)
-    unknowns.extend(collection_quality.unknown_fields)
+    unknowns.extend(_collection_unknown_field_names(collection_quality))
     unknowns.extend(assessment.insufficient_evidence_fields)
     return tuple(dict.fromkeys(unknowns))
 
@@ -639,6 +659,14 @@ def _executive_summary(
             f"{startup_identifier} is classified as {assessment.classification} "
             f"and has a supported NVIDIA recommendation: "
             f"{top_recommendation.nvidia_technology} for {top_recommendation.gap.gap_type}."
+        )
+    if recommendation_set.program_recommendations:
+        top_recommendation = recommendation_set.program_recommendations[0]
+        return (
+            f"{startup_identifier} is classified as {assessment.classification} "
+            f"and has a supported NVIDIA program recommendation: "
+            f"{top_recommendation.nvidia_program} for "
+            f"{top_recommendation.opportunity.opportunity_type}."
         )
     return (
         f"{startup_identifier} is classified as {assessment.classification}, "
@@ -683,6 +711,68 @@ def _dedupe_citations(citations: tuple[NVIDIACitation, ...]) -> tuple[NVIDIACita
 
 def _dedupe_reasons(*reason_groups: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(reason for group in reason_groups for reason in group))
+
+
+def _recommendation_target_field_name(recommendation: BriefableRecommendation) -> str:
+    if isinstance(recommendation, NVIDIATechnicalRecommendation):
+        return recommendation.gap.gap_type
+    return recommendation.opportunity.opportunity_type
+
+
+def _recommendation_validation_question(
+    recommendation: BriefableRecommendation,
+    *,
+    blocked: bool,
+) -> str:
+    if isinstance(recommendation, NVIDIATechnicalRecommendation):
+        if blocked:
+            return (
+                "Collect or validate startup-side evidence for the "
+                f"{recommendation.gap.gap_type} gap before outreach."
+            )
+        return (
+            "Validate whether the suspected "
+            f"{recommendation.gap.gap_type} gap is real and which NVIDIA fit is supportable."
+        )
+
+    if blocked:
+        return (
+            "Collect or validate startup-side evidence for the "
+            f"{recommendation.opportunity.opportunity_type} commercial opportunity before outreach."
+        )
+    return (
+        "Validate whether the suspected "
+        f"{recommendation.opportunity.opportunity_type} commercial opportunity is real and "
+        "which NVIDIA program fit is supportable."
+    )
+
+
+def _recommendation_validation_reason(
+    recommendation: BriefableRecommendation,
+    *,
+    blocked: bool,
+) -> str:
+    if isinstance(recommendation, NVIDIATechnicalRecommendation):
+        return (
+            "blocked_recommendation_requires_validation"
+            if blocked
+            else "recommendation_hypothesis_requires_validation"
+        )
+    return (
+        "program_recommendation_blocked_requires_validation"
+        if blocked
+        else "program_recommendation_hypothesis_requires_validation"
+    )
+
+
+def _collection_unknown_field_names(collection_quality: CollectionQualitySummary) -> tuple[str, ...]:
+    names: list[str] = []
+    for item in collection_quality.unknown_fields:
+        if isinstance(item, tuple) and item:
+            names.append(str(item[0]))
+            continue
+        names.append(str(item))
+    return tuple(name for name in names if name)
 
 
 def _source_briefing_claims(
@@ -886,25 +976,37 @@ def _recommendation_prompt_lines(
                 f"citation_refs: {_citation_reference_text(recommendation.nvidia_citations)}"
             )
         )
+    for recommendation in recommendation_set.program_recommendations:
+        lines.append(_program_recommendation_prompt_line("supported_program_recommendation", recommendation))
     for recommendation in recommendation_set.hypotheses:
-        lines.append(
-            (
-                f"- hypothesis_recommendation: {recommendation.nvidia_technology} | "
-                f"gap: {recommendation.gap.gap_type} | rationale: {recommendation.technical_rationale} | "
-                f"startup_evidence_refs: {_evidence_reference_text(recommendation.startup_evidences)} | "
-                f"citation_refs: {_citation_reference_text(recommendation.nvidia_citations)}"
-            )
-        )
+        lines.append(_recommendation_prompt_line("hypothesis_recommendation", recommendation))
     for recommendation in recommendation_set.blocked_recommendations:
-        lines.append(
-            (
-                f"- blocked_recommendation: {recommendation.nvidia_technology} | "
-                f"gap: {recommendation.gap.gap_type} | rationale: {recommendation.technical_rationale} | "
-                f"startup_evidence_refs: {_evidence_reference_text(recommendation.startup_evidences)} | "
-                f"citation_refs: {_citation_reference_text(recommendation.nvidia_citations)}"
-            )
-        )
+        lines.append(_recommendation_prompt_line("blocked_recommendation", recommendation))
     return tuple(lines)
+
+
+def _recommendation_prompt_line(prefix: str, recommendation: BriefableRecommendation) -> str:
+    if isinstance(recommendation, NVIDIATechnicalRecommendation):
+        return (
+            f"- {prefix}: {recommendation.nvidia_technology} | "
+            f"gap: {recommendation.gap.gap_type} | rationale: {recommendation.technical_rationale} | "
+            f"startup_evidence_refs: {_evidence_reference_text(recommendation.startup_evidences)} | "
+            f"citation_refs: {_citation_reference_text(recommendation.nvidia_citations)}"
+        )
+    return _program_recommendation_prompt_line(prefix, recommendation)
+
+
+def _program_recommendation_prompt_line(
+    prefix: str,
+    recommendation: NVIDIAProgramRecommendation,
+) -> str:
+    return (
+        f"- {prefix}: {recommendation.nvidia_program} | "
+        f"opportunity: {recommendation.opportunity.opportunity_type} | "
+        f"rationale: {recommendation.commercial_rationale} | "
+        f"startup_evidence_refs: {_evidence_reference_text(recommendation.startup_evidences)} | "
+        f"citation_refs: {_citation_reference_text(recommendation.nvidia_citations)}"
+    )
 
 
 def _citation_prompt_lines(citations: tuple[NVIDIACitation, ...]) -> tuple[str, ...]:

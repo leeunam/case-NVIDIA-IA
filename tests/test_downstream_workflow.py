@@ -9,10 +9,11 @@ from unittest.mock import patch
 from nvidia_startup_intel.ai_native_assessment import AINativeAssessment, DiagnosticQuality, TechnicalGap
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
-from nvidia_startup_intel.framework_adapters import LLMGenerationRequest, LLMGenerationResponse
+from nvidia_startup_intel.llm_adapters import LLMGenerationRequest, LLMGenerationResponse
 from nvidia_startup_intel.nvidia_embeddings import DeterministicFakeEmbeddingClient, EmbeddingClient
 from nvidia_startup_intel.nvidia_knowledge import (
     NVIDIAKnowledgeCorpus,
+    NVIDIAKnowledgeQuery,
     NVIDIAKnowledgeRetrieval,
     RetrievedNVIDIAKnowledge,
     load_nvidia_knowledge_corpus,
@@ -165,6 +166,46 @@ class DownstreamWorkflowTests(unittest.TestCase):
         )
         self.assertNotIn("raw_framework_node", state)
         self.assertFalse(hasattr(state["retrievals"][0].results[0], "raw_framework_node"))
+
+    def test_downstream_retrieval_consumes_gap_space_query_when_retriever_supports_it(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
+        )
+        profile = _profile(startup_evidence)
+        gap = _model_serving_gap(startup_evidence)
+        retrieval = retrieve_nvidia_knowledge_by_gap(
+            load_nvidia_knowledge_corpus(_fixture_path()),
+            run_id="run-issue-61",
+            gap_type=gap.gap_type,
+            description=gap.description,
+            startup_signals=("inferencia em producao",),
+            top_k=1,
+        )
+        retriever = FakeQueryRetriever(retrieval)
+        workflow = build_local_downstream_workflow(
+            DownstreamWorkflowRuntime(
+                corpus=load_nvidia_knowledge_corpus(_fixture_path()),
+                knowledge_retriever=retriever,
+            )
+        )
+
+        state = workflow.invoke(
+            {
+                "run_id": "run-issue-61",
+                "profile": profile,
+                "evidence_groups": (),
+                "collection_quality": _collection_quality(),
+                "assessment": _assessment(gap),
+            }
+        )
+
+        self.assertEqual(state["workflow_outcome"], "briefing_generated")
+        self.assertEqual(retriever.fallback_requests, ())
+        self.assertEqual(len(retriever.query_requests), 1)
+        query = retriever.query_requests[0][1]
+        self.assertEqual(query.gap_type, "model_serving")
+        self.assertEqual(query.query, state["gap_space_assessment"].retrieval_queries[0])
+        self.assertIn("inferencia em producao", query.query)
 
     def test_supported_gap_generates_executive_briefing_without_langgraph(self) -> None:
         startup_evidence = _startup_evidence(
@@ -522,6 +563,34 @@ class FakeFrameworkRetriever:
         top_k: int,
     ) -> NVIDIAKnowledgeRetrieval:
         self.requests = (*self.requests, (run_id, gap.gap_type, gap.description, top_k))
+        return self.retrieval
+
+
+class FakeQueryRetriever:
+    def __init__(self, retrieval: NVIDIAKnowledgeRetrieval) -> None:
+        self.retrieval = retrieval
+        self.query_requests: tuple[tuple[str, NVIDIAKnowledgeQuery, int], ...] = ()
+        self.fallback_requests: tuple[tuple[str, str, str, int], ...] = ()
+
+    def retrieve_for_query(
+        self,
+        *,
+        run_id: str,
+        query: NVIDIAKnowledgeQuery,
+        top_k: int,
+    ) -> NVIDIAKnowledgeRetrieval:
+        self.query_requests = (*self.query_requests, (run_id, query, top_k))
+        return self.retrieval
+
+    def retrieve_for_gap(
+        self,
+        *,
+        run_id: str,
+        gap: TechnicalGap,
+        startup_signals: tuple[str, ...],
+        top_k: int,
+    ) -> NVIDIAKnowledgeRetrieval:
+        self.fallback_requests = (*self.fallback_requests, (run_id, gap.gap_type, gap.description, top_k))
         return self.retrieval
 
 

@@ -272,6 +272,43 @@ def test_collect_pages_records_error_for_candidate_without_primary_url() -> None
     assert result.errors[0].error_type == "MissingPrimaryUrl"
 
 
+def test_collect_pages_accepts_collection_adapter_strategy() -> None:
+    candidate = CandidateStartup(
+        name="Atlas AI",
+        normalized_name="atlas ai",
+        primary_url="https://atlas.ai",
+        discovery_source="web",
+        evidence_snippet="Atlas AI para dados.",
+        confidence_score=0.9,
+        source_types=(DiscoverySourceType.COMPANY,),
+        evidences=(),
+    )
+    adapter = _CapturingCollectionAdapter(
+        PageCollectionResult(
+            pages=(
+                CollectedPage(
+                    url="https://atlas.ai",
+                    title="Atlas AI",
+                    main_text="Dados.",
+                    collected_at="2026-06-26T00:00:00Z",
+                    status_code=200,
+                ),
+            ),
+            errors=(),
+        )
+    )
+
+    collected = collect_pages_for_candidates(
+        (candidate,),
+        collection_adapter=adapter,
+        max_pages_per_candidate=2,
+        max_depth=1,
+    )
+
+    assert adapter.calls == (("https://atlas.ai", 2, 1),)
+    assert collected["url:https://atlas.ai"].pages[0].title == "Atlas AI"
+
+
 def test_structure_profile_evidence_uses_stable_profile_keys_for_repeated_names() -> None:
     candidates = (
         CandidateStartup(
@@ -326,3 +363,21 @@ def test_structure_profile_evidence_uses_stable_profile_keys_for_repeated_names(
     groups = structure_profile_evidence(profiles)
 
     assert set(groups) == {"url:https://atlas.ai", "url:https://atlashealth.ai"}
+
+
+class _CapturingCollectionAdapter:
+    def __init__(self, result: PageCollectionResult) -> None:
+        self.result = result
+        self.calls: tuple[tuple[str, int, int], ...] = ()
+
+    def collect(
+        self,
+        start_url: str,
+        *,
+        max_pages: int = 5,
+        max_depth: int = 1,
+        clock=None,
+    ) -> PageCollectionResult:
+        del clock
+        self.calls = (*self.calls, (start_url, max_pages, max_depth))
+        return self.result

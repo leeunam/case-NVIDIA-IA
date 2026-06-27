@@ -7,13 +7,13 @@ from pathlib import Path
 import pytest
 
 from nvidia_startup_intel.ai_native_assessment import TechnicalGap
-from nvidia_startup_intel.framework_adapters import (
+from nvidia_startup_intel.nvidia_reranking import (
     DeterministicTopKReranker,
-    LocalBM25NVIDIAKnowledgeRetriever,
     NVIDIARerankResult,
     nvidia_rerank_result_to_dict,
     rerank_nvidia_retrieval,
 )
+from nvidia_startup_intel.nvidia_retrievers import LocalBM25NVIDIAKnowledgeRetriever
 from nvidia_startup_intel.llm_adapter_smoke import (
     LLMAdapterSmokeError,
     run_langchain_adapter_smoke,

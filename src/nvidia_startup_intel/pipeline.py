@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from nvidia_startup_intel.ai_native_assessment import AINativeAssessment, assess_ai_native_maturity
+from nvidia_startup_intel.collection_adapters import CollectionAdapter, PublicPageCollectionAdapter
 from nvidia_startup_intel.collection_quality import (
     CollectionQualitySummary,
     summarize_collection_quality,
@@ -30,7 +31,6 @@ from nvidia_startup_intel.page_collection import (
     PlaywrightPageRenderer,
     PlaywrightRenderer,
     StaticHTMLExtractionAdapter,
-    collect_public_pages,
 )
 from nvidia_startup_intel.scraping_policy import ScrapingPolicy
 from nvidia_startup_intel.robots import RobotsCache
@@ -89,6 +89,7 @@ def profile_result_key(profile: StartupProfile) -> str:
 def collect_pages_for_candidates(
     candidates: list[CandidateStartup] | tuple[CandidateStartup, ...],
     *,
+    collection_adapter: CollectionAdapter | None = None,
     fetcher: Fetcher | None = None,
     playwright_renderer: PlaywrightRenderer | None = None,
     html_extractor: HTMLExtractor | None = None,
@@ -100,7 +101,13 @@ def collect_pages_for_candidates(
     """Collect public pages for candidates that have an official site."""
 
     collected: dict[str, PageCollectionResult] = {}
-    active_robots_cache = robots_cache or RobotsCache()
+    active_adapter = collection_adapter or _production_collection_adapter(
+        fetcher=fetcher,
+        playwright_renderer=playwright_renderer,
+        html_extractor=html_extractor,
+        scraping_policy=scraping_policy,
+        robots_cache=robots_cache or RobotsCache(),
+    )
     for candidate in candidates:
         candidate_key = candidate_result_key(candidate)
         if candidate.primary_url == UNKNOWN:
@@ -117,21 +124,33 @@ def collect_pages_for_candidates(
                 ),
             )
             continue
-        collected[candidate_key] = collect_public_pages(
+        collected[candidate_key] = active_adapter.collect(
             candidate.primary_url,
-            fetcher=fetcher,
-            playwright_renderer=_production_renderer(fetcher, playwright_renderer),
-            html_extractor=_production_html_extractor(
-                fetcher=fetcher,
-                playwright_renderer=playwright_renderer,
-                html_extractor=html_extractor,
-            ),
             max_pages=max_pages_per_candidate,
             max_depth=max_depth,
-            scraping_policy=scraping_policy,
-            robots_cache=active_robots_cache,
         )
     return collected
+
+
+def _production_collection_adapter(
+    *,
+    fetcher: Fetcher | None,
+    playwright_renderer: PlaywrightRenderer | None,
+    html_extractor: HTMLExtractor | None,
+    scraping_policy: ScrapingPolicy | None,
+    robots_cache: RobotsCache,
+) -> CollectionAdapter:
+    return PublicPageCollectionAdapter(
+        fetcher=fetcher,
+        playwright_renderer=_production_renderer(fetcher, playwright_renderer),
+        html_extractor=_production_html_extractor(
+            fetcher=fetcher,
+            playwright_renderer=playwright_renderer,
+            html_extractor=html_extractor,
+        ),
+        scraping_policy=scraping_policy,
+        robots_cache=robots_cache,
+    )
 
 
 def _production_renderer(
