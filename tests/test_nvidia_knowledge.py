@@ -11,6 +11,7 @@ from nvidia_startup_intel.nvidia_knowledge import (
     NVIDIAKnowledgeCorpus,
     NVIDIAKnowledgeDocument,
     NVIDIAKnowledgeRetrieval,
+    SUPPORTED_NVIDIA_KNOWLEDGE_TARGETS,
     RetrievedNVIDIAKnowledge,
     chunk_nvidia_knowledge_document,
     load_nvidia_knowledge_corpus,
@@ -243,6 +244,83 @@ class NVIDIAKnowledgeSchemaTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "missing-origin:missing_source_url"):
                 load_nvidia_knowledge_corpus(corpus_file.name)
 
+    def test_corpus_load_rejects_missing_ingestion_timestamp_with_auditable_reason(
+        self,
+    ) -> None:
+        document = _official_document_payload(
+            document_id="missing-ingestion-time",
+            title="Missing Ingestion Time",
+            source_url="https://developer.nvidia.com/missing-ingestion-time",
+            source_type="official_nvidia_developer_page",
+        )
+        document.pop("ingested_at")
+        corpus_payload = _corpus_payload(documents=[document], chunks=[])
+
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json") as corpus_file:
+            json.dump(corpus_payload, corpus_file)
+            corpus_file.flush()
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "missing-ingestion-time:missing_ingested_at",
+            ):
+                load_nvidia_knowledge_corpus(corpus_file.name)
+
+    def test_corpus_load_rejects_unstable_chunk_identifier(self) -> None:
+        corpus_payload = _corpus_payload(
+            documents=[_official_document_payload()],
+            chunks=[_chunk_payload(chunk_id="nvidia-nim-custom")],
+        )
+
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json") as corpus_file:
+            json.dump(corpus_payload, corpus_file)
+            corpus_file.flush()
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "nvidia-nim:unstable_chunk_id:nvidia-nim-custom:expected:nvidia-nim:0",
+            ):
+                load_nvidia_knowledge_corpus(corpus_file.name)
+
+    def test_corpus_load_rejects_duplicate_chunk_identifier(self) -> None:
+        corpus_payload = _corpus_payload(
+            documents=[_official_document_payload()],
+            chunks=[
+                _chunk_payload(),
+                _chunk_payload(text="Duplicate chunk should not be accepted as citation support."),
+            ],
+        )
+
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json") as corpus_file:
+            json.dump(corpus_payload, corpus_file)
+            corpus_file.flush()
+
+            with self.assertRaisesRegex(ValueError, "nvidia-nim:duplicate_chunk_id:nvidia-nim:0"):
+                load_nvidia_knowledge_corpus(corpus_file.name)
+
+    def test_corpus_load_rejects_non_consecutive_chunk_indices(self) -> None:
+        corpus_payload = _corpus_payload(
+            documents=[_official_document_payload()],
+            chunks=[
+                _chunk_payload(),
+                _chunk_payload(
+                    chunk_id="nvidia-nim:2",
+                    chunk_index=2,
+                    text="A skipped index should not be accepted as stable citation order.",
+                ),
+            ],
+        )
+
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json") as corpus_file:
+            json.dump(corpus_payload, corpus_file)
+            corpus_file.flush()
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "nvidia-nim:non_consecutive_chunk_indices:expected:0,1:actual:0,2",
+            ):
+                load_nvidia_knowledge_corpus(corpus_file.name)
+
     def test_citation_from_chunk_preserves_document_source_and_excerpt(self) -> None:
         document = NVIDIAKnowledgeDocument(
             schema_version="nvidia_knowledge.v1",
@@ -357,6 +435,42 @@ class NVIDIAKnowledgeSchemaTests(unittest.TestCase):
         for stack_name, source_url in expected_sources.items():
             with self.subTest(stack_name=stack_name):
                 self.assertEqual(sources_by_stack[stack_name], source_url)
+
+    def test_official_fixture_profiles_have_required_taxonomy_fields_and_citation_chunks(
+        self,
+    ) -> None:
+        fixture_path = Path(__file__).parent / "fixtures" / "nvidia_knowledge_official_fixture.json"
+        corpus = load_nvidia_knowledge_corpus(fixture_path)
+
+        profiles = nvidia_stack_profiles_from_corpus(corpus)
+        chunks_by_id = {chunk.chunk_id: chunk for chunk in corpus.chunks}
+        covered_gap_types: set[str] = set()
+
+        for profile in profiles:
+            with self.subTest(stack_id=profile.stack_id):
+                self.assertEqual(profile.schema_version, "nvidia_knowledge.v1")
+                self.assertEqual(profile.corpus_version, corpus.corpus_version)
+                self.assertTrue(profile.stack_id)
+                self.assertTrue(profile.stack_name)
+                self.assertTrue(profile.topic)
+                self.assertTrue(profile.brief_description)
+                self.assertTrue(profile.technical_description)
+                self.assertTrue(profile.categories)
+                self.assertTrue(profile.use_cases)
+                self.assertTrue(profile.supported_gap_types)
+                self.assertTrue(profile.source_url)
+                self.assertTrue(profile.source_type)
+                self.assertTrue(profile.ingested_at)
+                self.assertTrue(profile.citation_chunk_ids)
+                self.assertTrue(set(profile.supported_gap_types) <= SUPPORTED_NVIDIA_KNOWLEDGE_TARGETS)
+                covered_gap_types.update(profile.supported_gap_types)
+
+                for chunk_id in profile.citation_chunk_ids:
+                    chunk = chunks_by_id[chunk_id]
+                    self.assertEqual(chunk.document_id, profile.document_id)
+                    self.assertEqual(chunk.topic, profile.topic)
+
+        self.assertTrue(SUPPORTED_NVIDIA_KNOWLEDGE_TARGETS <= covered_gap_types)
 
     def test_loaded_corpus_serializes_auditable_citation_metadata(self) -> None:
         fixture_path = Path(__file__).parent / "fixtures" / "nvidia_knowledge_official_fixture.json"
@@ -680,6 +794,67 @@ class NVIDIAKnowledgeSchemaTests(unittest.TestCase):
 
         self.assertFalse(quality.has_sufficient_citation)
         self.assertEqual(quality.reasons, ("no_retrieved_citation",))
+
+
+def _corpus_payload(
+    *,
+    documents: list[dict[str, object]],
+    chunks: list[dict[str, object]],
+) -> dict[str, object]:
+    return {
+        "schema_version": "nvidia_knowledge.v1",
+        "corpus_version": "official-nvidia-fixture.v1",
+        "documents": documents,
+        "chunks": chunks,
+    }
+
+
+def _official_document_payload(
+    *,
+    document_id: str = "nvidia-nim",
+    title: str = "NVIDIA NIM",
+    source_url: str = "https://www.nvidia.com/en-us/ai-data-science/products/nim-microservices/",
+    source_type: str = "official_nvidia_product_page",
+) -> dict[str, object]:
+    return {
+        "schema_version": "nvidia_knowledge.v1",
+        "corpus_version": "official-nvidia-fixture.v1",
+        "document_id": document_id,
+        "title": title,
+        "source_url": source_url,
+        "source_type": source_type,
+        "ingested_at": "2026-06-23T00:00:00Z",
+        "metadata": {
+            "official_source": True,
+            "stack_id": document_id,
+            "stack_name": title,
+            "topic": "model_serving",
+            "brief_description": "NVIDIA inference microservices.",
+            "technical_description": "NVIDIA NIM supports production model serving.",
+            "categories": ["inference"],
+            "use_cases": ["production model serving"],
+            "supported_gap_types": ["model_serving"],
+        },
+    }
+
+
+def _chunk_payload(
+    *,
+    chunk_id: str = "nvidia-nim:0",
+    document_id: str = "nvidia-nim",
+    chunk_index: int = 0,
+    text: str = "NVIDIA NIM supports production model serving.",
+) -> dict[str, object]:
+    return {
+        "schema_version": "nvidia_knowledge.v1",
+        "corpus_version": "official-nvidia-fixture.v1",
+        "chunk_id": chunk_id,
+        "document_id": document_id,
+        "chunk_index": chunk_index,
+        "topic": "model_serving",
+        "text": text,
+        "metadata": {},
+    }
 
 
 if __name__ == "__main__":
