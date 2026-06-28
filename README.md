@@ -294,6 +294,34 @@ python -m pytest -q tests/integration/test_playwright_collection_integration_smo
 
 Esse caminho exige `playwright` e os browser binaries instalados com `python -m playwright install chromium`. Falhas são reportadas como `OPTIONAL PLAYWRIGHT COLLECTION SMOKE FAILED` para separar problema de ambiente real da suíte determinística local.
 
+## Validação Opcional Production Scraping
+
+A issue de scraping de produção usa um smoke opt-in para medir se o caminho Playwright-first atual encontra evidência pública suficiente em uma lista pequena de startups brasileiras antes de adicionar Firecrawl, Scrapy ou outros serviços externos.
+
+Execute contra URLs públicas controladas e grave o JSON em `runs/production-scraping/`, que fica fora das fixtures versionadas:
+
+```bash
+mkdir -p runs/production-scraping
+PYTHONPATH=src python -m nvidia_startup_intel.production_scraping_smoke \
+  https://startup-brasileira.example/ \
+  https://outra-startup.example/ \
+  --max-pages 2 \
+  --max-depth 1 \
+  --output runs/production-scraping/smoke-$(date -u +%Y%m%dT%H%M%SZ).json
+```
+
+O payload retorna `production_scraping_validation.v1` com `run_id`, estratégia de coleta, decisão de política, decisão de `robots.txt`, limites de crawl, erros auditáveis, tempo decorrido, tamanho de texto por página, páginas vazias ou com pouco texto, completude do `startup_profile.v1`, taxa de `unknown`, conflitos e prontidão para AI-Native Assessment.
+
+Também existe um teste de integração isolado, desabilitado por padrão:
+
+```bash
+NVIDIA_STARTUP_INTEL_RUN_PRODUCTION_SCRAPING_SMOKE=1 \
+NVIDIA_STARTUP_INTEL_PRODUCTION_SCRAPING_URLS="https://startup-brasileira.example/,https://outra-startup.example/" \
+python -m pytest -q tests/integration/test_production_scraping_integration_smoke.py -m production_scraping_integration
+```
+
+Esse caminho pode usar rede e navegador real apenas quando explicitamente habilitado. Não use URLs privadas, autenticadas, paywalled ou protegidas por login; bloqueios de política, `robots.txt`, browser, rede e extração devem aparecer como dados auditáveis no relatório, não como fixtures commitadas.
+
 ## Validação Opcional Pgvector
 
 A persistência de embeddings em Postgres/pgvector é um caminho de integração, não uma dependência da suíte local padrão. Para validar quando Docker e Postgres estiverem disponíveis:
