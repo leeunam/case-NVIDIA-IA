@@ -113,6 +113,35 @@ def test_scrapy_adapter_returns_project_collection_contract_from_structured_craw
     assert crawler.calls == (("https://startup.ai/", 2, 1),)
 
 
+def test_scrapy_adapter_passes_domain_limits_and_policy_throttle_to_runner() -> None:
+    crawler = _RecordingScrapyCrawler(
+        (
+            {
+                "url": "https://startup.ai/",
+                "title": "Startup AI",
+                "main_text": "Home com evidencias publicas de IA.",
+                "status_code": 200,
+            },
+        )
+    )
+
+    result = ScrapyCollectionAdapter(
+        crawler=crawler,
+        scraping_policy=ScrapingPolicy(rate_limit_seconds=2.5),
+    ).collect(
+        "https://startup.ai/",
+        max_pages=1,
+        max_depth=0,
+        clock=fixed_clock,
+    )
+
+    assert result.errors == ()
+    assert [page.url for page in result.pages] == ["https://startup.ai"]
+    assert crawler.calls == (
+        ("https://startup.ai/", 1, 0, ("startup.ai",), 2.5),
+    )
+
+
 def test_firecrawl_adapter_failure_returns_categorized_collection_error() -> None:
     result = FirecrawlCollectionAdapter(client=_FailingFirecrawlClient()).collect(
         "https://startup.ai/",
@@ -244,11 +273,48 @@ class _FakeScrapyCrawler:
         self.items = items
         self.calls: tuple[tuple[str, int, int], ...] = ()
 
-    def crawl(self, start_url: str, *, max_pages: int, max_depth: int) -> tuple[dict[str, object], ...]:
+    def crawl(
+        self,
+        start_url: str,
+        *,
+        max_pages: int,
+        max_depth: int,
+        allowed_domains: tuple[str, ...],
+        throttle_seconds: float,
+    ) -> tuple[dict[str, object], ...]:
         self.calls = (*self.calls, (start_url, max_pages, max_depth))
         return self.items
 
 
+class _RecordingScrapyCrawler:
+    def __init__(self, items: tuple[dict[str, object], ...]) -> None:
+        self.items = items
+        self.calls: tuple[tuple[str, int, int, tuple[str, ...], float], ...] = ()
+
+    def crawl(
+        self,
+        start_url: str,
+        *,
+        max_pages: int,
+        max_depth: int,
+        allowed_domains: tuple[str, ...],
+        throttle_seconds: float,
+    ) -> tuple[dict[str, object], ...]:
+        self.calls = (
+            *self.calls,
+            (start_url, max_pages, max_depth, allowed_domains, throttle_seconds),
+        )
+        return self.items
+
+
 class _FailingScrapyCrawler:
-    def crawl(self, start_url: str, *, max_pages: int, max_depth: int) -> tuple[dict[str, object], ...]:
+    def crawl(
+        self,
+        start_url: str,
+        *,
+        max_pages: int,
+        max_depth: int,
+        allowed_domains: tuple[str, ...],
+        throttle_seconds: float,
+    ) -> tuple[dict[str, object], ...]:
         raise TimeoutError("scrapy crawl timed out")

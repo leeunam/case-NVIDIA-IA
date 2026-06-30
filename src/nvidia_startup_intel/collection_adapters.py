@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
-from nvidia_startup_intel.normalization import normalize_url, normalize_whitespace
+from nvidia_startup_intel.normalization import normalize_domain, normalize_url, normalize_whitespace
 from nvidia_startup_intel.page_collection import (
     Fetcher,
     HTMLExtractor,
@@ -56,7 +56,15 @@ class FirecrawlClient(Protocol):
 class ScrapyCrawler(Protocol):
     """Minimal Scrapy boundary used by the adapter and fakes."""
 
-    def crawl(self, start_url: str, *, max_pages: int, max_depth: int) -> Iterable[object]: ...
+    def crawl(
+        self,
+        start_url: str,
+        *,
+        max_pages: int,
+        max_depth: int,
+        allowed_domains: tuple[str, ...],
+        throttle_seconds: float,
+    ) -> Iterable[object]: ...
 
 
 @dataclass(frozen=True)
@@ -154,6 +162,8 @@ class ScrapyCollectionAdapter:
     """Scrapy structured crawling adapter returning PageCollectionResult."""
 
     crawler: ScrapyCrawler
+    scraping_policy: ScrapingPolicy | None = None
+    robots_cache: RobotsCache | None = None
 
     def collect(
         self,
@@ -165,7 +175,28 @@ class ScrapyCollectionAdapter:
     ) -> PageCollectionResult:
         collected_at = _format_time((clock or _utc_now)())
         try:
-            items = tuple(self.crawler.crawl(start_url, max_pages=max_pages, max_depth=max_depth))
+            decision = evaluate_collection_request(
+                start_url,
+                self.scraping_policy or ScrapingPolicy(),
+                self.robots_cache,
+            )
+            if not decision.allowed:
+                return _blocked_adapter_result(
+                    start_url,
+                    collected_at=collected_at,
+                    error_type=collection_policy_error_type(decision.reason),
+                    message=decision.message,
+                    error_category=decision.reason.value,
+                )
+            items = tuple(
+                self.crawler.crawl(
+                    start_url,
+                    max_pages=max_pages,
+                    max_depth=max_depth,
+                    allowed_domains=(normalize_domain(start_url),),
+                    throttle_seconds=decision.delay_seconds,
+                )
+            )
         except Exception as exc:  # noqa: BLE001 - adapter failures are collection data.
             return _adapter_error_result(
                 start_url,
