@@ -374,3 +374,17 @@ NVIDIA_STARTUP_INTEL_RUN_PGVECTOR_SMOKE=1 python -m pytest -q tests/integration/
 O smoke requer `psycopg` apenas no ambiente usado para essa validação opcional; o embedding real requer `sentence-transformers` apenas quando `NVIDIA_STARTUP_INTEL_EMBEDDING_PROVIDER` estiver configurado. Por padrão, `DATABASE_URL` ou `NVIDIA_STARTUP_INTEL_PGVECTOR_DATABASE_URL` podem apontar para outro Postgres/pgvector. Sem configuração explícita, o smoke usa as credenciais do `docker-compose.yml`. Falhas desse caminho são reportadas como `OPTIONAL PGVECTOR SMOKE FAILED` para não parecerem falhas da suíte local padrão.
 
 O schema em `db/schema.sql` cria `CREATE EXTENSION IF NOT EXISTS vector`, persiste documentos, chunks e embeddings auditáveis, e usa busca exata por similaridade SQL. Índices HNSW/IVFFlat continuam fora até haver volume ou latência medidos que justifiquem a troca.
+
+## Validação Opcional Reranking
+
+Reranking real não faz parte da suíte local padrão. A suíte default valida o contrato `NVIDIAReranker` com fake determinístico ou cross-encoder injetado em memória, sem download de modelo, rede, credenciais ou provider externo.
+
+Para validar um cross-encoder local real, instale o extra opcional e use `SentenceTransformersCrossEncoderReranker` somente depois que o retrieval híbrido BM25 + vetorial produzir o `candidate_top_k`:
+
+```bash
+python -m pip install -e ".[reranking]"
+```
+
+O reranker pode apenas reordenar ou descartar os chunks recebidos. Ele não pode criar novos chunks, citações, scores originais, claims sobre startup ou fatos NVIDIA. O payload `nvidia_rerank.v1` preserva rank original, scores BM25/vetorial/híbrido, citação oficial, score/rank/rationale de reranking, nome do modelo, versão do modelo e parâmetros usados.
+
+O reranking real só deve ser habilitado para produção quando `compare_rerank_retrieval_quality` demonstrar ganho no top 1 sem regressão nas métricas de suporte: `top_1_expected_delta >= 1`, `f1_delta >= 0.0`, `recall_delta >= 0.0`, `precision_delta >= 0.0` e `coverage_delta >= 0.0` nos fixtures ou casos reais revisados. Se o ganho vier apenas de uma fixture frágil, mantenha o reranker como experimento opt-in e amplie as expectations antes de mudar o caminho padrão.
