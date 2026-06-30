@@ -34,6 +34,7 @@ from nvidia_startup_intel.startup_profile import StartupProfile
 
 
 class ScrapingGraphState(TypedDict, total=False):
+    run_id: str
     query: str
     limit: int
     search_params: SearchParams

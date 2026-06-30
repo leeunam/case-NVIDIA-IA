@@ -7,7 +7,7 @@ Business rules stay in Knowledge, Recommendation, and Briefing modules.
 
 from __future__ import annotations
 
-from collections.abc import MutableMapping
+from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, TypedDict
 
@@ -21,6 +21,7 @@ from nvidia_startup_intel.briefing import (
     generate_human_review_briefing,
 )
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
+from nvidia_startup_intel.discovery import CandidateStartup, RawDiscoveryResult
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
 from nvidia_startup_intel.llm_adapters import LLMClient
 from nvidia_startup_intel.nvidia_retrievers import (
@@ -39,7 +40,15 @@ from nvidia_startup_intel.nvidia_recommendation import (
     NVIDIARecommendationSet,
     build_nvidia_recommendations,
 )
-from nvidia_startup_intel.search_params import UNKNOWN
+from nvidia_startup_intel.page_collection import PageCollectionResult
+from nvidia_startup_intel.pipeline import ScrapingPipelineResult, profile_result_key
+from nvidia_startup_intel.scraping_graph import (
+    ScrapingGraphRuntime,
+    build_local_scraping_graph,
+)
+from nvidia_startup_intel.search_execution import SearchExecutionError
+from nvidia_startup_intel.search_params import UNKNOWN, SearchParams
+from nvidia_startup_intel.search_plan import SearchPlan
 from nvidia_startup_intel.startup_profile import ProfileField, StartupProfile
 
 
@@ -56,6 +65,14 @@ class DownstreamWorkflowError:
     error_type: str
     message: str
     audit_reason: str
+
+
+@dataclass(frozen=True)
+class WorkflowPersistenceReference:
+    artifact_kind: str
+    startup_identifier: str
+    storage: str
+    reference: str
 
 
 class DownstreamWorkflowState(TypedDict, total=False):
@@ -78,8 +95,44 @@ class DownstreamWorkflowState(TypedDict, total=False):
     errors: tuple[DownstreamWorkflowError, ...]
 
 
+class IntelligenceWorkflowState(TypedDict, total=False):
+    run_id: str
+    query: str
+    limit: int
+    search_params: SearchParams
+    search_plan: SearchPlan
+    raw_results: tuple[RawDiscoveryResult, ...]
+    search_errors: tuple[SearchExecutionError, ...]
+    candidates: tuple[CandidateStartup, ...]
+    collected_pages_by_candidate: Mapping[str, PageCollectionResult]
+    profiles: tuple[StartupProfile, ...]
+    evidence_groups_by_profile: Mapping[str, tuple[FieldEvidenceGroup, ...]]
+    ai_native_assessments_by_profile: Mapping[str, AINativeAssessment]
+    quality_summary: CollectionQualitySummary
+    next_action: str
+    startup_identifiers: tuple[str, ...]
+    corpus_version: str
+    downstream_states_by_startup: Mapping[str, DownstreamWorkflowState]
+    branch_decisions: tuple[DownstreamWorkflowBranch, ...]
+    workflow_outcome: str
+    persistence_references: tuple[WorkflowPersistenceReference, ...]
+    errors: tuple[DownstreamWorkflowError, ...]
+
+
 class DownstreamArtifactStore(Protocol):
     def save_downstream_state(self, state: DownstreamWorkflowState) -> None: ...
+
+
+class IntelligenceArtifactStore(DownstreamArtifactStore, Protocol):
+    def create_run(self, *, run_id: str) -> str: ...
+
+    def save_pipeline_result(self, run_id: str, result: ScrapingPipelineResult) -> None: ...
+
+    def save_ai_native_assessments(
+        self,
+        run_id: str,
+        assessments_by_profile: Mapping[str, AINativeAssessment],
+    ) -> None: ...
 
 
 @dataclass
@@ -99,6 +152,39 @@ class DownstreamWorkflowRuntime:
     llm_client: LLMClient | None = None
     artifact_store: DownstreamArtifactStore | None = None
     checkpoints: list[DownstreamWorkflowState] = field(default_factory=list)
+
+
+@dataclass
+class IntelligenceWorkflowRuntime:
+    scraping: ScrapingGraphRuntime
+    downstream: DownstreamWorkflowRuntime
+    artifact_store: IntelligenceArtifactStore | None = None
+    checkpoints: list[IntelligenceWorkflowState] = field(default_factory=list)
+
+
+class LocalIntelligenceWorkflow:
+    """Invoke-compatible runner for the full local intelligence workflow."""
+
+    def __init__(self, runtime: IntelligenceWorkflowRuntime) -> None:
+        self.runtime = runtime
+
+    def invoke(self, state: IntelligenceWorkflowState) -> IntelligenceWorkflowState:
+        self.runtime.checkpoints.clear()
+        current = initialize_intelligence_state_node(state, self.runtime)
+        self.runtime.checkpoints.append(dict(current))
+
+        current = run_upstream_scraping_node(current, self.runtime)
+        self.runtime.checkpoints.append(dict(current))
+
+        current = persist_upstream_artifacts_node(current, self.runtime)
+        self.runtime.checkpoints.append(dict(current))
+
+        current = run_downstream_for_profiles_node(current, self.runtime)
+        self.runtime.checkpoints.append(dict(current))
+
+        current = decide_intelligence_final_next_action_node(current, self.runtime)
+        self.runtime.checkpoints.append(dict(current))
+        return current
 
 
 class LocalDownstreamWorkflow:
@@ -127,6 +213,55 @@ class LocalDownstreamWorkflow:
 
 def build_local_downstream_workflow(runtime: DownstreamWorkflowRuntime) -> LocalDownstreamWorkflow:
     return LocalDownstreamWorkflow(runtime)
+
+
+def build_local_intelligence_workflow(runtime: IntelligenceWorkflowRuntime) -> LocalIntelligenceWorkflow:
+    return LocalIntelligenceWorkflow(runtime)
+
+
+def build_intelligence_langgraph(
+    runtime: IntelligenceWorkflowRuntime,
+    *,
+    checkpointer: Any = None,
+) -> Any:
+    """Compile the optional full LangGraph workflow when available."""
+
+    try:
+        from langgraph.graph import END, StateGraph  # type: ignore[import-not-found]
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("Install langgraph to build the production intelligence graph") from exc
+
+    graph = StateGraph(IntelligenceWorkflowState)
+    graph.add_node(
+        "initialize_intelligence_state",
+        lambda state: initialize_intelligence_state_node(state, runtime),
+    )
+    graph.add_node(
+        "run_upstream_scraping",
+        lambda state: run_upstream_scraping_node(state, runtime),
+    )
+    graph.add_node(
+        "persist_upstream_artifacts",
+        lambda state: persist_upstream_artifacts_node(state, runtime),
+    )
+    graph.add_node(
+        "run_downstream_for_profiles",
+        lambda state: run_downstream_for_profiles_node(state, runtime),
+    )
+    graph.add_node(
+        "decide_intelligence_final_next_action",
+        lambda state: decide_intelligence_final_next_action_node(state, runtime),
+    )
+
+    graph.set_entry_point("initialize_intelligence_state")
+    graph.add_edge("initialize_intelligence_state", "run_upstream_scraping")
+    graph.add_edge("run_upstream_scraping", "persist_upstream_artifacts")
+    graph.add_edge("persist_upstream_artifacts", "run_downstream_for_profiles")
+    graph.add_edge("run_downstream_for_profiles", "decide_intelligence_final_next_action")
+    graph.add_edge("decide_intelligence_final_next_action", END)
+
+    compile_kwargs = {"checkpointer": checkpointer} if checkpointer is not None else {}
+    return graph.compile(**compile_kwargs)
 
 
 def build_downstream_langgraph(runtime: DownstreamWorkflowRuntime) -> Any:
@@ -211,6 +346,213 @@ def build_downstream_langgraph(runtime: DownstreamWorkflowRuntime) -> Any:
 
 
 build_langgraph = build_downstream_langgraph
+
+
+def initialize_intelligence_state_node(
+    state: IntelligenceWorkflowState,
+    runtime: IntelligenceWorkflowRuntime,
+) -> IntelligenceWorkflowState:
+    return _merge(
+        state,
+        run_id=state.get("run_id", "local-intelligence-run"),
+        branch_decisions=state.get("branch_decisions", ()),
+        errors=state.get("errors", ()),
+        persistence_references=state.get("persistence_references", ()),
+    )
+
+
+def run_upstream_scraping_node(
+    state: IntelligenceWorkflowState,
+    runtime: IntelligenceWorkflowRuntime,
+) -> IntelligenceWorkflowState:
+    if _has_reusable_upstream_artifacts(state):
+        return state
+
+    scraping_state = build_local_scraping_graph(runtime.scraping).invoke(
+        {
+            "run_id": state["run_id"],
+            "query": state["query"],
+            "limit": state.get("limit", runtime.scraping.per_term_limit),
+        }
+    )
+    return _append_upstream_search_errors(_merge(state, **scraping_state))
+
+
+def persist_upstream_artifacts_node(
+    state: IntelligenceWorkflowState,
+    runtime: IntelligenceWorkflowRuntime,
+) -> IntelligenceWorkflowState:
+    if runtime.artifact_store is None:
+        return state
+
+    try:
+        _ensure_persistence_run(runtime.artifact_store, state["run_id"])
+        runtime.artifact_store.save_pipeline_result(state["run_id"], _scraping_result_from_state(state))
+        runtime.artifact_store.save_ai_native_assessments(
+            state["run_id"],
+            state.get("ai_native_assessments_by_profile", {}),
+        )
+    except Exception as exc:
+        return _append_error(
+            state,
+            step="persist_upstream_artifacts",
+            error_type=type(exc).__name__,
+            message=str(exc),
+            audit_reason="upstream_storage_failed_structured_error",
+        )
+
+    return _append_persistence_reference(
+        state,
+        artifact_kind="upstream_run",
+        startup_identifier="*",
+        storage=type(runtime.artifact_store).__name__,
+        reference=state["run_id"],
+    )
+
+
+def _ensure_persistence_run(store: IntelligenceArtifactStore, run_id: str) -> None:
+    load_run = getattr(store, "load_run", None)
+    if callable(load_run):
+        try:
+            load_run(run_id)
+            return
+        except KeyError:
+            pass
+    store.create_run(run_id=run_id)
+
+
+def _scraping_result_from_state(state: IntelligenceWorkflowState) -> ScrapingPipelineResult:
+    return ScrapingPipelineResult(
+        search_params=state["search_params"],
+        search_plan=state["search_plan"],
+        raw_results=state.get("raw_results", ()),
+        candidates=state.get("candidates", ()),
+        collected_pages_by_candidate=state.get("collected_pages_by_candidate", {}),
+        profiles=state.get("profiles", ()),
+        evidence_groups_by_profile=state.get("evidence_groups_by_profile", {}),
+        quality_summary=state["quality_summary"],
+        search_errors=state.get("search_errors", ()),
+    )
+
+
+def _has_reusable_upstream_artifacts(state: IntelligenceWorkflowState) -> bool:
+    return bool(
+        state.get("profiles")
+        and state.get("evidence_groups_by_profile") is not None
+        and state.get("quality_summary") is not None
+        and state.get("ai_native_assessments_by_profile") is not None
+    )
+
+
+def _append_upstream_search_errors(state: IntelligenceWorkflowState) -> IntelligenceWorkflowState:
+    current: IntelligenceWorkflowState = state
+    for search_error in state.get("search_errors", ()):
+        current = _append_error(
+            current,
+            step="execute_search",
+            error_type=search_error.error_type,
+            message=search_error.message,
+            audit_reason="search_adapter_failed_structured_error",
+        )
+    return current
+
+
+def run_downstream_for_profiles_node(
+    state: IntelligenceWorkflowState,
+    runtime: IntelligenceWorkflowRuntime,
+) -> IntelligenceWorkflowState:
+    profiles = state.get("profiles", ())
+    assessments = state.get("ai_native_assessments_by_profile", {})
+    quality_summary = state.get("quality_summary")
+    downstream_states: dict[str, DownstreamWorkflowState] = {}
+    branches: list[DownstreamWorkflowBranch] = list(state.get("branch_decisions", ()))
+    errors: list[DownstreamWorkflowError] = list(state.get("errors", ()))
+    startup_identifiers: list[str] = []
+
+    if quality_summary is None:
+        return _append_error(
+            state,
+            step="run_downstream_for_profiles",
+            error_type="missing_collection_quality",
+            message="Collection quality summary is required before downstream orchestration.",
+            audit_reason="downstream_skipped_missing_collection_quality",
+        )
+
+    for profile in profiles:
+        startup_identifier = profile.company_name.value
+        startup_identifiers.append(startup_identifier)
+        assessment = assessments.get(startup_identifier)
+        if assessment is None:
+            continue
+
+        downstream_workflow = build_local_downstream_workflow(runtime.downstream)
+        downstream_state = downstream_workflow.invoke(
+            {
+                "run_id": state["run_id"],
+                "user_query": state.get("query", ""),
+                "profile": profile,
+                "evidence_groups": state.get("evidence_groups_by_profile", {}).get(
+                    profile_result_key(profile),
+                    (),
+                ),
+                "collection_quality": quality_summary,
+                "assessment": assessment,
+            }
+        )
+        downstream_states[startup_identifier] = downstream_state
+        branches.extend(downstream_state.get("branch_decisions", ()))
+        errors.extend(downstream_state.get("errors", ()))
+
+    corpus_version = _workflow_corpus_version(runtime.downstream, downstream_states)
+    return _merge(
+        state,
+        startup_identifiers=tuple(startup_identifiers),
+        corpus_version=corpus_version,
+        downstream_states_by_startup=downstream_states,
+        branch_decisions=tuple(branches),
+        persistence_references=(
+            *state.get("persistence_references", ()),
+            *_downstream_persistence_references(runtime.downstream, downstream_states),
+        ),
+        errors=tuple(errors),
+    )
+
+
+def decide_intelligence_final_next_action_node(
+    state: IntelligenceWorkflowState,
+    runtime: IntelligenceWorkflowRuntime,
+) -> IntelligenceWorkflowState:
+    downstream_states = state.get("downstream_states_by_startup", {})
+    if downstream_states:
+        if any(item.get("workflow_outcome") == "briefing_generated" for item in downstream_states.values()):
+            outcome = "briefing_generated"
+        elif any(item.get("workflow_outcome") == "human_review_requested" for item in downstream_states.values()):
+            outcome = "human_review_requested"
+        else:
+            outcome = "needs_more_collection_or_human_review"
+        first_state = next(iter(downstream_states.values()))
+        return _merge(
+            state,
+            workflow_outcome=outcome,
+            next_action=first_state.get("next_action", "review_workflow_output"),
+        )
+
+    if state.get("errors"):
+        return _merge(
+            _append_branch(
+                state,
+                branch_name="failed_with_auditable_error",
+                next_action="review_workflow_errors",
+                audit_reason=";".join(dict.fromkeys(error.audit_reason for error in state.get("errors", ()))),
+            ),
+            workflow_outcome="failed_with_auditable_error",
+            next_action="review_workflow_errors",
+        )
+
+    if state.get("next_action") == "needs_more_collection_or_human_review":
+        return _merge(state, workflow_outcome="needs_more_collection_or_human_review")
+
+    return _merge(state, workflow_outcome="needs_more_collection_or_human_review")
 
 
 def initialize_downstream_state_node(
@@ -539,6 +881,55 @@ def _route_after_briefing_generation(state: DownstreamWorkflowState) -> str:
     if _has_branch(state, "human_review_requested"):
         return "human_review_requested"
     return "needs_more_collection_or_human_review"
+
+
+def _workflow_corpus_version(
+    runtime: DownstreamWorkflowRuntime,
+    downstream_states: Mapping[str, DownstreamWorkflowState],
+) -> str:
+    if runtime.corpus is not None:
+        return runtime.corpus.corpus_version
+    for downstream_state in downstream_states.values():
+        for retrieval in downstream_state.get("retrievals", ()):
+            return retrieval.corpus_version
+    return UNKNOWN
+
+
+def _downstream_persistence_references(
+    runtime: DownstreamWorkflowRuntime,
+    downstream_states: Mapping[str, DownstreamWorkflowState],
+) -> tuple[WorkflowPersistenceReference, ...]:
+    if runtime.artifact_store is None:
+        return ()
+    return tuple(
+        WorkflowPersistenceReference(
+            artifact_kind="downstream_artifacts",
+            startup_identifier=startup_identifier,
+            storage=type(runtime.artifact_store).__name__,
+            reference=downstream_state.get("run_id", ""),
+        )
+        for startup_identifier, downstream_state in downstream_states.items()
+    )
+
+
+def _append_persistence_reference(
+    state: IntelligenceWorkflowState,
+    *,
+    artifact_kind: str,
+    startup_identifier: str,
+    storage: str,
+    reference: str,
+) -> IntelligenceWorkflowState:
+    persistence_reference = WorkflowPersistenceReference(
+        artifact_kind=artifact_kind,
+        startup_identifier=startup_identifier,
+        storage=storage,
+        reference=reference,
+    )
+    return _merge(
+        state,
+        persistence_references=(*state.get("persistence_references", ()), persistence_reference),
+    )
 
 
 def _append_error(

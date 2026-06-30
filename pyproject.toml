@@ -37,6 +37,10 @@ reranking = [
 pgvector = [
     "psycopg[binary]",
 ]
+workflow = [
+    "langgraph",
+    "langgraph-checkpoint-postgres",
+]
 
 [project.scripts]
 nvidia-startup-intel = "nvidia_startup_intel.cli:main"
@@ -53,6 +57,7 @@ markers = [
     "playwright_collection_integration: optional real Playwright collection smoke tests, skipped unless explicitly enabled",
     "production_scraping_integration: optional real production scraping smoke tests, skipped unless explicitly enabled",
     "postgres_persistence_integration: optional real Postgres complete-run persistence smoke tests, skipped unless explicitly enabled",
+    "langgraph_checkpoint_integration: optional real LangGraph/Postgres checkpoint smoke tests, skipped unless explicitly enabled",
 ]
 
 [tool.ruff]
