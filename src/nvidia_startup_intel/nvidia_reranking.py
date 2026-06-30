@@ -15,6 +15,14 @@ from nvidia_startup_intel.nvidia_knowledge import (
 
 
 RERANK_SCHEMA_VERSION = "nvidia_rerank.v1"
+RERANK_SCORE_TIE_BREAKERS = (
+    "rerank_score_desc",
+    "original_retrieval_rank",
+    "document_id",
+    "chunk_index",
+    "chunk_id",
+)
+RERANK_REQUIRED_RETRIEVAL_STRATEGY = "hybrid_bm25_vector"
 
 
 @dataclass(frozen=True)
@@ -53,6 +61,9 @@ class NVIDIARerankResult:
     results: tuple[RerankedNVIDIAKnowledge, ...]
     ranking_strategy: str
     audit_reasons: tuple[str, ...]
+    reranker_model_name: str = "unknown"
+    reranker_model_version: str = "unknown"
+    reranker_parameters: dict[str, object] = field(default_factory=dict)
 
 
 class NVIDIAReranker(Protocol):
@@ -109,6 +120,14 @@ class SentenceTransformersCrossEncoderReranker:
                 f"reranker_model:{self.model_name}",
                 f"reranker_model_version:{self.model_version}",
             ),
+            reranker_model_name=self.model_name,
+            reranker_model_version=self.model_version,
+            reranker_parameters={
+                "provider": "sentence-transformers",
+                "candidate_top_k": request.candidate_top_k,
+                "score_function": "cross_encoder_predict",
+                "tie_breakers": RERANK_SCORE_TIE_BREAKERS,
+            },
         )
 
 
@@ -148,6 +167,13 @@ class DeterministicTopKReranker:
             ),
             ranking_strategy="deterministic_fixture_score_desc",
             audit_reasons=("reranked_only_supplied_top_k_candidates",),
+            reranker_model_name="deterministic_fixture_top_k",
+            reranker_model_version="local",
+            reranker_parameters={
+                "candidate_top_k": request.candidate_top_k,
+                "scored_chunk_ids": tuple(self.rerank_scores_by_chunk_id),
+                "tie_breakers": RERANK_SCORE_TIE_BREAKERS,
+            },
         )
 
 
@@ -160,12 +186,14 @@ def rerank_nvidia_retrieval(
     """Rerank only the top K retrieved candidates without creating new facts."""
 
     bounded_top_k = max(candidate_top_k, 0)
+    candidates = tuple(retrieval.results[:bounded_top_k])
+    _validate_rerank_candidate_top_k(candidates)
     request = NVIDIARerankRequest(
         schema_version=RERANK_SCHEMA_VERSION,
         run_id=retrieval.run_id,
         corpus_version=retrieval.corpus_version,
         query=retrieval.query,
-        candidates=tuple(retrieval.results[:bounded_top_k]),
+        candidates=candidates,
         candidate_top_k=bounded_top_k,
     )
     return _validated_rerank_result(reranker.rerank(request), request)
@@ -234,6 +262,14 @@ def _validated_rerank_result(
             raise ValueError(f"reranker_changed_original_retrieval_fields:{chunk_id}")
 
     return result
+
+
+def _validate_rerank_candidate_top_k(candidates: tuple[RetrievedNVIDIAKnowledge, ...]) -> None:
+    for candidate in candidates:
+        if candidate.retrieval_strategy != RERANK_REQUIRED_RETRIEVAL_STRATEGY:
+            raise ValueError(
+                f"reranker_requires_hybrid_candidate_top_k:{candidate.retrieval_strategy}"
+            )
 
 
 def _reranked_candidate(

@@ -7,13 +7,17 @@ from pathlib import Path
 import pytest
 
 from nvidia_startup_intel.ai_native_assessment import TechnicalGap
+from nvidia_startup_intel.nvidia_embeddings import (
+    DeterministicFakeEmbeddingClient,
+    build_nvidia_embedding_index,
+    retrieve_nvidia_knowledge_hybrid,
+)
 from nvidia_startup_intel.nvidia_reranking import (
     DeterministicTopKReranker,
     NVIDIARerankResult,
     nvidia_rerank_result_to_dict,
     rerank_nvidia_retrieval,
 )
-from nvidia_startup_intel.nvidia_retrievers import LocalBM25NVIDIAKnowledgeRetriever
 from nvidia_startup_intel.llm_adapter_smoke import (
     LLMAdapterSmokeError,
     run_langchain_adapter_smoke,
@@ -77,6 +81,8 @@ def test_rerank_smoke_returns_project_owned_contract() -> None:
     corpus = load_nvidia_knowledge_corpus(
         Path("tests/fixtures/nvidia_knowledge_official_fixture.json")
     )
+    embedding_client = DeterministicFakeEmbeddingClient(dimension=6)
+    embedding_index = build_nvidia_embedding_index(corpus, embedding_client)
     gap = TechnicalGap(
         gap_type="model_serving",
         description="Need lower latency inference and production model serving.",
@@ -84,10 +90,16 @@ def test_rerank_smoke_returns_project_owned_contract() -> None:
         confidence=0.88,
         evidences=(),
     )
-    retrieval = LocalBM25NVIDIAKnowledgeRetriever(corpus).retrieve_for_gap(
+    retrieval = retrieve_nvidia_knowledge_hybrid(
+        corpus,
+        embedding_index,
+        embedding_client,
         run_id="run-llm-framework-adapter-smoke",
-        gap=gap,
+        gap_type=gap.gap_type,
+        description=gap.description,
         startup_signals=("self-hosted inference", "latency"),
+        lexical_top_k=2,
+        vector_top_k=2,
         top_k=2,
     )
 
