@@ -49,6 +49,7 @@ markers = [
     "llm_adapter_integration: optional real LLM/framework adapter smoke tests, skipped unless explicitly enabled",
     "playwright_collection_integration: optional real Playwright collection smoke tests, skipped unless explicitly enabled",
     "production_scraping_integration: optional real production scraping smoke tests, skipped unless explicitly enabled",
+    "postgres_persistence_integration: optional real Postgres complete-run persistence smoke tests, skipped unless explicitly enabled",
 ]
 
 [tool.ruff]
