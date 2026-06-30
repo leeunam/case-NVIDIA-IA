@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
+import os
 from typing import Protocol
 
 from nvidia_startup_intel.normalization import normalize_domain, normalize_url, normalize_whitespace
@@ -22,6 +23,9 @@ from nvidia_startup_intel.page_collection import (
 from nvidia_startup_intel.robots import RobotsCache
 from nvidia_startup_intel.scraping_policy import ScrapingPolicy
 from nvidia_startup_intel.search_params import UNKNOWN
+
+
+FIRECRAWL_ENV_PREFIX = "NVIDIA_STARTUP_INTEL_FIRECRAWL_"
 
 
 class CollectionClock(Protocol):
@@ -51,6 +55,33 @@ class FirecrawlClient(Protocol):
         formats: tuple[str, ...],
         only_main_content: bool,
     ) -> object: ...
+
+
+@dataclass(frozen=True)
+class FirecrawlProviderConfig:
+    """Explicit Firecrawl provider config without storing credential values."""
+
+    provider: str = "firecrawl"
+    api_key_env_var: str = "FIRECRAWL_API_KEY"
+    api_key_configured: bool = False
+    api_base: str = ""
+
+
+def firecrawl_provider_config_from_env(
+    env: Mapping[str, str] | None = None,
+) -> FirecrawlProviderConfig:
+    """Build Firecrawl config from environment-style inputs without secrets."""
+
+    source = os.environ if env is None else env
+    api_key_env_var = (
+        source.get(f"{FIRECRAWL_ENV_PREFIX}API_KEY_ENV", "FIRECRAWL_API_KEY").strip()
+        or "FIRECRAWL_API_KEY"
+    )
+    return FirecrawlProviderConfig(
+        api_key_env_var=api_key_env_var,
+        api_key_configured=bool(source.get(api_key_env_var, "").strip()),
+        api_base=source.get(f"{FIRECRAWL_ENV_PREFIX}API_BASE", "").strip(),
+    )
 
 
 class ScrapyCrawler(Protocol):
@@ -103,6 +134,7 @@ class FirecrawlCollectionAdapter:
     """Firecrawl clean extraction adapter returning PageCollectionResult."""
 
     client: FirecrawlClient
+    provider_config: FirecrawlProviderConfig = field(default_factory=FirecrawlProviderConfig)
     formats: tuple[str, ...] = ("markdown", "html")
     only_main_content: bool = True
     scraping_policy: ScrapingPolicy | None = None

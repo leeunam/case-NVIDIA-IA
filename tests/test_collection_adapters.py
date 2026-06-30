@@ -1,9 +1,12 @@
+from dataclasses import asdict
 from datetime import UTC, datetime
+import json
 
 from nvidia_startup_intel.collection_adapters import (
     FirecrawlCollectionAdapter,
     PublicPageCollectionAdapter,
     ScrapyCollectionAdapter,
+    firecrawl_provider_config_from_env,
 )
 from nvidia_startup_intel.page_collection import FetchResponse, PageCollectionResult
 from nvidia_startup_intel.scraping_policy import ScrapingPolicy
@@ -72,6 +75,22 @@ def test_firecrawl_adapter_accepts_sdk_data_payload_without_leaking_provider_sha
     assert result.pages[0].url == "https://startup.ai/data"
     assert result.pages[0].title == "Startup AI Data"
     assert result.pages[0].main_text == "Texto limpo dentro do payload data."
+
+
+def test_firecrawl_provider_config_records_credential_env_var_without_secret() -> None:
+    config = firecrawl_provider_config_from_env(
+        {
+            "NVIDIA_STARTUP_INTEL_FIRECRAWL_API_KEY_ENV": "FIRECRAWL_API_KEY",
+            "FIRECRAWL_API_KEY": "secret-token-from-env",
+        }
+    )
+
+    assert config.provider == "firecrawl"
+    assert config.api_key_env_var == "FIRECRAWL_API_KEY"
+    assert config.api_key_configured is True
+
+    serialized_config = json.dumps(asdict(config))
+    assert "secret-token-from-env" not in serialized_config
 
 
 def test_scrapy_adapter_returns_project_collection_contract_from_structured_crawl() -> None:
