@@ -7,9 +7,11 @@ recommendations, generate briefings, call providers, or touch persistence.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, fields, is_dataclass
 
+from nvidia_startup_intel.gap_space_assessment import GapSpaceAssessment, GapSpaceMapping
 from nvidia_startup_intel.nvidia_reranking import NVIDIARerankResult
 from nvidia_startup_intel.normalization import normalize_text
 from nvidia_startup_intel.nvidia_knowledge import NVIDIAKnowledgeRetrieval, RetrievedNVIDIAKnowledge
@@ -18,6 +20,7 @@ from nvidia_startup_intel.search_params import UNKNOWN
 
 
 SCHEMA_VERSION = "downstream_metrics.v1"
+GAP_SPACE_METRICS_SCHEMA_VERSION = "gap_space_metrics.v1"
 
 
 @dataclass(frozen=True)
@@ -117,6 +120,24 @@ class DownstreamQualityReport:
     corpus_version: str
     retrieval_metrics: DownstreamRetrievalMetrics
     recommendation_metrics: DownstreamRecommendationMetrics
+
+
+@dataclass(frozen=True)
+class GapSpaceMetrics:
+    schema_version: str
+    run_id: str
+    startup_identifier: str
+    corpus_version: str
+    technical_gap_count: int
+    taxonomy_supported_gap_count: int
+    unsupported_gap_count: int
+    commercial_opportunity_count: int
+    taxonomy_supported_commercial_opportunity_count: int
+    gap_coverage: float
+    false_or_weak_gap_targets: tuple[str, ...]
+    human_review_reason_counts: tuple[tuple[str, int], ...]
+    evidence_collection_targets: tuple[str, ...]
+    retrieval_query_count: int
 
 
 @dataclass(frozen=True)
@@ -267,6 +288,32 @@ def summarize_downstream_recommendation_metrics(
     )
 
 
+def summarize_gap_space_metrics(gap_space_assessment: GapSpaceAssessment) -> GapSpaceMetrics:
+    """Summarize deterministic gap-space coverage and review targets."""
+
+    mappings = gap_space_assessment.mappings
+    commercial_mappings = gap_space_assessment.commercial_mappings
+    taxonomy_supported_gap_count = sum(1 for mapping in mappings if mapping.taxonomy_targets)
+    unsupported_gap_count = sum(1 for mapping in mappings if mapping.support_status == "unsupported")
+    commercial_supported_count = sum(1 for mapping in commercial_mappings if mapping.taxonomy_targets)
+    return GapSpaceMetrics(
+        schema_version=GAP_SPACE_METRICS_SCHEMA_VERSION,
+        run_id=gap_space_assessment.run_id,
+        startup_identifier=gap_space_assessment.startup_identifier,
+        corpus_version=gap_space_assessment.corpus_version,
+        technical_gap_count=len(mappings),
+        taxonomy_supported_gap_count=taxonomy_supported_gap_count,
+        unsupported_gap_count=unsupported_gap_count,
+        commercial_opportunity_count=len(commercial_mappings),
+        taxonomy_supported_commercial_opportunity_count=commercial_supported_count,
+        gap_coverage=_ratio(taxonomy_supported_gap_count, len(mappings)),
+        false_or_weak_gap_targets=_false_or_weak_gap_targets(mappings),
+        human_review_reason_counts=_reason_counts(_human_review_reasons(gap_space_assessment)),
+        evidence_collection_targets=_gap_space_evidence_collection_targets(gap_space_assessment),
+        retrieval_query_count=len(gap_space_assessment.retrieval_queries),
+    )
+
+
 def compare_rerank_retrieval_quality(
     *,
     run_id: str,
@@ -328,6 +375,12 @@ def rerank_quality_comparison_to_dict(comparison: RerankQualityComparison) -> di
     """Convert a rerank quality comparison to JSON-serializable dictionaries."""
 
     return _to_plain_data(comparison)
+
+
+def gap_space_metrics_to_dict(metrics: GapSpaceMetrics) -> dict[str, object]:
+    """Convert gap-space metrics to JSON-serializable dictionaries."""
+
+    return _to_plain_data(metrics)
 
 
 def _retrieval_metric_case(
@@ -522,6 +575,54 @@ def _case_improvement_targets(
     if "expected_citation_not_retrieved" in failure_reasons and retrieved_count > 0:
         return (f"inspect_query_or_ranking_for:{target}",)
     return (f"measure_before_framework_change_for:{target}",)
+
+
+def _false_or_weak_gap_targets(mappings: tuple[GapSpaceMapping, ...]) -> tuple[str, ...]:
+    weak_reasons = {
+        "unsupported_gap_type",
+        "missing_observed_gap_evidence",
+        "low_gap_confidence",
+        "upstream_gap_is_hypothesis",
+    }
+    return _deduplicate(
+        mapping.gap_type
+        for mapping in mappings
+        if any(reason in weak_reasons for reason in mapping.review_reasons)
+    )
+
+
+def _human_review_reasons(gap_space_assessment: GapSpaceAssessment) -> tuple[str, ...]:
+    if not gap_space_assessment.quality.requires_human_review:
+        return ()
+    return tuple(
+        reason
+        for reason in gap_space_assessment.quality.reasons
+        if reason != "gap_space_ready_for_recommendation"
+    )
+
+
+def _reason_counts(reasons: tuple[str, ...]) -> tuple[tuple[str, int], ...]:
+    counts = Counter(reasons)
+    return tuple((reason, counts[reason]) for reason in dict.fromkeys(reasons))
+
+
+def _gap_space_evidence_collection_targets(
+    gap_space_assessment: GapSpaceAssessment,
+) -> tuple[str, ...]:
+    targets: list[str] = []
+    for reason in gap_space_assessment.quality.reasons:
+        if reason.startswith("unknown_field:"):
+            targets.append(reason.split(":", maxsplit=1)[1])
+        elif reason == "collection_quality_not_ready":
+            targets.append("collection_quality")
+
+    for mapping in gap_space_assessment.mappings:
+        if "missing_observed_gap_evidence" in mapping.review_reasons:
+            targets.append(mapping.gap_type)
+    for mapping in gap_space_assessment.commercial_mappings:
+        if "missing_observed_opportunity_evidence" in mapping.review_reasons:
+            targets.append(mapping.opportunity_type)
+    return _deduplicate(targets)
 
 
 def _framework_change_assessment(cases: tuple[RetrievalMetricCase, ...]) -> tuple[str, ...]:

@@ -294,26 +294,22 @@ def retrieve_nvidia_knowledge_node(
     assessment = state["assessment"]
     profile = state["profile"]
     gap_space_assessment = state.get("gap_space_assessment")
-    gap_space_mappings = (
-        {mapping.gap_type: mapping for mapping in gap_space_assessment.mappings}
-        if gap_space_assessment is not None
-        else {}
-    )
     retrievals: list[NVIDIAKnowledgeRetrieval] = []
     try:
-        for gap in assessment.technical_gaps:
-            if gap.gap_type == UNKNOWN:
-                continue
-            mapping = gap_space_mappings.get(gap.gap_type)
-            retrieve_for_query = getattr(retriever, "retrieve_for_query", None)
-            if mapping is not None and callable(retrieve_for_query):
+        retrieve_for_query = getattr(retriever, "retrieve_for_query", None)
+        if gap_space_assessment is not None and callable(retrieve_for_query):
+            for query_request in gap_space_assessment.retrieval_requests:
                 retrievals.append(
                     retrieve_for_query(
                         run_id=state.get("run_id", assessment.run_id),
-                        query=mapping.retrieval_request,
+                        query=query_request,
                         top_k=runtime.retrieval_top_k,
                     )
                 )
+            return _merge(state, retrievals=tuple(retrievals))
+
+        for gap in assessment.technical_gaps:
+            if gap.gap_type == UNKNOWN:
                 continue
             retrievals.append(
                 retriever.retrieve_for_gap(
@@ -368,13 +364,17 @@ def build_recommendations_node(
     state: DownstreamWorkflowState,
     runtime: DownstreamWorkflowRuntime,
 ) -> DownstreamWorkflowState:
+    gap_space_assessment = state.get("gap_space_assessment")
     recommendation_set = build_nvidia_recommendations(
         profile=state["profile"],
         evidence_groups=state.get("evidence_groups", ()),
         collection_quality=state["collection_quality"],
         assessment=state["assessment"],
         retrievals=state.get("retrievals", ()),
-        gap_space_assessment=state.get("gap_space_assessment"),
+        commercial_opportunities=gap_space_assessment.commercial_opportunities
+        if gap_space_assessment is not None
+        else (),
+        gap_space_assessment=gap_space_assessment,
     )
     return _merge(state, recommendation_set=recommendation_set)
 
