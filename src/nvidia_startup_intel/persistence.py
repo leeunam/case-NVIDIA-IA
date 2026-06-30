@@ -58,6 +58,11 @@ class JsonDownstreamArtifactStore:
                 _downstream_artifact_path(self.run, briefing.startup_identifier, briefing.filename),
                 briefing.payload,
             )
+        for metrics in snapshot.metrics:
+            _write_json(
+                _downstream_artifact_path(self.run, metrics.startup_identifier, metrics.filename),
+                metrics.payload,
+            )
 
 
 def create_pipeline_run(

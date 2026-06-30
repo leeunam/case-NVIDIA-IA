@@ -6,6 +6,10 @@ import unittest
 
 from nvidia_startup_intel.ai_native_assessment import AINativeAssessment, DiagnosticQuality, TechnicalGap
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
+from nvidia_startup_intel.downstream_metrics import (
+    RetrievalMetricExpectation,
+    build_downstream_quality_report,
+)
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
 from nvidia_startup_intel.llm_adapters import LLMGenerationRequest, LLMGenerationResponse
 from nvidia_startup_intel.nvidia_knowledge import NVIDIAKnowledgeRetrieval, load_nvidia_knowledge_corpus
@@ -186,6 +190,49 @@ class DownstreamPersistenceTests(unittest.TestCase):
                 medai_recommendation_set["technical_recommendations"][0]["recommendation_id"],
             )
 
+    def test_json_downstream_snapshots_include_metrics_when_supplied(self) -> None:
+        with TemporaryDirectory() as base_dir:
+            run = create_pipeline_run(base_dir, run_id="run-json-metrics")
+            startup_evidence = _startup_evidence(
+                snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
+            )
+            workflow = build_local_downstream_workflow(
+                DownstreamWorkflowRuntime(corpus=load_nvidia_knowledge_corpus(_fixture_path()))
+            )
+            state = workflow.invoke(
+                {
+                    "run_id": run.run_id,
+                    "profile": _profile(startup_evidence),
+                    "evidence_groups": (_evidence_group(startup_evidence),),
+                    "collection_quality": _collection_quality(),
+                    "assessment": _assessment(_model_serving_gap(startup_evidence), run_id=run.run_id),
+                }
+            )
+            metrics = build_downstream_quality_report(
+                run_id=run.run_id,
+                startup_identifier="VetAI",
+                retrievals=state["retrievals"],
+                retrieval_expectations=(
+                    RetrievalMetricExpectation(
+                        expectation_id="model-serving-nim",
+                        target_type="technical_gap",
+                        target="model_serving",
+                        expected_chunk_ids=("nvidia-nim-developers:0",),
+                    ),
+                ),
+                recommendation_set=state["recommendation_set"],
+            )
+
+            JsonDownstreamArtifactStore(run).save_downstream_state(
+                {**state, "downstream_quality_report": metrics}
+            )
+
+            metrics_payload = load_json(run.processed_dir / "downstream" / "VetAI" / "metrics.json")
+            self.assertEqual(metrics_payload["schema_version"], "downstream_metrics.v1")
+            self.assertEqual(metrics_payload["run_id"], "run-json-metrics")
+            self.assertEqual(metrics_payload["startup_identifier"], "VetAI")
+            self.assertEqual(metrics_payload["retrieval_metrics"]["f1"], 1.0)
+
     def test_sql_repository_persists_downstream_payloads_by_run_and_startup(self) -> None:
         repository = sqlite_repository()
         run_id = repository.create_run(run_id="run-sql-downstream")
@@ -311,6 +358,123 @@ class DownstreamPersistenceTests(unittest.TestCase):
         self.assertEqual(stored_after.retrievals, stored_before.retrievals)
         self.assertEqual(len(stored_after.recommendation_sets), 1)
         self.assertEqual(len(stored_after.briefings), 1)
+
+    def test_sql_repository_reprocessing_snapshot_requires_matching_corpus_version(self) -> None:
+        repository = sqlite_repository()
+        run_id = repository.create_run(run_id="run-sql-reprocess-match")
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
+        )
+        workflow = build_local_downstream_workflow(
+            DownstreamWorkflowRuntime(
+                corpus=load_nvidia_knowledge_corpus(_fixture_path()),
+                artifact_store=repository,
+            )
+        )
+        workflow.invoke(
+            {
+                "run_id": run_id,
+                "profile": _profile(startup_evidence),
+                "evidence_groups": (_evidence_group(startup_evidence),),
+                "collection_quality": _collection_quality(),
+                "assessment": _assessment(_model_serving_gap(startup_evidence), run_id=run_id),
+            }
+        )
+
+        input_fingerprint = repository.build_operational_input_fingerprint(
+            run_id,
+            startup_identifier="VetAI",
+        )
+        matching = repository.load_downstream_artifacts_for_reprocessing(
+            run_id,
+            startup_identifier="VetAI",
+            corpus_version="official-nvidia-fixture.v1",
+            input_fingerprint=input_fingerprint,
+        )
+        stale = repository.load_downstream_artifacts_for_reprocessing(
+            run_id,
+            startup_identifier="VetAI",
+            corpus_version="official-nvidia-fixture.v2",
+            input_fingerprint=input_fingerprint,
+        )
+        changed_inputs = repository.load_downstream_artifacts_for_reprocessing(
+            run_id,
+            startup_identifier="VetAI",
+            corpus_version="official-nvidia-fixture.v1",
+            input_fingerprint="sha256:changed-inputs",
+        )
+
+        self.assertEqual(repository.load_run(run_id).collected_pages, ())
+        self.assertEqual(matching.retrievals[0]["corpus_version"], "official-nvidia-fixture.v1")
+        self.assertTrue(matching.retrievals[0]["created_at"])
+        self.assertEqual(matching.recommendation_sets[0]["corpus_version"], "official-nvidia-fixture.v1")
+        self.assertTrue(matching.recommendation_sets[0]["created_at"])
+        self.assertEqual(matching.briefings[0]["schema_version"], "executive_briefing.v1")
+        self.assertTrue(matching.briefings[0]["created_at"])
+        self.assertEqual(stale.retrievals, ())
+        self.assertEqual(stale.recommendation_sets, ())
+        self.assertEqual(stale.briefings, ())
+        self.assertEqual(stale.metrics, ())
+        self.assertEqual(changed_inputs.retrievals, ())
+        self.assertEqual(changed_inputs.recommendation_sets, ())
+        self.assertEqual(changed_inputs.briefings, ())
+        self.assertEqual(changed_inputs.metrics, ())
+
+    def test_sql_repository_loads_complete_operational_run_with_downstream_metrics(self) -> None:
+        repository = sqlite_repository()
+        run_id = repository.create_run(run_id="run-sql-complete")
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
+        )
+        assessment = _assessment(_model_serving_gap(startup_evidence), run_id=run_id)
+        repository.save_startup_profiles(run_id, (_profile(startup_evidence),))
+        repository.save_field_evidences(run_id, {"VetAI": (_evidence_group(startup_evidence),)})
+        repository.save_collection_quality(run_id, _collection_quality())
+        repository.save_ai_native_assessments(run_id, {"VetAI": assessment})
+        workflow = build_local_downstream_workflow(
+            DownstreamWorkflowRuntime(
+                corpus=load_nvidia_knowledge_corpus(_fixture_path()),
+                artifact_store=repository,
+            )
+        )
+
+        state = workflow.invoke(
+            {
+                "run_id": run_id,
+                "profile": _profile(startup_evidence),
+                "evidence_groups": (_evidence_group(startup_evidence),),
+                "collection_quality": _collection_quality(),
+                "assessment": assessment,
+            }
+        )
+        metrics = build_downstream_quality_report(
+            run_id=run_id,
+            startup_identifier="VetAI",
+            retrievals=state["retrievals"],
+            retrieval_expectations=(
+                RetrievalMetricExpectation(
+                    expectation_id="model-serving-nim",
+                    target_type="technical_gap",
+                    target="model_serving",
+                    expected_chunk_ids=("nvidia-nim-developers:0",),
+                ),
+            ),
+            recommendation_set=state["recommendation_set"],
+        )
+        repository.save_downstream_quality_report(run_id, metrics)
+
+        stored = repository.load_operational_run(run_id, startup_identifier="VetAI")
+
+        self.assertEqual(stored.run_id, run_id)
+        self.assertEqual(stored.startup_identifier, "VetAI")
+        self.assertEqual(stored.upstream.startup_profiles[0]["schema_version"], "startup_profile.v1")
+        self.assertEqual(stored.upstream.ai_native_assessments[0]["schema_version"], "ai_native_assessment.v1")
+        self.assertEqual(stored.downstream.retrievals[0]["schema_version"], "nvidia_knowledge.v1")
+        self.assertEqual(stored.downstream.recommendation_sets[0]["schema_version"], "nvidia_recommendation.v1")
+        self.assertEqual(stored.downstream.briefings[0]["schema_version"], "executive_briefing.v1")
+        self.assertEqual(stored.downstream.metrics[0]["schema_version"], "downstream_metrics.v1")
+        self.assertEqual(stored.downstream.metrics[0]["startup_identifier"], "VetAI")
+        self.assertEqual(stored.downstream.metrics[0]["retrieval_metrics"]["f1"], 1.0)
 
 
 class GroqNarrativeLLM:

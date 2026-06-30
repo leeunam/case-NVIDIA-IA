@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS downstream_retrievals (
     corpus_version TEXT NOT NULL,
     retrieval_strategy TEXT NOT NULL,
     position INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
     payload_json TEXT NOT NULL
 );
 
@@ -99,6 +100,7 @@ CREATE TABLE IF NOT EXISTS downstream_recommendations (
     corpus_version TEXT NOT NULL,
     final_nvidia_opportunity_priority TEXT NOT NULL,
     ready_for_briefing INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
     payload_json TEXT NOT NULL
 );
 
@@ -108,6 +110,17 @@ CREATE TABLE IF NOT EXISTS downstream_briefings (
     startup_identifier TEXT NOT NULL,
     briefing_type TEXT NOT NULL,
     status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    payload_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS downstream_metrics (
+    id BIGSERIAL PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES pipeline_runs(run_id) ON DELETE CASCADE,
+    startup_identifier TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    corpus_version TEXT NOT NULL,
+    created_at TEXT NOT NULL,
     payload_json TEXT NOT NULL
 );
 
@@ -125,6 +138,7 @@ CREATE INDEX IF NOT EXISTS idx_ai_native_assessments_run_id ON ai_native_assessm
 CREATE INDEX IF NOT EXISTS idx_downstream_retrievals_run_startup ON downstream_retrievals(run_id, startup_identifier);
 CREATE INDEX IF NOT EXISTS idx_downstream_recommendations_run_startup ON downstream_recommendations(run_id, startup_identifier);
 CREATE INDEX IF NOT EXISTS idx_downstream_briefings_run_startup ON downstream_briefings(run_id, startup_identifier);
+CREATE INDEX IF NOT EXISTS idx_downstream_metrics_run_startup ON downstream_metrics(run_id, startup_identifier);
 
 CREATE TABLE IF NOT EXISTS nvidia_knowledge_documents (
     id BIGSERIAL PRIMARY KEY,

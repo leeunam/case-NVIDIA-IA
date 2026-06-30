@@ -250,6 +250,16 @@ PYTHONPATH=src python -m nvidia_startup_intel collect-startup https://startup.ai
 
 Por padrão, o comando respeita `robots.txt`, usa Playwright com extração `trafilatura` + BeautifulSoup quando disponíveis e grava um diretório `runs/<run_id>/` com `raw/collected_pages.json`, `processed/startup_profiles.json`, `processed/field_evidences.json` e `processed/collection_quality.json`. O mesmo `run_id` é salvo no Postgres com páginas coletadas, erros de coleta, perfil, evidências por campo e qualidade.
 
+Para validar o caminho operacional completo de persistência Postgres com fixture local, rode o smoke opt-in. Ele aplica o schema via repositório, persiste coleta, perfil, evidências, qualidade, AI-Native Assessment, retrievals NVIDIA, Recommendation Set, briefing e métricas downstream, e valida que os artifacts podem ser recarregados para reprocessamento quando o `corpus_version` bate.
+
+```bash
+docker compose up -d postgres
+NVIDIA_STARTUP_INTEL_RUN_POSTGRES_PERSISTENCE_SMOKE=1 \
+PYTHONPATH=src python -m nvidia_startup_intel.postgres_persistence_smoke
+```
+
+Esse smoke exige `psycopg` apenas no ambiente usado para validação opcional. A suíte default continua usando SQLite/fakes e não depende de Postgres real, rede, credenciais, LangGraph, LLM ou embedding real.
+
 ## Validação Opcional LLM Adapters
 
 LiteLLM e LangChain não fazem parte da suíte local padrão. A validação default continua usando fakes e contract tests, sem rede, credenciais, chamadas reais de LLM, LiteLLM ou LangChain instalados.

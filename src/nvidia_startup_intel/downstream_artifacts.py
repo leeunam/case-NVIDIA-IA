@@ -11,6 +11,7 @@ from nvidia_startup_intel.briefing import (
     executive_briefing_to_dict,
     human_review_briefing_to_dict,
 )
+from nvidia_startup_intel.downstream_metrics import downstream_quality_report_to_dict
 from nvidia_startup_intel.nvidia_knowledge import nvidia_knowledge_retrieval_to_dict
 from nvidia_startup_intel.nvidia_recommendation import nvidia_recommendation_set_to_dict
 
@@ -44,12 +45,23 @@ class DownstreamBriefingArtifact:
 
 
 @dataclass(frozen=True)
+class DownstreamMetricsArtifact:
+    report: Any
+    startup_identifier: str
+    schema_version: str
+    corpus_version: str
+    filename: str
+    payload: dict[str, object]
+
+
+@dataclass(frozen=True)
 class DownstreamArtifactSnapshot:
     run_id: str
     startup_identifier: str
     retrievals: tuple[DownstreamRetrievalArtifact, ...]
     recommendation: DownstreamRecommendationArtifact | None
     briefings: tuple[DownstreamBriefingArtifact, ...]
+    metrics: tuple[DownstreamMetricsArtifact, ...]
 
 
 def build_downstream_artifact_snapshot(state: Mapping[str, Any]) -> DownstreamArtifactSnapshot:
@@ -82,6 +94,7 @@ def build_downstream_artifact_snapshot(state: Mapping[str, Any]) -> DownstreamAr
             for briefing in (executive_briefing, human_review_briefing, briefing_narrative)
             if briefing is not None
         ),
+        metrics=tuple(build_downstream_metrics_artifact(report) for report in _downstream_metric_reports(state)),
     )
 
 
@@ -117,6 +130,27 @@ def build_downstream_briefing_artifact(briefing: Any) -> DownstreamBriefingArtif
         filename=downstream_briefing_filename(briefing_type),
         payload=downstream_briefing_payload(briefing, briefing_type=briefing_type),
     )
+
+
+def build_downstream_metrics_artifact(report: Any) -> DownstreamMetricsArtifact:
+    payload = downstream_quality_report_to_dict(report)
+    return DownstreamMetricsArtifact(
+        report=report,
+        startup_identifier=str(payload.get("startup_identifier", "unknown")),
+        schema_version=str(payload.get("schema_version", "unknown")),
+        corpus_version=str(payload.get("corpus_version", "unknown")),
+        filename="metrics.json",
+        payload=payload,
+    )
+
+
+def _downstream_metric_reports(state: Mapping[str, Any]) -> tuple[Any, ...]:
+    report = state.get("downstream_quality_report")
+    if report is None:
+        return ()
+    if isinstance(report, Sequence) and not isinstance(report, (str, bytes, bytearray, Mapping)):
+        return tuple(report)
+    return (report,)
 
 
 def downstream_startup_identifier(
