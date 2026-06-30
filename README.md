@@ -174,6 +174,7 @@ O guia operacional completo está em [Arquitetura de produção para scraping, r
 - [Roadmap de hardening de scraping](context/roadmap-scraping-hardening.md)
 - [Adapters de coleta](context/collection-adapters.md)
 - [Arquitetura de produção para scraping, retrieval, LangGraph e LLM](context/production-retrieval-and-scraping-architecture.md)
+- [Production Smoke Matrix](context/production-smoke-matrix.md)
 - [ADRs](context/adr)
 
 ## Validação
