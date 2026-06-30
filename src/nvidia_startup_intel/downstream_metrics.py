@@ -48,6 +48,7 @@ class RetrievalMetricCase:
     recall: float
     precision: float
     f1: float
+    top_1_expected: bool
     covered: bool
     failure_reasons: tuple[str, ...]
     improvement_targets: tuple[str, ...]
@@ -68,10 +69,22 @@ class DownstreamRetrievalMetrics:
     precision: float
     f1: float
     coverage: float
+    top_1_expected_count: int
     cases: tuple[RetrievalMetricCase, ...]
     failure_reasons: tuple[str, ...]
     improvement_targets: tuple[str, ...]
     framework_change_assessment: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RetrievalStrategyQualityComparison:
+    schema_version: str
+    run_id: str
+    corpus_version: str
+    compared_retrieval_strategies: tuple[str, ...]
+    metrics_by_strategy: tuple[DownstreamRetrievalMetrics, ...]
+    best_f1_retrieval_strategy: str
+    best_top_1_retrieval_strategy: str
 
 
 @dataclass(frozen=True)
@@ -166,6 +179,7 @@ def summarize_downstream_retrieval_metrics(
     retrieved_count = sum(case.retrieved_citation_count for case in cases)
     matched_count = sum(case.matched_expected_citation_count for case in cases)
     covered_count = sum(1 for case in cases if case.covered)
+    top_1_expected_count = sum(1 for case in cases if case.top_1_expected)
     recall = _ratio(matched_count, expected_count)
     precision = _ratio(matched_count, retrieved_count)
     return DownstreamRetrievalMetrics(
@@ -182,10 +196,42 @@ def summarize_downstream_retrieval_metrics(
         precision=precision,
         f1=_f1(precision=precision, recall=recall),
         coverage=_ratio(covered_count, len(cases)),
+        top_1_expected_count=top_1_expected_count,
         cases=cases,
         failure_reasons=_deduplicate(reason for case in cases for reason in case.failure_reasons),
         improvement_targets=_deduplicate(target for case in cases for target in case.improvement_targets),
         framework_change_assessment=_framework_change_assessment(cases),
+    )
+
+
+def compare_downstream_retrieval_strategy_metrics(
+    *,
+    run_id: str,
+    corpus_version: str,
+    retrievals_by_strategy: tuple[tuple[NVIDIAKnowledgeRetrieval, ...], ...],
+    expectations: tuple[RetrievalMetricExpectation, ...],
+) -> RetrievalStrategyQualityComparison:
+    """Compare retrieval quality across independently executed retrieval strategies."""
+
+    metrics_by_strategy = tuple(
+        summarize_downstream_retrieval_metrics(
+            run_id=run_id,
+            corpus_version=corpus_version,
+            retrievals=retrievals,
+            expectations=expectations,
+        )
+        for retrievals in retrievals_by_strategy
+    )
+    return RetrievalStrategyQualityComparison(
+        schema_version=SCHEMA_VERSION,
+        run_id=run_id,
+        corpus_version=corpus_version,
+        compared_retrieval_strategies=tuple(
+            metrics.retrieval_strategy for metrics in metrics_by_strategy
+        ),
+        metrics_by_strategy=metrics_by_strategy,
+        best_f1_retrieval_strategy=_best_retrieval_strategy_by_f1(metrics_by_strategy),
+        best_top_1_retrieval_strategy=_best_retrieval_strategy_by_top_1(metrics_by_strategy),
     )
 
 
@@ -270,6 +316,14 @@ def downstream_quality_report_to_dict(report: DownstreamQualityReport) -> dict[s
     return _to_plain_data(report)
 
 
+def retrieval_strategy_comparison_to_dict(
+    comparison: RetrievalStrategyQualityComparison,
+) -> dict[str, object]:
+    """Convert a retrieval strategy comparison to JSON-serializable dictionaries."""
+
+    return _to_plain_data(comparison)
+
+
 def rerank_quality_comparison_to_dict(comparison: RerankQualityComparison) -> dict[str, object]:
     """Convert a rerank quality comparison to JSON-serializable dictionaries."""
 
@@ -296,6 +350,7 @@ def _retrieval_metric_case(
     matched_count = len(matched_chunk_ids) + len(matched_document_ids)
     recall = _ratio(matched_count, expected_count)
     precision = _ratio(matched_count, retrieved_count)
+    top_1_expected = _top_1_matches_expectation(expectation, retrieval)
     covered = expected_count > 0 and matched_count == expected_count
     failure_reasons = _case_failure_reasons(
         retrieval=retrieval,
@@ -321,6 +376,7 @@ def _retrieval_metric_case(
         recall=recall,
         precision=precision,
         f1=_f1(precision=precision, recall=recall),
+        top_1_expected=top_1_expected,
         covered=covered,
         failure_reasons=failure_reasons,
         improvement_targets=_case_improvement_targets(
@@ -374,18 +430,24 @@ def _top_1_expected_count(
     expectations: tuple[RetrievalMetricExpectation, ...],
     retrievals: tuple[NVIDIAKnowledgeRetrieval, ...],
 ) -> int:
-    count = 0
-    for expectation in expectations:
-        retrieval = _matching_retrieval(expectation, retrievals)
-        if retrieval is None or not retrieval.results:
-            continue
-        top_result = retrieval.results[0]
-        if (
-            top_result.chunk.chunk_id in expectation.expected_chunk_ids
-            or top_result.citation.document_id in expectation.expected_document_ids
-        ):
-            count += 1
-    return count
+    return sum(
+        1
+        for expectation in expectations
+        if _top_1_matches_expectation(expectation, _matching_retrieval(expectation, retrievals))
+    )
+
+
+def _top_1_matches_expectation(
+    expectation: RetrievalMetricExpectation,
+    retrieval: NVIDIAKnowledgeRetrieval | None,
+) -> bool:
+    if retrieval is None or not retrieval.results:
+        return False
+    top_result = retrieval.results[0]
+    return (
+        top_result.chunk.chunk_id in expectation.expected_chunk_ids
+        or top_result.citation.document_id in expectation.expected_document_ids
+    )
 
 
 def _retrieval_matches_query_terms(
@@ -506,6 +568,38 @@ def _aggregate_rerank_ranking_strategy(rerank_results: tuple[NVIDIARerankResult,
     if len(strategies) == 1:
         return strategies[0]
     return "mixed"
+
+
+def _best_retrieval_strategy_by_f1(metrics_by_strategy: tuple[DownstreamRetrievalMetrics, ...]) -> str:
+    if not metrics_by_strategy:
+        return UNKNOWN
+    return max(
+        enumerate(metrics_by_strategy),
+        key=lambda item: (
+            item[1].f1,
+            item[1].coverage,
+            item[1].precision,
+            item[1].top_1_expected_count,
+            -item[0],
+        ),
+    )[1].retrieval_strategy
+
+
+def _best_retrieval_strategy_by_top_1(
+    metrics_by_strategy: tuple[DownstreamRetrievalMetrics, ...],
+) -> str:
+    if not metrics_by_strategy:
+        return UNKNOWN
+    return max(
+        enumerate(metrics_by_strategy),
+        key=lambda item: (
+            item[1].top_1_expected_count,
+            item[1].f1,
+            item[1].coverage,
+            item[1].precision,
+            -item[0],
+        ),
+    )[1].retrieval_strategy
 
 
 def _rerank_comparison_corpus_version(
