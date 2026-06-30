@@ -2,6 +2,11 @@
 
 Este documento mapeia a passagem do core deterministico atual para uma arquitetura robusta de producao. Ele nao substitui os contratos existentes; ele define quais adapters entram quando a validacao sair do modo local/fake.
 
+A rota operacional consolidada para validar integracoes reais antes de demo ou producao esta em
+`context/production-smoke-matrix.md`. A matriz mantem Playwright, Postgres, pgvector, embeddings
+reais, retrieval hibrido, reranking, LangGraph checkpoint e Groq/LiteLLM como caminhos opt-in,
+sem entrar na suite local default.
+
 ## Decisao Principal
 
 Nao substituir o core deterministico por frameworks.

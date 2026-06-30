@@ -62,6 +62,7 @@ markers = [
     "production_scraping_integration: optional real production scraping smoke tests, skipped unless explicitly enabled",
     "postgres_persistence_integration: optional real Postgres complete-run persistence smoke tests, skipped unless explicitly enabled",
     "langgraph_checkpoint_integration: optional real LangGraph/Postgres checkpoint smoke tests, skipped unless explicitly enabled",
+    "production_smoke_matrix_integration: optional real production smoke matrix, skipped unless explicitly enabled",
 ]
 
 [tool.ruff]
