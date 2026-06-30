@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS downstream_retrievals (
     corpus_version TEXT NOT NULL,
     retrieval_strategy TEXT NOT NULL,
     position INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
     payload_json TEXT NOT NULL
 );
 
@@ -99,6 +100,7 @@ CREATE TABLE IF NOT EXISTS downstream_recommendations (
     corpus_version TEXT NOT NULL,
     final_nvidia_opportunity_priority TEXT NOT NULL,
     ready_for_briefing INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
     payload_json TEXT NOT NULL
 );
 
@@ -108,6 +110,7 @@ CREATE TABLE IF NOT EXISTS downstream_briefings (
     startup_identifier TEXT NOT NULL,
     briefing_type TEXT NOT NULL,
     status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
     payload_json TEXT NOT NULL
 );
 

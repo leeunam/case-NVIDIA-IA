@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import UTC, datetime
 from enum import Enum
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -279,6 +280,7 @@ class SqlPipelineRepository:
 
         snapshot = build_downstream_artifact_snapshot(state)
         run_id = snapshot.run_id
+        created_at = datetime.now(UTC)
 
         with self._transaction():
             if snapshot.retrievals:
@@ -286,13 +288,18 @@ class SqlPipelineRepository:
                     run_id,
                     startup_identifier=snapshot.startup_identifier,
                     retrievals=tuple(item.retrieval for item in snapshot.retrievals),
+                    created_at=created_at,
                 )
             if snapshot.recommendation is not None:
-                self.save_downstream_recommendation_set(run_id, snapshot.recommendation.recommendation_set)
+                self.save_downstream_recommendation_set(
+                    run_id,
+                    snapshot.recommendation.recommendation_set,
+                    created_at=created_at,
+                )
             for briefing in snapshot.briefings:
-                self.save_downstream_briefing(run_id, briefing.briefing)
+                self.save_downstream_briefing(run_id, briefing.briefing, created_at=created_at)
             for metrics in snapshot.metrics:
-                self.save_downstream_quality_report(run_id, metrics.report)
+                self.save_downstream_quality_report(run_id, metrics.report, created_at=created_at)
 
     def save_downstream_retrievals(
         self,
@@ -300,8 +307,10 @@ class SqlPipelineRepository:
         *,
         startup_identifier: str,
         retrievals: Sequence[Any],
+        created_at: datetime | None = None,
     ) -> None:
         retrieval_artifacts = tuple(build_downstream_retrieval_artifact(retrieval) for retrieval in retrievals)
+        created = _format_time(created_at or datetime.now(UTC))
         self._execute(
             "DELETE FROM downstream_retrievals WHERE run_id = ? AND startup_identifier = ?",
             (run_id, startup_identifier),
@@ -310,8 +319,16 @@ class SqlPipelineRepository:
             self._execute(
                 """
                 INSERT INTO downstream_retrievals
-                (run_id, startup_identifier, corpus_version, retrieval_strategy, position, payload_json)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (
+                    run_id,
+                    startup_identifier,
+                    corpus_version,
+                    retrieval_strategy,
+                    position,
+                    created_at,
+                    payload_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -319,13 +336,21 @@ class SqlPipelineRepository:
                     retrieval.corpus_version,
                     retrieval.retrieval_strategy,
                     position,
+                    created,
                     _dumps(retrieval.payload),
                 ),
             )
         self._commit()
 
-    def save_downstream_recommendation_set(self, run_id: str, recommendation_set: Any) -> None:
+    def save_downstream_recommendation_set(
+        self,
+        run_id: str,
+        recommendation_set: Any,
+        *,
+        created_at: datetime | None = None,
+    ) -> None:
         recommendation = build_downstream_recommendation_artifact(recommendation_set)
+        created = _format_time(created_at or datetime.now(UTC))
         self._execute(
             "DELETE FROM downstream_recommendations WHERE run_id = ? AND startup_identifier = ?",
             (run_id, recommendation.startup_identifier),
@@ -339,9 +364,10 @@ class SqlPipelineRepository:
                 corpus_version,
                 final_nvidia_opportunity_priority,
                 ready_for_briefing,
+                created_at,
                 payload_json
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
@@ -349,13 +375,21 @@ class SqlPipelineRepository:
                 recommendation.corpus_version,
                 recommendation.final_nvidia_opportunity_priority,
                 int(recommendation.ready_for_briefing),
+                created,
                 _dumps(recommendation.payload),
             ),
         )
         self._commit()
 
-    def save_downstream_briefing(self, run_id: str, briefing: Any) -> None:
+    def save_downstream_briefing(
+        self,
+        run_id: str,
+        briefing: Any,
+        *,
+        created_at: datetime | None = None,
+    ) -> None:
         artifact = build_downstream_briefing_artifact(briefing)
+        created = _format_time(created_at or datetime.now(UTC))
         self._execute(
             """
             DELETE FROM downstream_briefings
@@ -366,14 +400,15 @@ class SqlPipelineRepository:
         self._execute(
             """
             INSERT INTO downstream_briefings
-            (run_id, startup_identifier, briefing_type, status, payload_json)
-            VALUES (?, ?, ?, ?, ?)
+            (run_id, startup_identifier, briefing_type, status, created_at, payload_json)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
                 artifact.startup_identifier,
                 artifact.briefing_type,
                 artifact.status,
+                created,
                 _dumps(artifact.payload),
             ),
         )
@@ -629,24 +664,28 @@ class SqlPipelineRepository:
                 "downstream_retrievals",
                 run_id,
                 startup_identifier=startup_identifier,
+                columns=("created_at",),
                 order_by="position",
             ),
             recommendation_sets=self._downstream_payloads(
                 "downstream_recommendations",
                 run_id,
                 startup_identifier=startup_identifier,
+                columns=("created_at",),
                 order_by="id",
             ),
             briefings=self._downstream_payloads(
                 "downstream_briefings",
                 run_id,
                 startup_identifier=startup_identifier,
+                columns=("created_at",),
                 order_by="id",
             ),
             metrics=self._downstream_payloads(
                 "downstream_metrics",
                 run_id,
                 startup_identifier=startup_identifier,
+                columns=("created_at",),
                 order_by="id",
             ),
         )
@@ -676,12 +715,21 @@ class SqlPipelineRepository:
         *,
         startup_identifier: str,
         corpus_version: str,
+        input_fingerprint: str | None = None,
     ) -> StoredDownstreamArtifacts:
         artifacts = self.load_downstream_artifacts(
             run_id,
             startup_identifier=startup_identifier,
         )
-        if _downstream_artifacts_match_corpus(artifacts, corpus_version):
+        inputs_match = (
+            input_fingerprint is None
+            or input_fingerprint
+            == self.build_operational_input_fingerprint(
+                run_id,
+                startup_identifier=startup_identifier,
+            )
+        )
+        if inputs_match and _downstream_artifacts_match_corpus(artifacts, corpus_version):
             return artifacts
         return StoredDownstreamArtifacts(
             run_id=run_id,
@@ -691,6 +739,25 @@ class SqlPipelineRepository:
             briefings=(),
             metrics=(),
         )
+
+    def build_operational_input_fingerprint(
+        self,
+        run_id: str,
+        *,
+        startup_identifier: str,
+    ) -> str:
+        upstream = self.load_run(run_id)
+        startup_keys = _startup_keys(upstream, startup_identifier)
+        payload = {
+            "run_id": upstream.run_id,
+            "startup_identifier": startup_identifier,
+            "startup_profiles": _matching_rows(upstream.startup_profiles, startup_keys),
+            "field_evidences": _matching_rows(upstream.field_evidences, startup_keys),
+            "collection_quality_summaries": upstream.collection_quality_summaries,
+            "ai_native_assessments": _matching_rows(upstream.ai_native_assessments, startup_keys),
+        }
+        digest = hashlib.sha256(_dumps(payload).encode("utf-8")).hexdigest()
+        return f"sha256:{digest}"
 
     def _payloads(
         self,
@@ -720,17 +787,26 @@ class SqlPipelineRepository:
         run_id: str,
         *,
         startup_identifier: str,
+        columns: tuple[str, ...] = (),
         order_by: str,
     ) -> tuple[dict[str, Any], ...]:
+        selected_columns = ", ".join((*columns, "payload_json"))
         rows = self._execute(
             f"""
-            SELECT payload_json FROM {table}
+            SELECT {selected_columns} FROM {table}
             WHERE run_id = ? AND startup_identifier = ?
             ORDER BY {order_by}
             """,
             (run_id, startup_identifier),
         ).fetchall()
-        return tuple(json.loads(row[0]) for row in rows)
+        payload_index = len(columns)
+        loaded_payloads: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row[payload_index])
+            for index, column in enumerate(columns):
+                payload[column] = _column_value(column, row[index])
+            loaded_payloads.append(payload)
+        return tuple(loaded_payloads)
 
     def _execute(self, sql: str, params: tuple[Any, ...]) -> Any:
         if self._postgres:
@@ -883,6 +959,7 @@ def _schema_statements(id_column_type: str) -> tuple[str, ...]:
             corpus_version TEXT NOT NULL,
             retrieval_strategy TEXT NOT NULL,
             position INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
             payload_json TEXT NOT NULL
         )
         """,
@@ -894,6 +971,7 @@ def _schema_statements(id_column_type: str) -> tuple[str, ...]:
             corpus_version TEXT NOT NULL,
             final_nvidia_opportunity_priority TEXT NOT NULL,
             ready_for_briefing INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
             payload_json TEXT NOT NULL
         )
         """,
@@ -904,6 +982,7 @@ def _schema_statements(id_column_type: str) -> tuple[str, ...]:
             startup_identifier TEXT NOT NULL,
             briefing_type TEXT NOT NULL,
             status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
             payload_json TEXT NOT NULL
         )
         """,
@@ -1057,6 +1136,30 @@ def _lookup_key(keys: Mapping[str, str] | None, name: str) -> str:
     if keys is None:
         return name
     return keys.get(name, name)
+
+
+def _startup_keys(upstream: StoredPipelineRun, startup_identifier: str) -> frozenset[str]:
+    keys = {startup_identifier}
+    for row in (*upstream.startup_profiles, *upstream.candidate_startups):
+        if _row_matches_startup(row, keys):
+            keys.update(str(value) for value in row.values() if isinstance(value, str) and value)
+    return frozenset(keys)
+
+
+def _matching_rows(rows: tuple[dict[str, Any], ...], startup_keys: frozenset[str]) -> tuple[dict[str, Any], ...]:
+    return tuple(row for row in rows if _row_matches_startup(row, startup_keys))
+
+
+def _row_matches_startup(row: Mapping[str, Any], startup_keys: frozenset[str] | set[str]) -> bool:
+    fields = (
+        "startup_identifier",
+        "company_name",
+        "candidate_name",
+        "name",
+        "profile_key",
+        "candidate_key",
+    )
+    return any(str(row.get(field, "")) in startup_keys for field in fields)
 
 
 def _downstream_artifacts_match_corpus(

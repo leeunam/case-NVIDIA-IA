@@ -381,25 +381,44 @@ class DownstreamPersistenceTests(unittest.TestCase):
             }
         )
 
+        input_fingerprint = repository.build_operational_input_fingerprint(
+            run_id,
+            startup_identifier="VetAI",
+        )
         matching = repository.load_downstream_artifacts_for_reprocessing(
             run_id,
             startup_identifier="VetAI",
             corpus_version="official-nvidia-fixture.v1",
+            input_fingerprint=input_fingerprint,
         )
         stale = repository.load_downstream_artifacts_for_reprocessing(
             run_id,
             startup_identifier="VetAI",
             corpus_version="official-nvidia-fixture.v2",
+            input_fingerprint=input_fingerprint,
+        )
+        changed_inputs = repository.load_downstream_artifacts_for_reprocessing(
+            run_id,
+            startup_identifier="VetAI",
+            corpus_version="official-nvidia-fixture.v1",
+            input_fingerprint="sha256:changed-inputs",
         )
 
         self.assertEqual(repository.load_run(run_id).collected_pages, ())
         self.assertEqual(matching.retrievals[0]["corpus_version"], "official-nvidia-fixture.v1")
+        self.assertTrue(matching.retrievals[0]["created_at"])
         self.assertEqual(matching.recommendation_sets[0]["corpus_version"], "official-nvidia-fixture.v1")
+        self.assertTrue(matching.recommendation_sets[0]["created_at"])
         self.assertEqual(matching.briefings[0]["schema_version"], "executive_briefing.v1")
+        self.assertTrue(matching.briefings[0]["created_at"])
         self.assertEqual(stale.retrievals, ())
         self.assertEqual(stale.recommendation_sets, ())
         self.assertEqual(stale.briefings, ())
         self.assertEqual(stale.metrics, ())
+        self.assertEqual(changed_inputs.retrievals, ())
+        self.assertEqual(changed_inputs.recommendation_sets, ())
+        self.assertEqual(changed_inputs.briefings, ())
+        self.assertEqual(changed_inputs.metrics, ())
 
     def test_sql_repository_loads_complete_operational_run_with_downstream_metrics(self) -> None:
         repository = sqlite_repository()
