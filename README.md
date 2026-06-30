@@ -136,22 +136,17 @@ LangGraph e o checkpointer Postgres ficam em extra separado porque a suíte loca
 python -m pip install -e ".[workflow]"
 ```
 
-## O Que Falta Para Ficar Inteiro
+## O Que Ainda Precisa De Validação Real
 
-Sem considerar frontend, o core local já existe. Para o projeto ficar operacionalmente completo em produção, ainda faltam estas frentes:
+Sem considerar frontend, o backend já possui o fluxo completo local e os adapters de produção atrás de contratos. As pendências restantes não são ausência do core; são validação operacional e calibração com ambiente real:
 
-1. Validar scraping real com casos brasileiros e medir qualidade de Playwright, trafilatura e BeautifulSoup.
-2. Integrar Firecrawl e Scrapy apenas como adapters opcionais, quando houver ganho medido sobre o caminho local.
-3. Persistir runs reais completos em Postgres local, incluindo páginas, perfis, evidências, assessment, retrieval, recommendations e briefings.
-4. Manter e ampliar periodicamente o corpus oficial NVIDIA conforme novos stacks, programas e casos de uso forem validados.
-5. Indexar o corpus NVIDIA em Postgres/pgvector com embedding real versionado e rebuild explícito.
-6. Tornar retrieval híbrido o caminho padrão de produção: BM25 lexical, busca vetorial pgvector, merge reprodutível, top K e métricas de precision, recall e F1.
-7. Habilitar reranking real opcional sobre o top K e manter comparação antes/depois.
-8. Calibrar o gap-space assessment com startups reais revisadas.
-9. Validar o workflow LangGraph completo com checkpoint Postgres em ambiente operacional real, incluindo retries e human-in-the-loop quando o fluxo exigir.
-10. Conectar Groq/LiteLLM para narrativa técnica e comercial do briefing, sempre atrás de `LLMClient` e com fallback determinístico.
-11. Criar um endpoint ou comando operacional único para rodar a análise completa de uma startup ou consulta controlada.
-12. Ampliar validação de integração opt-in para Playwright real, Postgres/pgvector, embeddings reais, reranking real e LLM real sem colocar essas dependências na suíte default.
+1. Rodar a matriz opt-in com Playwright real, Postgres, pgvector, embedding real, reranking real, LangGraph checkpoint e Groq/LiteLLM.
+2. Testar o scraping em startups brasileiras reais e revisar qualidade de evidência, taxa de `unknown`, conflitos e bloqueios por política/robots.
+3. Calibrar gap-space assessment, thresholds de human review, top K, pesos híbridos e reranking com casos revisados por humano.
+4. Manter o corpus oficial NVIDIA atualizado quando novas stacks, programas, fontes ou casos de uso entrarem no escopo.
+5. Rodar o fluxo operacional completo com `run-intelligence` antes de demo: primeiro local determinístico, depois com integrações reais explicitamente habilitadas.
+
+Depois dessas validações, a principal entrega restante de produto é o frontend.
 
 ## Frameworks E Retrieval
 

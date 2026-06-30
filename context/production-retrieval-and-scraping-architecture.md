@@ -343,20 +343,20 @@ scikit-learn
 
 Nem todas devem ir para a instalacao default. A instalacao default deve continuar leve e deterministica.
 
-## Ordem Recomendada De Implementacao
+## Ordem Recomendada De Validacao Operacional
 
-1. Ampliar expectations em `downstream_metrics.py` para mais gaps, programas e casos reais revisados.
-2. Criar adapter BM25 com `rank_bm25`, mantendo fixture local e contrato atual.
-3. Criar adapter LangChain BM25/EnsembleRetriever em paralelo, atras do mesmo contrato.
-4. Criar embedding client real local com `sentence-transformers`.
-5. Persistir embeddings reais em Postgres/pgvector e validar smoke opt-in.
-6. Comparar BM25, vector e hybrid em precision/recall/F1.
-7. Adicionar reranker cross-encoder opt-in e medir ganho no top K.
-8. Validar smoke real da CLI Playwright-first com browser instalado.
-9. Medir ganho de `trafilatura` + `BeautifulSoup` em páginas reais brasileiras.
-10. Executar e calibrar smoke operacional do LangGraph completo com checkpoint Postgres.
-11. Conectar LiteLLM/Groq somente para narrativa ou etapas explicitamente LLM-safe.
-12. Avaliar Firecrawl/Scrapy apenas quando houver volume/falha medida que justifique.
+1. Rodar a suite local padrao: `python -m pytest -q`, `python -m ruff check .` e `python -m mypy src`.
+2. Rodar `PYTHONPATH=src python -m nvidia_startup_intel.production_smoke_matrix` para conferir a matriz e os pre-requisitos opt-in.
+3. Validar Playwright real com browser instalado em uma URL publica controlada.
+4. Subir Postgres local e validar persistencia completa de run.
+5. Validar pgvector com corpus NVIDIA fixture e embedding fake.
+6. Validar embedding real local apenas em ambiente preparado.
+7. Comparar BM25, vector e hybrid em precision/recall/F1 com expectations revisadas.
+8. Habilitar reranking real somente se top K hibrido trouxer candidatos corretos com ordenacao ruim.
+9. Validar LangGraph com checkpointer Postgres em smoke opt-in.
+10. Validar Groq/LiteLLM somente para narrativa de briefing e com credenciais em variaveis de ambiente.
+11. Rodar `run-intelligence` em modo local deterministico.
+12. Rodar o full bounded operational smoke com as integracoes reais escolhidas.
 
 ## Pontos Que Eu Contestaria
 

@@ -167,7 +167,7 @@ class ToolingConfigTests(unittest.TestCase):
         ):
             self.assertIn(implemented_capability, readme)
 
-        missing_core_section = readme.split("## O Que Falta Para Ficar Inteiro", maxsplit=1)[0]
+        missing_core_section = readme.split("## O Que Ainda Precisa De Validação Real", maxsplit=1)[0]
         for implemented_capability in (
             "Human Review Briefing",
             "workflow completo `ready_for_briefing` / `human_review_requested`",
@@ -176,13 +176,13 @@ class ToolingConfigTests(unittest.TestCase):
         ):
             self.assertNotIn(f"- {implemented_capability};", missing_core_section)
 
-        for production_follow_up in (
-            "Ampliar expectations",
-            "Criar adapter BM25 com `rank_bm25`",
-            "Persistir embeddings reais em Postgres/pgvector",
-            "Conectar LiteLLM/Groq",
+        for production_validation_step in (
+            "Rodar a suite local padrao",
+            "Validar Playwright real",
+            "Validar LangGraph com checkpointer Postgres",
+            "Validar Groq/LiteLLM",
         ):
-            self.assertIn(production_follow_up, production_architecture)
+            self.assertIn(production_validation_step, production_architecture)
 
 if __name__ == "__main__":
     unittest.main()
