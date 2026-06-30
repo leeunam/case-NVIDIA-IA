@@ -34,6 +34,7 @@ from nvidia_startup_intel.downstream_artifacts import (
     downstream_retrieval_strategy,
     downstream_startup_identifier,
 )
+from nvidia_startup_intel.downstream_metrics import downstream_quality_report_to_dict
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
 from nvidia_startup_intel.nvidia_knowledge import (
     NVIDIAKnowledgeChunk,
@@ -70,6 +71,16 @@ class StoredDownstreamArtifacts:
     retrievals: tuple[dict[str, Any], ...]
     recommendation_sets: tuple[dict[str, Any], ...]
     briefings: tuple[dict[str, Any], ...]
+    metrics: tuple[dict[str, Any], ...]
+
+
+@dataclass(frozen=True)
+class StoredOperationalRun:
+    run_id: str
+    startup_identifier: str
+    created_at: str
+    upstream: StoredPipelineRun
+    downstream: StoredDownstreamArtifacts
 
 
 class SqlPipelineRepository:
@@ -280,6 +291,8 @@ class SqlPipelineRepository:
                 self.save_downstream_recommendation_set(run_id, snapshot.recommendation.recommendation_set)
             for briefing in snapshot.briefings:
                 self.save_downstream_briefing(run_id, briefing.briefing)
+            for metrics in snapshot.metrics:
+                self.save_downstream_quality_report(run_id, metrics.report)
 
     def save_downstream_retrievals(
         self,
@@ -363,6 +376,35 @@ class SqlPipelineRepository:
                 artifact.status,
                 _dumps(artifact.payload),
             ),
+        )
+        self._commit()
+
+    def save_downstream_quality_report(
+        self,
+        run_id: str,
+        report: Any,
+        *,
+        created_at: datetime | None = None,
+    ) -> None:
+        payload = downstream_quality_report_to_dict(report)
+        schema_version = str(payload.get("schema_version", "unknown"))
+        startup_identifier = str(payload.get("startup_identifier", "unknown"))
+        corpus_version = str(payload.get("corpus_version", "unknown"))
+        created = _format_time(created_at or datetime.now(UTC))
+        self._execute(
+            """
+            DELETE FROM downstream_metrics
+            WHERE run_id = ? AND startup_identifier = ? AND schema_version = ?
+            """,
+            (run_id, startup_identifier, schema_version),
+        )
+        self._execute(
+            """
+            INSERT INTO downstream_metrics
+            (run_id, startup_identifier, schema_version, corpus_version, created_at, payload_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (run_id, startup_identifier, schema_version, corpus_version, created, _dumps(payload)),
         )
         self._commit()
 
@@ -601,6 +643,53 @@ class SqlPipelineRepository:
                 startup_identifier=startup_identifier,
                 order_by="id",
             ),
+            metrics=self._downstream_payloads(
+                "downstream_metrics",
+                run_id,
+                startup_identifier=startup_identifier,
+                order_by="id",
+            ),
+        )
+
+    def load_operational_run(
+        self,
+        run_id: str,
+        *,
+        startup_identifier: str,
+    ) -> StoredOperationalRun:
+        upstream = self.load_run(run_id)
+        downstream = self.load_downstream_artifacts(
+            run_id,
+            startup_identifier=startup_identifier,
+        )
+        return StoredOperationalRun(
+            run_id=run_id,
+            startup_identifier=startup_identifier,
+            created_at=upstream.created_at,
+            upstream=upstream,
+            downstream=downstream,
+        )
+
+    def load_downstream_artifacts_for_reprocessing(
+        self,
+        run_id: str,
+        *,
+        startup_identifier: str,
+        corpus_version: str,
+    ) -> StoredDownstreamArtifacts:
+        artifacts = self.load_downstream_artifacts(
+            run_id,
+            startup_identifier=startup_identifier,
+        )
+        if _downstream_artifacts_match_corpus(artifacts, corpus_version):
+            return artifacts
+        return StoredDownstreamArtifacts(
+            run_id=run_id,
+            startup_identifier=startup_identifier,
+            retrievals=(),
+            recommendation_sets=(),
+            briefings=(),
+            metrics=(),
         )
 
     def _payloads(
@@ -818,6 +907,17 @@ def _schema_statements(id_column_type: str) -> tuple[str, ...]:
             payload_json TEXT NOT NULL
         )
         """,
+        f"""
+        CREATE TABLE IF NOT EXISTS downstream_metrics (
+            id {id_column_type},
+            run_id TEXT NOT NULL {run_fk},
+            startup_identifier TEXT NOT NULL,
+            schema_version TEXT NOT NULL,
+            corpus_version TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """,
         "CREATE INDEX IF NOT EXISTS idx_search_plan_items_run_id ON search_plan_items(run_id)",
         "CREATE INDEX IF NOT EXISTS idx_raw_discovery_results_run_id ON raw_discovery_results(run_id)",
         "CREATE INDEX IF NOT EXISTS idx_candidate_startups_run_id ON candidate_startups(run_id)",
@@ -832,6 +932,7 @@ def _schema_statements(id_column_type: str) -> tuple[str, ...]:
         "CREATE INDEX IF NOT EXISTS idx_downstream_retrievals_run_startup ON downstream_retrievals(run_id, startup_identifier)",
         "CREATE INDEX IF NOT EXISTS idx_downstream_recommendations_run_startup ON downstream_recommendations(run_id, startup_identifier)",
         "CREATE INDEX IF NOT EXISTS idx_downstream_briefings_run_startup ON downstream_briefings(run_id, startup_identifier)",
+        "CREATE INDEX IF NOT EXISTS idx_downstream_metrics_run_startup ON downstream_metrics(run_id, startup_identifier)",
     )
 
 
@@ -956,6 +1057,16 @@ def _lookup_key(keys: Mapping[str, str] | None, name: str) -> str:
     if keys is None:
         return name
     return keys.get(name, name)
+
+
+def _downstream_artifacts_match_corpus(
+    artifacts: StoredDownstreamArtifacts,
+    corpus_version: str,
+) -> bool:
+    versioned_payloads = (*artifacts.retrievals, *artifacts.recommendation_sets, *artifacts.metrics)
+    if not versioned_payloads:
+        return False
+    return all(str(payload.get("corpus_version", "unknown")) == corpus_version for payload in versioned_payloads)
 
 
 def _downstream_startup_identifier(
