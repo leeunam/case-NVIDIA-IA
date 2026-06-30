@@ -145,12 +145,22 @@ class FirecrawlCollectionAdapter:
             )
         document = _firecrawl_document(response)
         metadata = _as_mapping(document.get("metadata", {}))
+        page_url = normalize_url(str(metadata.get("sourceURL") or metadata.get("url") or start_url))
+        status_code = _status_code(document, metadata)
+        main_text = _first_text(document, ("markdown", "text", "content", "html"))
+        if not main_text:
+            return _empty_content_result(
+                page_url,
+                collected_at=collected_at,
+                status_code=status_code,
+                error_category="firecrawl_empty_content",
+            )
         page = CollectedPage(
-            url=normalize_url(str(metadata.get("sourceURL") or metadata.get("url") or start_url)),
+            url=page_url,
             title=normalize_whitespace(str(metadata.get("title") or document.get("title") or UNKNOWN)),
-            main_text=_first_text(document, ("markdown", "text", "content", "html")) or UNKNOWN,
+            main_text=main_text,
             collected_at=collected_at,
-            status_code=_status_code(document, metadata),
+            status_code=status_code,
             extraction_strategy="firecrawl_clean_extraction",
             needs_js_rendering=False,
         )
@@ -277,6 +287,28 @@ def _blocked_adapter_result(
                 error_type=error_type,
                 message=message,
                 collected_at=collected_at,
+                error_category=error_category,
+            ),
+        ),
+    )
+
+
+def _empty_content_result(
+    url: str,
+    *,
+    collected_at: str,
+    status_code: int,
+    error_category: str,
+) -> PageCollectionResult:
+    return PageCollectionResult(
+        pages=(),
+        errors=(
+            PageCollectionError(
+                url=normalize_url(url),
+                error_type="EmptyContent",
+                message="Provider returned no extractable public page text.",
+                collected_at=collected_at,
+                status_code=status_code,
                 error_category=error_category,
             ),
         ),

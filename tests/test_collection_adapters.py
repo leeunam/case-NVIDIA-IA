@@ -160,6 +160,34 @@ def test_firecrawl_adapter_failure_returns_categorized_collection_error() -> Non
     assert result.errors[0].error_category == "firecrawl_adapter_failed"
 
 
+def test_firecrawl_adapter_reports_empty_content_as_collection_error() -> None:
+    client = _FakeFirecrawlClient(
+        {
+            "markdown": "   ",
+            "html": "",
+            "metadata": {
+                "title": "Startup AI",
+                "sourceURL": "https://startup.ai/",
+                "statusCode": 200,
+            },
+        }
+    )
+
+    result = FirecrawlCollectionAdapter(client=client).collect(
+        "https://startup.ai/",
+        max_pages=1,
+        max_depth=0,
+        clock=fixed_clock,
+    )
+
+    assert result.pages == ()
+    assert len(result.errors) == 1
+    assert result.errors[0].url == "https://startup.ai"
+    assert result.errors[0].error_type == "EmptyContent"
+    assert result.errors[0].status_code == 200
+    assert result.errors[0].error_category == "firecrawl_empty_content"
+
+
 def test_firecrawl_adapter_respects_policy_block_without_calling_provider() -> None:
     client = _RecordingFirecrawlClient(
         {
