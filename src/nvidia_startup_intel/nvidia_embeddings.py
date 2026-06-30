@@ -37,6 +37,7 @@ VECTOR_RANKING_STRATEGY = "cosine_similarity_desc"
 VECTOR_TIE_BREAKERS = ("document_id", "chunk_index", "chunk_id")
 HYBRID_RETRIEVAL_STRATEGY = "hybrid_bm25_vector"
 HYBRID_RANKING_STRATEGY = "reciprocal_rank_fusion"
+HYBRID_FUSION_CONFIG_VERSION = "nvidia_hybrid_retrieval.v1"
 HYBRID_TIE_BREAKERS = ("hybrid_score_desc", "document_id", "chunk_index", "chunk_id")
 DEFAULT_INDEX_PARAMETERS: dict[str, object] = {
     "distance_metric": "cosine",
@@ -698,6 +699,7 @@ def _hybrid_index_parameters(
     parameters = dict(candidate.vector_index_parameters)
     parameters.update(
         {
+            "fusion_config_version": HYBRID_FUSION_CONFIG_VERSION,
             "fusion_method": HYBRID_RANKING_STRATEGY,
             "lexical_top_k": lexical_top_k,
             "vector_top_k": vector_top_k,

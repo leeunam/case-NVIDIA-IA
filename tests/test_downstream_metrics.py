@@ -9,11 +9,14 @@ from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.downstream_metrics import (
     RetrievalMetricExpectation,
     build_downstream_quality_report,
+    compare_downstream_retrieval_strategy_metrics,
     downstream_quality_report_to_dict,
+    retrieval_strategy_comparison_to_dict,
 )
 from nvidia_startup_intel.nvidia_embeddings import (
     DeterministicFakeEmbeddingClient,
     build_nvidia_embedding_index,
+    retrieve_nvidia_knowledge_by_vector,
     retrieve_nvidia_knowledge_hybrid,
 )
 from nvidia_startup_intel.nvidia_knowledge import (
@@ -261,6 +264,102 @@ class DownstreamMetricsTests(unittest.TestCase):
             report.retrieval_metrics.framework_change_assessment,
             ("framework_change_candidate_after_query_review:model_serving",),
         )
+
+    def test_retrieval_strategy_comparison_reports_top_1_for_bm25_vector_hybrid_and_no_results(
+        self,
+    ) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao."
+        )
+        gap = _model_serving_gap(startup_evidence)
+        corpus = load_nvidia_knowledge_corpus(_fixture_path())
+        embedding_client = DeterministicFakeEmbeddingClient(dimension=6)
+        embedding_index = build_nvidia_embedding_index(corpus, embedding_client)
+        bm25_retrieval = retrieve_nvidia_knowledge_by_gap(
+            corpus,
+            run_id="run-metrics-005",
+            gap_type=gap.gap_type,
+            description=gap.description,
+            startup_signals=("inference", "latency"),
+            top_k=2,
+        )
+        vector_retrieval = retrieve_nvidia_knowledge_by_vector(
+            corpus,
+            embedding_index,
+            embedding_client,
+            run_id="run-metrics-005",
+            gap_type=gap.gap_type,
+            description=gap.description,
+            startup_signals=("inference", "latency"),
+            top_k=2,
+        )
+        hybrid_retrieval = retrieve_nvidia_knowledge_hybrid(
+            corpus,
+            embedding_index,
+            embedding_client,
+            run_id="run-metrics-005",
+            gap_type=gap.gap_type,
+            description=gap.description,
+            startup_signals=("inference", "latency"),
+            lexical_top_k=2,
+            vector_top_k=2,
+            top_k=2,
+        )
+        no_result_retrieval = NVIDIAKnowledgeRetrieval(
+            schema_version="nvidia_knowledge.v1",
+            run_id="run-metrics-005",
+            corpus_version=corpus.corpus_version,
+            query="model serving lower latency inference",
+            results=(),
+            documents=(),
+        )
+
+        comparison = compare_downstream_retrieval_strategy_metrics(
+            run_id="run-metrics-005",
+            corpus_version=corpus.corpus_version,
+            retrievals_by_strategy=(
+                (bm25_retrieval,),
+                (vector_retrieval,),
+                (hybrid_retrieval,),
+                (no_result_retrieval,),
+            ),
+            expectations=(
+                RetrievalMetricExpectation(
+                    expectation_id="model-serving-nim",
+                    target_type="technical_gap",
+                    target="model_serving",
+                    expected_chunk_ids=("nvidia-nim-developers:0",),
+                ),
+            ),
+        )
+
+        self.assertEqual(comparison.schema_version, "downstream_metrics.v1")
+        self.assertEqual(
+            comparison.compared_retrieval_strategies,
+            ("bm25_lexical", "vector_semantic", "hybrid_bm25_vector", "no_results"),
+        )
+        metrics_by_strategy = {
+            metrics.retrieval_strategy: metrics for metrics in comparison.metrics_by_strategy
+        }
+        self.assertEqual(metrics_by_strategy["bm25_lexical"].precision, 0.5)
+        self.assertEqual(metrics_by_strategy["bm25_lexical"].recall, 1.0)
+        self.assertEqual(metrics_by_strategy["bm25_lexical"].f1, 0.666667)
+        self.assertEqual(metrics_by_strategy["bm25_lexical"].coverage, 1.0)
+        self.assertEqual(metrics_by_strategy["bm25_lexical"].top_1_expected_count, 1)
+        self.assertTrue(metrics_by_strategy["bm25_lexical"].cases[0].top_1_expected)
+
+        self.assertEqual(metrics_by_strategy["vector_semantic"].top_1_expected_count, 0)
+        self.assertFalse(metrics_by_strategy["vector_semantic"].cases[0].top_1_expected)
+        self.assertEqual(metrics_by_strategy["hybrid_bm25_vector"].top_1_expected_count, 1)
+        self.assertEqual(metrics_by_strategy["no_results"].recall, 0.0)
+        self.assertEqual(metrics_by_strategy["no_results"].precision, 0.0)
+        self.assertEqual(metrics_by_strategy["no_results"].coverage, 0.0)
+        self.assertEqual(metrics_by_strategy["no_results"].top_1_expected_count, 0)
+        self.assertEqual(comparison.best_top_1_retrieval_strategy, "bm25_lexical")
+
+        serialized = retrieval_strategy_comparison_to_dict(comparison)
+        json.dumps(serialized)
+        self.assertEqual(serialized["metrics_by_strategy"][1]["cases"][0]["top_1_expected"], False)
 
 
 def _fixture_path() -> Path:

@@ -51,6 +51,7 @@ class NVIDIAHybridRetrievalTests(unittest.TestCase):
         self.assertEqual(top_result.index_parameters["lexical_weight"], 5.0)
         self.assertEqual(top_result.index_parameters["vector_weight"], 1.0)
         self.assertEqual(top_result.index_parameters["rrf_k"], 0)
+        self.assertEqual(top_result.index_parameters["fusion_config_version"], "nvidia_hybrid_retrieval.v1")
         self.assertEqual(top_result.index_parameters["lexical_top_k"], 2)
         self.assertEqual(top_result.index_parameters["vector_top_k"], 1)
         self.assertEqual(top_result.index_parameters["source_ranks"], {"bm25_lexical": 1})
