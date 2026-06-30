@@ -242,6 +242,58 @@ class ExecutiveBriefingTests(unittest.TestCase):
         self.assertIn("llm_narrative_rejected_unsupported_terms", narrative.audit_reasons)
         self.assertEqual(narrative.claims, briefing.claims)
 
+    def test_llm_ready_narrative_falls_back_for_empty_or_malformed_response(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
+        )
+        profile = _profile(startup_evidence)
+        evidence_groups = (
+            FieldEvidenceGroup(
+                field_name="ai_signals",
+                value="inferencia em producao",
+                evidences=(startup_evidence,),
+                has_conflict=False,
+                conflicting_values=(),
+            ),
+        )
+        assessment = _assessment(_model_serving_gap(startup_evidence))
+        recommendation_set = _supported_recommendation_set(profile, evidence_groups, assessment)
+        briefing = generate_executive_briefing(
+            profile=profile,
+            evidence_groups=evidence_groups,
+            collection_quality=_collection_quality(),
+            assessment=assessment,
+            recommendation_set=recommendation_set,
+        )
+
+        cases = (
+            (
+                _EmptyNarrativeLLMClient(),
+                "empty_response",
+                "llm_narrative_rejected_empty_response",
+            ),
+            (
+                _MalformedNarrativeLLMClient(),
+                "missing_required_sections",
+                "llm_narrative_rejected_missing_required_sections",
+            ),
+        )
+
+        for llm_client, rejection_reason, audit_reason in cases:
+            with self.subTest(rejection_reason=rejection_reason):
+                narrative = generate_briefing_narrative(
+                    briefing=briefing,
+                    llm_client=llm_client,
+                )
+
+                self.assertEqual(narrative.llm_response.content, "")
+                self.assertEqual(narrative.llm_response.metadata["content_rejected"], True)
+                self.assertEqual(narrative.llm_response.metadata["rejection_reason"], rejection_reason)
+                self.assertIn(audit_reason, narrative.audit_reasons)
+                self.assertIn("funding is unknown", narrative.narrative_text)
+                self.assertIn("prepare_technical_outreach", narrative.commercial_approach_narrative)
+                self.assertEqual(narrative.claims, briefing.claims)
+
     def test_blocked_recommendation_generates_human_review_briefing(self) -> None:
         profile_evidence = _startup_evidence(
             snippet="A VetAI usa inteligencia artificial no produto."
@@ -616,6 +668,34 @@ class _UnsupportedFactLLMClient:
             structured_output_schema=request.structured_output_schema,
             finish_reason="stop",
             metadata={"attempted_unsupported_fact": True},
+        )
+
+
+class _EmptyNarrativeLLMClient:
+    def generate(self, request: LLMGenerationRequest) -> LLMGenerationResponse:
+        return LLMGenerationResponse(
+            schema_version="llm_generation_response.v1",
+            request_purpose=request.purpose,
+            provider="local_fake",
+            model="empty-response-fixture",
+            model_version="v1",
+            content="",
+            structured_output_schema=request.structured_output_schema,
+            finish_reason="stop",
+        )
+
+
+class _MalformedNarrativeLLMClient:
+    def generate(self, request: LLMGenerationRequest) -> LLMGenerationResponse:
+        return LLMGenerationResponse(
+            schema_version="llm_generation_response.v1",
+            request_purpose=request.purpose,
+            provider="local_fake",
+            model="malformed-response-fixture",
+            model_version="v1",
+            content="Recommend NVIDIA NIM Microservices for model_serving.",
+            structured_output_schema=request.structured_output_schema,
+            finish_reason="stop",
         )
 
 
