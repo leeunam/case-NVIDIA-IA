@@ -9,6 +9,7 @@ from nvidia_startup_intel.collection_adapters import (
     firecrawl_provider_config_from_env,
 )
 from nvidia_startup_intel.page_collection import FetchResponse, PageCollectionResult
+from nvidia_startup_intel.robots import RobotsCache
 from nvidia_startup_intel.scraping_policy import ScrapingPolicy
 
 
@@ -159,6 +160,36 @@ def test_scrapy_adapter_passes_domain_limits_and_policy_throttle_to_runner() -> 
     assert crawler.calls == (
         ("https://startup.ai/", 1, 0, ("startup.ai",), 2.5),
     )
+
+
+def test_scrapy_adapter_respects_robots_block_without_calling_runner() -> None:
+    crawler = _RecordingScrapyCrawler(
+        (
+            {
+                "url": "https://startup.ai/",
+                "title": "Startup AI",
+                "main_text": "Nao deve ser coletado.",
+                "status_code": 200,
+            },
+        )
+    )
+
+    result = ScrapyCollectionAdapter(
+        crawler=crawler,
+        robots_cache=RobotsCache(fetcher=lambda url: "User-agent: *\nDisallow: /\n"),
+    ).collect(
+        "https://startup.ai/",
+        max_pages=1,
+        max_depth=0,
+        clock=fixed_clock,
+    )
+
+    assert result.pages == ()
+    assert len(result.errors) == 1
+    assert result.errors[0].url == "https://startup.ai"
+    assert result.errors[0].error_type == "RobotsDisallowed"
+    assert result.errors[0].error_category == "robots_disallowed"
+    assert crawler.calls == ()
 
 
 def test_firecrawl_adapter_failure_returns_categorized_collection_error() -> None:
