@@ -258,6 +258,47 @@ PYTHONPATH=src python -m nvidia_startup_intel collect-startup https://startup.ai
 
 Por padrão, o comando respeita `robots.txt`, usa Playwright com extração `trafilatura` + BeautifulSoup quando disponíveis e grava um diretório `runs/<run_id>/` com `raw/collected_pages.json`, `processed/startup_profiles.json`, `processed/field_evidences.json` e `processed/collection_quality.json`. O mesmo `run_id` é salvo no Postgres com páginas coletadas, erros de coleta, perfil, evidências por campo e qualidade.
 
+## Entrypoint Operacional Completo
+
+O comando `run-intelligence` é a superfície operacional mínima para rodar o fluxo completo antes de existir uma UI. Ele aceita uma startup conhecida por URL ou uma query limitada, executa coleta, perfil, qualidade, assessment AI-native, retrieval NVIDIA, recomendação, briefing e persistência configurada, e imprime um payload final auditável com `run_id`, `startup_identifier`, `next_action`, referência de briefing, motivos de revisão humana, erros e locais dos artefatos.
+
+Execução local segura por URL, sem LLM externo, embedding real, browser real ou Postgres real:
+
+```bash
+PYTHONPATH=src python -m nvidia_startup_intel run-intelligence \
+  --startup-url https://startup.ai/ \
+  --startup-name "Startup AI" \
+  --max-pages 1 \
+  --max-depth 0 \
+  --output-dir runs \
+  --persistence-mode json \
+  --nvidia-corpus-path tests/fixtures/nvidia_knowledge_official_fixture.json
+```
+
+Execução por query limitada exige um `SearchClient` real configurado explicitamente:
+
+```bash
+export BRAVE_SEARCH_API_KEY="<sua-chave-local>"
+PYTHONPATH=src python -m nvidia_startup_intel run-intelligence \
+  --query "startups AI-native brasileiras em documentos" \
+  --limit 1 \
+  --max-pages 1 \
+  --enable-search-provider \
+  --nvidia-corpus-path tests/fixtures/nvidia_knowledge_official_fixture.json
+```
+
+Defaults seguros:
+
+- `--persistence-mode json` grava artefatos locais em `runs/<run_id>/`.
+- Playwright real fica desligado até usar `--enable-playwright`.
+- Postgres real fica desligado até usar `--persistence-mode postgres` ou `json-postgres`.
+- pgvector fica desligado até usar `--retrieval-mode pgvector` com `DATABASE_URL` ou `NVIDIA_STARTUP_INTEL_PGVECTOR_DATABASE_URL` e embedding real configurado por `NVIDIA_STARTUP_INTEL_EMBEDDING_*`.
+- LangGraph fica desligado até usar `--orchestration langgraph`.
+- Reranking real fica desligado até usar `--retrieval-mode pgvector --enable-reranking --reranker-model <modelo>`.
+- Groq/LiteLLM fica desligado até usar `--enable-groq-narrative` com `NVIDIA_STARTUP_INTEL_LLM_*` e a chave somente em variável de ambiente.
+
+O payload final representa erros como dados estruturados. Quando uma etapa falha depois de criar o run, os artefatos parciais já gravados continuam no diretório de execução ou no Postgres configurado para auditoria e reprocessamento.
+
 Para validar o caminho operacional completo de persistência Postgres com fixture local, rode o smoke opt-in. Ele aplica o schema via repositório, persiste coleta, perfil, evidências, qualidade, AI-Native Assessment, retrievals NVIDIA, Recommendation Set, briefing e métricas downstream, e valida que os artifacts podem ser recarregados para reprocessamento quando o `corpus_version` bate.
 
 ```bash
