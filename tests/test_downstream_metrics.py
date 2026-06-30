@@ -11,8 +11,11 @@ from nvidia_startup_intel.downstream_metrics import (
     build_downstream_quality_report,
     compare_downstream_retrieval_strategy_metrics,
     downstream_quality_report_to_dict,
+    gap_space_metrics_to_dict,
     retrieval_strategy_comparison_to_dict,
+    summarize_gap_space_metrics,
 )
+from nvidia_startup_intel.gap_space_assessment import assess_gap_space
 from nvidia_startup_intel.nvidia_embeddings import (
     DeterministicFakeEmbeddingClient,
     build_nvidia_embedding_index,
@@ -361,6 +364,50 @@ class DownstreamMetricsTests(unittest.TestCase):
         json.dumps(serialized)
         self.assertEqual(serialized["metrics_by_strategy"][1]["cases"][0]["top_1_expected"], False)
 
+    def test_gap_space_metrics_report_coverage_weak_targets_and_collection_targets(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet="A VetAI precisa reduzir latencia de inferencia em producao."
+        )
+        unsupported_evidence = _startup_evidence(
+            snippet="A VetAI talvez precise automatizar billing quantico para clientes enterprise."
+        )
+        supported_gap = _model_serving_gap(startup_evidence)
+        weak_gap = TechnicalGap(
+            gap_type="quantum_billing",
+            description="May need quantum billing workflow acceleration.",
+            severity="medium",
+            confidence=0.42,
+            evidences=(unsupported_evidence,),
+        )
+        corpus = load_nvidia_knowledge_corpus(_fixture_path())
+        gap_space = assess_gap_space(
+            profile=_profile(startup_evidence),
+            collection_quality=_collection_quality(unknown_fields=(("technologies_used", 1),)),
+            assessment=_assessment(supported_gap, weak_gap, run_id="run-metrics-006"),
+            evidence_groups=(),
+            corpus=corpus,
+            run_id="run-metrics-006",
+        )
+
+        metrics = summarize_gap_space_metrics(gap_space)
+
+        self.assertEqual(metrics.schema_version, "gap_space_metrics.v1")
+        self.assertEqual(metrics.run_id, "run-metrics-006")
+        self.assertEqual(metrics.technical_gap_count, 2)
+        self.assertEqual(metrics.taxonomy_supported_gap_count, 1)
+        self.assertEqual(metrics.unsupported_gap_count, 1)
+        self.assertEqual(metrics.gap_coverage, 0.5)
+        self.assertEqual(metrics.false_or_weak_gap_targets, ("quantum_billing",))
+        self.assertIn(("unsupported_gap_type", 1), metrics.human_review_reason_counts)
+        self.assertIn(("low_gap_confidence", 1), metrics.human_review_reason_counts)
+        self.assertIn(("unknown_field:technologies_used", 1), metrics.human_review_reason_counts)
+        self.assertEqual(metrics.evidence_collection_targets, ("technologies_used",))
+        self.assertEqual(metrics.retrieval_query_count, 2)
+
+        serialized = gap_space_metrics_to_dict(metrics)
+        json.dumps(serialized)
+        self.assertEqual(serialized["gap_coverage"], 0.5)
+
 
 def _fixture_path() -> Path:
     return Path(__file__).parent / "fixtures" / "nvidia_knowledge_official_fixture.json"
@@ -409,7 +456,10 @@ def _assessment(*gaps: TechnicalGap, run_id: str) -> AINativeAssessment:
     )
 
 
-def _collection_quality() -> CollectionQualitySummary:
+def _collection_quality(
+    *,
+    unknown_fields: tuple[tuple[str, int], ...] = (),
+) -> CollectionQualitySummary:
     return CollectionQualitySummary(
         candidate_count=1,
         official_site_found_count=1,
@@ -417,7 +467,7 @@ def _collection_quality() -> CollectionQualitySummary:
         minimum_profile_complete_count=1,
         minimum_profile_complete_rate=1.0,
         average_evidences_per_startup=4.0,
-        unknown_fields=(),
+        unknown_fields=unknown_fields,
         source_success_rates=(),
         ready_for_evaluation=True,
         readiness_reasons=("ready_for_ai_native_evaluation",),
