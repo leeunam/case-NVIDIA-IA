@@ -232,6 +232,33 @@ def test_scrapy_adapter_failure_returns_categorized_collection_error() -> None:
     assert result.errors[0].error_category == "scrapy_adapter_failed"
 
 
+def test_scrapy_adapter_reports_empty_content_as_collection_error() -> None:
+    crawler = _FakeScrapyCrawler(
+        (
+            {
+                "url": "https://startup.ai/empty/",
+                "title": "Pagina vazia",
+                "main_text": "   ",
+                "status_code": 200,
+            },
+        )
+    )
+
+    result = ScrapyCollectionAdapter(crawler=crawler).collect(
+        "https://startup.ai/",
+        max_pages=1,
+        max_depth=0,
+        clock=fixed_clock,
+    )
+
+    assert result.pages == ()
+    assert len(result.errors) == 1
+    assert result.errors[0].url == "https://startup.ai/empty"
+    assert result.errors[0].error_type == "EmptyContent"
+    assert result.errors[0].status_code == 200
+    assert result.errors[0].error_category == "scrapy_empty_content"
+
+
 def test_public_page_collection_adapter_wraps_local_collection_strategy() -> None:
     adapter = PublicPageCollectionAdapter(
         fetcher=lambda url: FetchResponse(

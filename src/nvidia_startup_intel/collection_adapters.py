@@ -214,23 +214,34 @@ class ScrapyCollectionAdapter:
                 error=exc,
                 error_category="scrapy_adapter_failed",
             )
-        pages = tuple(
-            CollectedPage(
-                url=normalize_url(str(document.get("url") or start_url)),
-                title=normalize_whitespace(str(document.get("title") or UNKNOWN)),
-                main_text=_first_text(
-                    document,
-                    ("main_text", "text", "content", "body", "html"),
+        pages: list[CollectedPage] = []
+        errors: list[PageCollectionError] = []
+        for document in (_as_mapping(item) for item in items[:max_pages]):
+            page_url = normalize_url(str(document.get("url") or start_url))
+            status_code = _status_code(document, {})
+            main_text = _first_text(document, ("main_text", "text", "content", "body", "html"))
+            if not main_text:
+                errors.append(
+                    _empty_content_error(
+                        page_url,
+                        collected_at=collected_at,
+                        status_code=status_code,
+                        error_category="scrapy_empty_content",
+                    )
                 )
-                or UNKNOWN,
-                collected_at=collected_at,
-                status_code=_status_code(document, {}),
-                extraction_strategy="scrapy_structured_crawl",
-                needs_js_rendering=False,
+                continue
+            pages.append(
+                CollectedPage(
+                    url=page_url,
+                    title=normalize_whitespace(str(document.get("title") or UNKNOWN)),
+                    main_text=main_text,
+                    collected_at=collected_at,
+                    status_code=status_code,
+                    extraction_strategy="scrapy_structured_crawl",
+                    needs_js_rendering=False,
+                )
             )
-            for document in (_as_mapping(item) for item in items[:max_pages])
-        )
-        return PageCollectionResult(pages=pages, errors=())
+        return PageCollectionResult(pages=tuple(pages), errors=tuple(errors))
 
 
 def _as_mapping(value: object) -> Mapping[str, object]:
@@ -303,15 +314,30 @@ def _empty_content_result(
     return PageCollectionResult(
         pages=(),
         errors=(
-            PageCollectionError(
-                url=normalize_url(url),
-                error_type="EmptyContent",
-                message="Provider returned no extractable public page text.",
+            _empty_content_error(
+                url,
                 collected_at=collected_at,
                 status_code=status_code,
                 error_category=error_category,
             ),
         ),
+    )
+
+
+def _empty_content_error(
+    url: str,
+    *,
+    collected_at: str,
+    status_code: int,
+    error_category: str,
+) -> PageCollectionError:
+    return PageCollectionError(
+        url=normalize_url(url),
+        error_type="EmptyContent",
+        message="Provider returned no extractable public page text.",
+        collected_at=collected_at,
+        status_code=status_code,
+        error_category=error_category,
     )
 
 
