@@ -42,7 +42,7 @@ Essa separacao preserva a suite local sem rede, credenciais, Postgres real, nave
 | Vetorial | fake embedding e busca local exata | nao representa embedding real, nao escala | `sentence-transformers`/FastEmbed para embeddings; pgvector para persistencia; FAISS apenas local/benchmark | `EmbeddingClient`, metadata de modelo e corpus |
 | Hibrido | merge/RRF local | pouca interoperabilidade | `EnsembleRetriever` ou RRF proprio atras de adapter, pesos versionados | scores originais, ranking_strategy e citacoes |
 | Reranking | reranker deterministico top K | baixa qualidade sem semantica real | cross-encoder local/free; LLM-as-reranker so opcional e medido | `NVIDIARerankResult` preservando chunk/citacao |
-| Workflow | runner local e builder LangGraph opcional | sem checkpoint real/human-in-loop real | LangGraph compilado com Postgres checkpointer | estado explicito e branches auditaveis |
+| Workflow | runner local completo e builder LangGraph opcional com checkpointer injetavel | smoke real de checkpoint/human-in-loop ainda opt-in | LangGraph compilado com Postgres checkpointer | estado explicito e branches auditaveis |
 | LLM | `LLMClient`, LiteLLM/LangChain opcionais | sem chamada real no caminho default | LiteLLM com Groq via env; LangChain para chat model/tools quando necessario | `LLMGenerationRequest/Response` |
 | Persistencia | JSON/SQL local, pgvector opcional | reprocessamento e auditabilidade maiores | Postgres Docker + `pgvector` + checkpoints LangGraph | run_id, schema_version e payloads auditaveis |
 
@@ -349,7 +349,7 @@ Nem todas devem ir para a instalacao default. A instalacao default deve continua
 7. Adicionar reranker cross-encoder opt-in e medir ganho no top K.
 8. Validar smoke real da CLI Playwright-first com browser instalado.
 9. Medir ganho de `trafilatura` + `BeautifulSoup` em páginas reais brasileiras.
-10. Adicionar LangGraph completo com checkpoint Postgres.
+10. Executar e calibrar smoke operacional do LangGraph completo com checkpoint Postgres.
 11. Conectar LiteLLM/Groq somente para narrativa ou etapas explicitamente LLM-safe.
 12. Avaliar Firecrawl/Scrapy apenas quando houver volume/falha medida que justifique.
 
