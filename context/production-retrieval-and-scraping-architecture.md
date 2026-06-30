@@ -132,7 +132,8 @@ Embeddings gratuitos/local-first recomendados para avaliar:
 Regras de vetor:
 
 - registrar `embedding_provider`, `embedding_model`, `embedding_version`, dimensao, idioma esperado, `corpus_version` e parametros do indice;
-- qualquer troca de modelo, chunking ou corpus exige rebuild;
+- registrar tambem `chunk_count` e `chunking_fingerprint` para tornar o rebuild por chunking auditavel;
+- qualquer troca de modelo, chunking, corpus, dimensao ou parametros do indice exige rebuild;
 - embeddings recuperam candidatos, nao criam fatos;
 - citacoes oficiais continuam obrigatorias para recomendacao.
 

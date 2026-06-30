@@ -64,6 +64,8 @@ class PgvectorEmbeddingPersistenceTests(unittest.TestCase):
         self.assertEqual(metadata["embedding_model"], "deterministic-fake-embedding")
         self.assertEqual(metadata["embedding_version"], "v1")
         self.assertEqual(metadata["dimension"], 6)
+        self.assertEqual(metadata["chunk_count"], len(corpus.chunks))
+        self.assertTrue(str(metadata["chunking_fingerprint"]).startswith("sha256:"))
 
         index_parameters = _first_json_param_with_key(embedding_insert.params, "index_type")
         self.assertEqual(index_parameters["distance_metric"], "cosine")
