@@ -1,11 +1,16 @@
+from dataclasses import asdict
 from datetime import UTC, datetime
+import json
 
 from nvidia_startup_intel.collection_adapters import (
     FirecrawlCollectionAdapter,
     PublicPageCollectionAdapter,
     ScrapyCollectionAdapter,
+    firecrawl_provider_config_from_env,
 )
 from nvidia_startup_intel.page_collection import FetchResponse, PageCollectionResult
+from nvidia_startup_intel.robots import RobotsCache
+from nvidia_startup_intel.scraping_policy import ScrapingPolicy
 
 
 FIXED_TIME = datetime(2026, 6, 26, 15, 30, tzinfo=UTC)
@@ -73,6 +78,22 @@ def test_firecrawl_adapter_accepts_sdk_data_payload_without_leaking_provider_sha
     assert result.pages[0].main_text == "Texto limpo dentro do payload data."
 
 
+def test_firecrawl_provider_config_records_credential_env_var_without_secret() -> None:
+    config = firecrawl_provider_config_from_env(
+        {
+            "NVIDIA_STARTUP_INTEL_FIRECRAWL_API_KEY_ENV": "FIRECRAWL_API_KEY",
+            "FIRECRAWL_API_KEY": "secret-token-from-env",
+        }
+    )
+
+    assert config.provider == "firecrawl"
+    assert config.api_key_env_var == "FIRECRAWL_API_KEY"
+    assert config.api_key_configured is True
+
+    serialized_config = json.dumps(asdict(config))
+    assert "secret-token-from-env" not in serialized_config
+
+
 def test_scrapy_adapter_returns_project_collection_contract_from_structured_crawl() -> None:
     crawler = _FakeScrapyCrawler(
         (
@@ -112,6 +133,65 @@ def test_scrapy_adapter_returns_project_collection_contract_from_structured_craw
     assert crawler.calls == (("https://startup.ai/", 2, 1),)
 
 
+def test_scrapy_adapter_passes_domain_limits_and_policy_throttle_to_runner() -> None:
+    crawler = _RecordingScrapyCrawler(
+        (
+            {
+                "url": "https://startup.ai/",
+                "title": "Startup AI",
+                "main_text": "Home com evidencias publicas de IA.",
+                "status_code": 200,
+            },
+        )
+    )
+
+    result = ScrapyCollectionAdapter(
+        crawler=crawler,
+        scraping_policy=ScrapingPolicy(rate_limit_seconds=2.5),
+    ).collect(
+        "https://startup.ai/",
+        max_pages=1,
+        max_depth=0,
+        clock=fixed_clock,
+    )
+
+    assert result.errors == ()
+    assert [page.url for page in result.pages] == ["https://startup.ai"]
+    assert crawler.calls == (
+        ("https://startup.ai/", 1, 0, ("startup.ai",), 2.5),
+    )
+
+
+def test_scrapy_adapter_respects_robots_block_without_calling_runner() -> None:
+    crawler = _RecordingScrapyCrawler(
+        (
+            {
+                "url": "https://startup.ai/",
+                "title": "Startup AI",
+                "main_text": "Nao deve ser coletado.",
+                "status_code": 200,
+            },
+        )
+    )
+
+    result = ScrapyCollectionAdapter(
+        crawler=crawler,
+        robots_cache=RobotsCache(fetcher=lambda url: "User-agent: *\nDisallow: /\n"),
+    ).collect(
+        "https://startup.ai/",
+        max_pages=1,
+        max_depth=0,
+        clock=fixed_clock,
+    )
+
+    assert result.pages == ()
+    assert len(result.errors) == 1
+    assert result.errors[0].url == "https://startup.ai"
+    assert result.errors[0].error_type == "RobotsDisallowed"
+    assert result.errors[0].error_category == "robots_disallowed"
+    assert crawler.calls == ()
+
+
 def test_firecrawl_adapter_failure_returns_categorized_collection_error() -> None:
     result = FirecrawlCollectionAdapter(client=_FailingFirecrawlClient()).collect(
         "https://startup.ai/",
@@ -130,6 +210,60 @@ def test_firecrawl_adapter_failure_returns_categorized_collection_error() -> Non
     assert result.errors[0].error_category == "firecrawl_adapter_failed"
 
 
+def test_firecrawl_adapter_reports_empty_content_as_collection_error() -> None:
+    client = _FakeFirecrawlClient(
+        {
+            "markdown": "   ",
+            "html": "",
+            "metadata": {
+                "title": "Startup AI",
+                "sourceURL": "https://startup.ai/",
+                "statusCode": 200,
+            },
+        }
+    )
+
+    result = FirecrawlCollectionAdapter(client=client).collect(
+        "https://startup.ai/",
+        max_pages=1,
+        max_depth=0,
+        clock=fixed_clock,
+    )
+
+    assert result.pages == ()
+    assert len(result.errors) == 1
+    assert result.errors[0].url == "https://startup.ai"
+    assert result.errors[0].error_type == "EmptyContent"
+    assert result.errors[0].status_code == 200
+    assert result.errors[0].error_category == "firecrawl_empty_content"
+
+
+def test_firecrawl_adapter_respects_policy_block_without_calling_provider() -> None:
+    client = _RecordingFirecrawlClient(
+        {
+            "markdown": "Nao deve ser coletado.",
+            "metadata": {"title": "Blocked", "sourceURL": "https://startup.ai/"},
+        }
+    )
+
+    result = FirecrawlCollectionAdapter(
+        client=client,
+        scraping_policy=ScrapingPolicy(blocked_domains=frozenset({"startup.ai"})),
+    ).collect(
+        "https://startup.ai/",
+        max_pages=1,
+        max_depth=0,
+        clock=fixed_clock,
+    )
+
+    assert result.pages == ()
+    assert len(result.errors) == 1
+    assert result.errors[0].url == "https://startup.ai"
+    assert result.errors[0].error_type == "ScrapeBlocked"
+    assert result.errors[0].error_category == "blocked_domain"
+    assert client.calls == ()
+
+
 def test_scrapy_adapter_failure_returns_categorized_collection_error() -> None:
     result = ScrapyCollectionAdapter(crawler=_FailingScrapyCrawler()).collect(
         "https://startup.ai/",
@@ -146,6 +280,33 @@ def test_scrapy_adapter_failure_returns_categorized_collection_error() -> None:
     assert result.errors[0].collected_at == "2026-06-26T15:30:00+00:00"
     assert result.errors[0].status_code is None
     assert result.errors[0].error_category == "scrapy_adapter_failed"
+
+
+def test_scrapy_adapter_reports_empty_content_as_collection_error() -> None:
+    crawler = _FakeScrapyCrawler(
+        (
+            {
+                "url": "https://startup.ai/empty/",
+                "title": "Pagina vazia",
+                "main_text": "   ",
+                "status_code": 200,
+            },
+        )
+    )
+
+    result = ScrapyCollectionAdapter(crawler=crawler).collect(
+        "https://startup.ai/",
+        max_pages=1,
+        max_depth=0,
+        clock=fixed_clock,
+    )
+
+    assert result.pages == ()
+    assert len(result.errors) == 1
+    assert result.errors[0].url == "https://startup.ai/empty"
+    assert result.errors[0].error_type == "EmptyContent"
+    assert result.errors[0].status_code == 200
+    assert result.errors[0].error_category == "scrapy_empty_content"
 
 
 def test_public_page_collection_adapter_wraps_local_collection_strategy() -> None:
@@ -185,6 +346,22 @@ class _FakeFirecrawlClient:
         return self.response
 
 
+class _RecordingFirecrawlClient:
+    def __init__(self, response: object) -> None:
+        self.response = response
+        self.calls: tuple[tuple[str, tuple[str, ...], bool], ...] = ()
+
+    def scrape(
+        self,
+        url: str,
+        *,
+        formats: tuple[str, ...],
+        only_main_content: bool,
+    ) -> object:
+        self.calls = (*self.calls, (url, formats, only_main_content))
+        return self.response
+
+
 class _FailingFirecrawlClient:
     def scrape(
         self,
@@ -201,11 +378,48 @@ class _FakeScrapyCrawler:
         self.items = items
         self.calls: tuple[tuple[str, int, int], ...] = ()
 
-    def crawl(self, start_url: str, *, max_pages: int, max_depth: int) -> tuple[dict[str, object], ...]:
+    def crawl(
+        self,
+        start_url: str,
+        *,
+        max_pages: int,
+        max_depth: int,
+        allowed_domains: tuple[str, ...],
+        throttle_seconds: float,
+    ) -> tuple[dict[str, object], ...]:
         self.calls = (*self.calls, (start_url, max_pages, max_depth))
         return self.items
 
 
+class _RecordingScrapyCrawler:
+    def __init__(self, items: tuple[dict[str, object], ...]) -> None:
+        self.items = items
+        self.calls: tuple[tuple[str, int, int, tuple[str, ...], float], ...] = ()
+
+    def crawl(
+        self,
+        start_url: str,
+        *,
+        max_pages: int,
+        max_depth: int,
+        allowed_domains: tuple[str, ...],
+        throttle_seconds: float,
+    ) -> tuple[dict[str, object], ...]:
+        self.calls = (
+            *self.calls,
+            (start_url, max_pages, max_depth, allowed_domains, throttle_seconds),
+        )
+        return self.items
+
+
 class _FailingScrapyCrawler:
-    def crawl(self, start_url: str, *, max_pages: int, max_depth: int) -> tuple[dict[str, object], ...]:
+    def crawl(
+        self,
+        start_url: str,
+        *,
+        max_pages: int,
+        max_depth: int,
+        allowed_domains: tuple[str, ...],
+        throttle_seconds: float,
+    ) -> tuple[dict[str, object], ...]:
         raise TimeoutError("scrapy crawl timed out")

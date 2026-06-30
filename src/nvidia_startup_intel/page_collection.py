@@ -170,12 +170,12 @@ def collect_public_pages(
         visited.add(url)
 
         collected_at = _format_time(now())
-        decision = _evaluate_collection_request(url, active_policy, robots_cache)
+        decision = evaluate_collection_request(url, active_policy, robots_cache)
         if not decision.allowed:
             errors.append(
                 PageCollectionError(
                     url=url,
-                    error_type=_policy_error_type(decision.reason),
+                    error_type=collection_policy_error_type(decision.reason),
                     message=decision.message,
                     collected_at=collected_at,
                     error_category=decision.reason.value,
@@ -542,7 +542,9 @@ def _needs_js_rendering(html: str, main_text: str) -> bool:
     return any(marker in normalized_html for marker in js_shell_markers)
 
 
-def _policy_error_type(reason: ScrapeDecisionReason) -> str:
+def collection_policy_error_type(reason: ScrapeDecisionReason) -> str:
+    """Return the public Collection error type for a policy/robots decision."""
+
     return {
         ScrapeDecisionReason.BLOCKED_DOMAIN: "ScrapeBlocked",
         ScrapeDecisionReason.LOGIN_REQUIRED: "LoginRequired",
@@ -552,11 +554,13 @@ def _policy_error_type(reason: ScrapeDecisionReason) -> str:
     }[reason]
 
 
-def _evaluate_collection_request(
+def evaluate_collection_request(
     url: str,
     scraping_policy: ScrapingPolicy,
     robots_cache: RobotsCache | None,
 ) -> ScrapeDecision:
+    """Evaluate manual policy, robots.txt, and crawl delay for Collection."""
+
     policy_decision = evaluate_scrape_request(url, scraping_policy)
     if not policy_decision.allowed:
         return policy_decision
