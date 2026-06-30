@@ -48,12 +48,21 @@ class ToolingConfigTests(unittest.TestCase):
         with pyproject_path.open("rb") as pyproject_file:
             config = tomllib.load(pyproject_file)
 
+        optional_dependencies = config["project"]["optional-dependencies"]
+        self.assertIn("litellm", optional_dependencies["llm"])
+        self.assertIn("langchain", optional_dependencies["llm"])
+        self.assertNotIn("litellm", config["project"]["dependencies"])
+        self.assertNotIn("langchain", config["project"]["dependencies"])
         self.assertIn("Validação Opcional LLM Adapters", readme)
+        self.assertIn('python -m pip install -e ".[llm]"', readme)
         self.assertIn("NVIDIA_STARTUP_INTEL_LLM_PROVIDER", readme)
         self.assertIn("NVIDIA_STARTUP_INTEL_LLM_API_KEY_ENV", readme)
         self.assertIn("NVIDIA_STARTUP_INTEL_RUN_LLM_ADAPTER_SMOKE", readme)
         self.assertIn("tests/integration/test_llm_adapter_integration_smoke.py", readme)
         self.assertIn("LiteLLM e LangChain não fazem parte da suíte local padrão", readme)
+        self.assertIn("llm_adapters.py", readme)
+        self.assertIn("rotacione a chave no provedor antes de reutilizá-la", readme)
+        self.assertIn("logs, prompts ou payloads persistidos", readme)
         self.assertIn(
             "llm_adapter_integration: optional real LLM/framework adapter smoke tests, "
             "skipped unless explicitly enabled",

@@ -41,6 +41,10 @@ workflow = [
     "langgraph",
     "langgraph-checkpoint-postgres",
 ]
+llm = [
+    "litellm",
+    "langchain",
+]
 
 [project.scripts]
 nvidia-startup-intel = "nvidia_startup_intel.cli:main"
