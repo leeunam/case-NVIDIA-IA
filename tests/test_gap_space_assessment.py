@@ -75,6 +75,55 @@ class GapSpaceAssessmentTests(unittest.TestCase):
         self.assertEqual(mapping.retrieval_request.startup_signals, mapping.retrieval_startup_signals)
         self.assertEqual(gap_space.retrieval_queries, (mapping.retrieval_query,))
 
+    def test_commercial_opportunity_maps_separately_from_technical_gap(self) -> None:
+        evidence = _startup_evidence(
+            snippet=(
+                "A VetAI busca suporte tecnico, conexao com parceiros e go-to-market "
+                "para escalar a solucao de IA."
+            )
+        )
+        gap = TechnicalGap(
+            gap_type="model_serving",
+            description="Needs lower latency inference and production model serving.",
+            severity="high",
+            confidence=0.86,
+            evidences=(evidence,),
+        )
+
+        gap_space = assess_gap_space(
+            profile=_profile(
+                evidence,
+                company_summary=(
+                    "AI-native veterinary triage platform seeking technical support, "
+                    "partner access, and go-to-market help."
+                ),
+            ),
+            collection_quality=_collection_quality(),
+            assessment=_assessment(gap),
+            evidence_groups=(),
+            corpus=load_nvidia_knowledge_corpus(_fixture_path()),
+            run_id="run-issue-81",
+        )
+
+        self.assertEqual(gap_space.mappings[0].target_type, "technical_gap")
+        self.assertEqual(gap_space.commercial_opportunities[0].opportunity_type, "inception_program_fit")
+
+        commercial_mapping = gap_space.commercial_mappings[0]
+        self.assertEqual(commercial_mapping.target_type, "commercial_opportunity")
+        self.assertEqual(commercial_mapping.opportunity_type, "inception_program_fit")
+        self.assertEqual(commercial_mapping.support_status, "supported")
+        self.assertFalse(commercial_mapping.requires_human_review)
+        self.assertTrue(
+            all("inception_program_fit" in target.supported_gap_types for target in commercial_mapping.taxonomy_targets)
+        )
+        self.assertEqual(commercial_mapping.retrieval_request.gap_type, "")
+        self.assertEqual(commercial_mapping.retrieval_request.opportunity_type, "inception_program_fit")
+        self.assertIn("startup program", commercial_mapping.retrieval_query)
+        self.assertEqual(
+            gap_space.retrieval_queries,
+            (gap_space.mappings[0].retrieval_query, commercial_mapping.retrieval_query),
+        )
+
     def test_weak_gap_evidence_requires_human_review_before_recommendation(self) -> None:
         evidence = _startup_evidence(
             snippet="A VetAI talvez precise reduzir latencia de inferencia em producao."
@@ -311,13 +360,17 @@ def _collection_quality(
     )
 
 
-def _profile(evidence: FieldEvidence) -> StartupProfile:
+def _profile(
+    evidence: FieldEvidence,
+    *,
+    company_summary: str = "AI-native veterinary triage platform.",
+) -> StartupProfile:
     unknown = ProfileField(value=UNKNOWN, claim_source=ClaimSource.UNKNOWN, evidences=())
     return StartupProfile(
         schema_version="startup_profile.v1",
         company_name=ProfileField(value="VetAI", claim_source=ClaimSource.OBSERVED, evidences=(evidence,)),
         official_site=ProfileField(value="https://vetai.example", claim_source=ClaimSource.OBSERVED, evidences=(evidence,)),
-        company_summary=ProfileField(value="AI-native veterinary triage platform.", claim_source=ClaimSource.OBSERVED, evidences=(evidence,)),
+        company_summary=ProfileField(value=company_summary, claim_source=ClaimSource.OBSERVED, evidences=(evidence,)),
         sector=ProfileField(value="healthtech", claim_source=ClaimSource.INFERRED, evidences=(evidence,)),
         product=ProfileField(value="AI triage product", claim_source=ClaimSource.OBSERVED, evidences=(evidence,)),
         customers=unknown,
