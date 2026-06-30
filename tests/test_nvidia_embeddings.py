@@ -126,10 +126,13 @@ class NVIDIAEmbeddingContractTests(unittest.TestCase):
         self.assertEqual(index.metadata.dimension, 6)
         self.assertEqual(index.metadata.expected_language_behavior, "deterministic multilingual fixture text")
         self.assertEqual(index.metadata.index_parameters, {"distance_metric": "cosine", "index_type": "exact_in_memory"})
+        self.assertEqual(index.metadata.chunk_count, len(corpus.chunks))
+        self.assertTrue(index.metadata.chunking_fingerprint.startswith("sha256:"))
         self.assertEqual(
             index.metadata.rebuild_requirements,
             (
                 "corpus_version",
+                "chunking_fingerprint",
                 "embedding_provider",
                 "embedding_model",
                 "embedding_version",
@@ -192,6 +195,21 @@ class NVIDIAEmbeddingContractTests(unittest.TestCase):
             ),
         )
 
+    def test_rebuild_assessment_reports_chunking_changes_even_when_corpus_version_is_unchanged(self) -> None:
+        corpus = load_nvidia_knowledge_corpus(_fixture_path())
+        client = DeterministicFakeEmbeddingClient(dimension=6)
+        current_index = build_nvidia_embedding_index(corpus, client)
+        changed_chunking = replace(corpus, chunks=tuple(reversed(corpus.chunks)))
+
+        assessment = assess_nvidia_embedding_index_rebuild(
+            current_index.metadata,
+            changed_chunking,
+            client,
+        )
+
+        self.assertTrue(assessment.rebuild_required)
+        self.assertEqual(assessment.reasons, ("chunking_changed",))
+
     def test_vector_retrieval_finds_semantic_citation_for_model_serving_gap(self) -> None:
         corpus = load_nvidia_knowledge_corpus(_fixture_path())
         client = DeterministicFakeEmbeddingClient(dimension=6)
@@ -221,17 +239,25 @@ class NVIDIAEmbeddingContractTests(unittest.TestCase):
         self.assertEqual(retrieval.results[0].bm25_score, 0.0)
         self.assertEqual(retrieval.results[0].vector_score, retrieval.results[0].score)
         self.assertGreater(retrieval.results[0].vector_score, 0.0)
+        self.assertEqual(retrieval.results[0].embedding_metadata["schema_version"], "nvidia_embedding.v1")
         self.assertEqual(
-            retrieval.results[0].embedding_metadata,
-            {
-                "schema_version": "nvidia_embedding.v1",
-                "corpus_version": "official-nvidia-fixture.v1",
-                "embedding_provider": "local_fake",
-                "embedding_model": "deterministic-fake-embedding",
-                "embedding_version": "v1",
-                "dimension": 6,
-                "expected_language_behavior": "deterministic multilingual fixture text",
-            },
+            retrieval.results[0].embedding_metadata["corpus_version"],
+            "official-nvidia-fixture.v1",
+        )
+        self.assertEqual(retrieval.results[0].embedding_metadata["chunk_count"], len(corpus.chunks))
+        self.assertTrue(
+            str(retrieval.results[0].embedding_metadata["chunking_fingerprint"]).startswith("sha256:")
+        )
+        self.assertEqual(retrieval.results[0].embedding_metadata["embedding_provider"], "local_fake")
+        self.assertEqual(
+            retrieval.results[0].embedding_metadata["embedding_model"],
+            "deterministic-fake-embedding",
+        )
+        self.assertEqual(retrieval.results[0].embedding_metadata["embedding_version"], "v1")
+        self.assertEqual(retrieval.results[0].embedding_metadata["dimension"], 6)
+        self.assertEqual(
+            retrieval.results[0].embedding_metadata["expected_language_behavior"],
+            "deterministic multilingual fixture text",
         )
         self.assertEqual(
             retrieval.results[0].index_parameters,

@@ -362,6 +362,8 @@ PYTHONPATH=src python -m nvidia_startup_intel.pgvector_smoke
 
 `NVIDIA_STARTUP_INTEL_EMBEDDING_MODEL` pode apontar para um modelo gratuito baixável pelo `sentence-transformers` ou para um caminho local já cacheado. O smoke aplica o schema do projeto em `db/schema.sql`, valida `CREATE EXTENSION IF NOT EXISTS vector`, persiste o corpus oficial fixture com embeddings e metadados, e recupera NVIDIA Knowledge por similaridade vetorial SQL usando `PgvectorNVIDIAEmbeddingStore`.
 
+O índice de embeddings registra `corpus_version`, `chunk_count`, `chunking_fingerprint`, provider, modelo, versão do embedding, dimensão e parâmetros do índice. Rebuild é obrigatório quando corpus, chunking, modelo, versão, dimensão ou parâmetros mudarem; a fingerprint existe para deixar essa decisão auditável mesmo antes de consultar o pgvector.
+
 Também existe um teste de integração isolado, fora da suíte default:
 
 ```bash

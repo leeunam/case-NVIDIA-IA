@@ -338,6 +338,8 @@ def _embedding_metadata_payload(embedding_index: NVIDIAEmbeddingIndex) -> dict[s
     return {
         "schema_version": metadata.schema_version,
         "corpus_version": metadata.corpus_version,
+        "chunk_count": metadata.chunk_count,
+        "chunking_fingerprint": metadata.chunking_fingerprint,
         "embedding_provider": metadata.embedding_provider,
         "embedding_model": metadata.embedding_model,
         "embedding_version": metadata.embedding_version,

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, fields, is_dataclass
+import hashlib
 import math
 import os
 import re
@@ -43,6 +44,7 @@ DEFAULT_INDEX_PARAMETERS: dict[str, object] = {
 }
 REBUILD_REQUIREMENTS = (
     "corpus_version",
+    "chunking_fingerprint",
     "embedding_provider",
     "embedding_model",
     "embedding_version",
@@ -75,6 +77,8 @@ class EmbeddingProviderConfig:
 class NVIDIAEmbeddingIndexMetadata:
     schema_version: str
     corpus_version: str
+    chunk_count: int
+    chunking_fingerprint: str
     embedding_provider: str
     embedding_model: str
     embedding_version: str
@@ -563,6 +567,8 @@ def nvidia_embedding_index_metadata(
     return NVIDIAEmbeddingIndexMetadata(
         schema_version=SCHEMA_VERSION,
         corpus_version=corpus.corpus_version,
+        chunk_count=len(corpus.chunks),
+        chunking_fingerprint=_corpus_chunking_fingerprint(corpus),
         embedding_provider=metadata.embedding_provider,
         embedding_model=metadata.embedding_model,
         embedding_version=metadata.embedding_version,
@@ -590,6 +596,11 @@ def assess_nvidia_embedding_index_rebuild(
 
     if current_metadata.corpus_version != desired_metadata.corpus_version:
         reasons.append("corpus_version_changed")
+    if (
+        current_metadata.chunk_count != desired_metadata.chunk_count
+        or current_metadata.chunking_fingerprint != desired_metadata.chunking_fingerprint
+    ):
+        reasons.append("chunking_changed")
     if current_metadata.embedding_provider != desired_metadata.embedding_provider:
         reasons.append("embedding_provider_changed")
     if current_metadata.embedding_model != desired_metadata.embedding_model:
@@ -848,6 +859,8 @@ def _embedding_result_metadata(metadata: NVIDIAEmbeddingIndexMetadata) -> dict[s
     return {
         "schema_version": metadata.schema_version,
         "corpus_version": metadata.corpus_version,
+        "chunk_count": metadata.chunk_count,
+        "chunking_fingerprint": metadata.chunking_fingerprint,
         "embedding_provider": metadata.embedding_provider,
         "embedding_model": metadata.embedding_model,
         "embedding_version": metadata.embedding_version,
@@ -893,6 +906,24 @@ def _validate_embedding_vectors(
             vector=vector,
             expected_dimension=expected_dimension,
         )
+
+
+def _corpus_chunking_fingerprint(corpus: NVIDIAKnowledgeCorpus) -> str:
+    digest = hashlib.sha256()
+    for chunk in corpus.chunks:
+        for value in (
+            chunk.schema_version,
+            chunk.corpus_version,
+            chunk.chunk_id,
+            chunk.document_id,
+            chunk.chunk_index,
+            chunk.topic,
+            chunk.text,
+        ):
+            digest.update(str(value).encode("utf-8"))
+            digest.update(b"\0")
+        digest.update(b"\1")
+    return f"sha256:{digest.hexdigest()}"
 
 
 def _validate_embedding_vector(
