@@ -75,6 +75,19 @@ class ToolingConfigTests(unittest.TestCase):
         self.assertIn("NVIDIA_STARTUP_INTEL_EMBEDDING_PROVIDER", readme)
         self.assertIn("NVIDIA_STARTUP_INTEL_EMBEDDING_MODEL", readme)
 
+    def test_readme_documents_nvidia_corpus_snapshot_update_contract(self) -> None:
+        readme_path = Path(__file__).resolve().parents[1] / "README.md"
+
+        readme = readme_path.read_text(encoding="utf-8")
+
+        self.assertIn("## Atualização Do Corpus NVIDIA", readme)
+        self.assertIn("tests/fixtures/nvidia_knowledge_official_fixture.json", readme)
+        self.assertIn("stack_id", readme)
+        self.assertIn("supported_gap_types", readme)
+        self.assertIn("citation_chunk_ids", readme)
+        self.assertIn("corpus_version", readme)
+        self.assertIn("Não busque páginas NVIDIA ao vivo na suíte default", readme)
+
     def test_readme_documents_optional_playwright_collection_smoke_separately(self) -> None:
         readme_path = Path(__file__).resolve().parents[1] / "README.md"
         pyproject_path = Path(__file__).resolve().parents[1] / "pyproject.toml"

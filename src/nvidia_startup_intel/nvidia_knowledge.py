@@ -488,9 +488,18 @@ def validate_nvidia_knowledge_corpus(
     document_validation = validate_nvidia_knowledge_documents(corpus.documents)
     accepted_document_ids = {document.document_id for document in document_validation.accepted_documents}
     chunks_by_document_id: dict[str, list[NVIDIAKnowledgeChunk]] = {}
+    seen_chunk_ids: set[str] = set()
     issues = list(document_validation.issues)
 
     for chunk in corpus.chunks:
+        if chunk.chunk_id in seen_chunk_ids:
+            issues.append(
+                NVIDIAKnowledgeValidationIssue(
+                    document_id=chunk.document_id,
+                    reason=f"duplicate_chunk_id:{chunk.chunk_id}",
+                )
+            )
+        seen_chunk_ids.add(chunk.chunk_id)
         if chunk.document_id not in accepted_document_ids:
             issues.append(
                 NVIDIAKnowledgeValidationIssue(
@@ -512,6 +521,14 @@ def validate_nvidia_knowledge_corpus(
                 NVIDIAKnowledgeValidationIssue(
                     document_id=chunk.document_id,
                     reason=f"chunk_corpus_version_mismatch:{chunk.chunk_id}",
+                )
+            )
+        expected_chunk_id = f"{chunk.document_id}:{chunk.chunk_index}"
+        if chunk.chunk_id != expected_chunk_id:
+            issues.append(
+                NVIDIAKnowledgeValidationIssue(
+                    document_id=chunk.document_id,
+                    reason=f"unstable_chunk_id:{chunk.chunk_id}:expected:{expected_chunk_id}",
                 )
             )
 
@@ -536,6 +553,19 @@ def validate_nvidia_knowledge_corpus(
                 NVIDIAKnowledgeValidationIssue(
                     document_id=document.document_id,
                     reason="missing_citable_chunk",
+                )
+            )
+        actual_indices = tuple(sorted(chunk.chunk_index for chunk in document_chunks))
+        expected_indices = tuple(range(len(document_chunks)))
+        if actual_indices != expected_indices:
+            issues.append(
+                NVIDIAKnowledgeValidationIssue(
+                    document_id=document.document_id,
+                    reason=(
+                        "non_consecutive_chunk_indices:"
+                        f"expected:{_join_indices(expected_indices)}:"
+                        f"actual:{_join_indices(actual_indices)}"
+                    ),
                 )
             )
         for metadata_field in REQUIRED_STACK_METADATA_FIELDS:
@@ -614,21 +644,29 @@ def _metadata_tuple(metadata: dict[str, object], key: str) -> tuple[str, ...]:
     return ()
 
 
+def _join_indices(indices: tuple[int, ...]) -> str:
+    return ",".join(str(index) for index in indices)
+
+
 def _document_from_dict(data: dict[str, object]) -> NVIDIAKnowledgeDocument:
     document_id = str(data.get("document_id", "unknown_document"))
-    if not data.get("source_url"):
-        raise ValueError(f"{document_id}:missing_source_url")
-
     return NVIDIAKnowledgeDocument(
-        schema_version=str(data["schema_version"]),
-        corpus_version=str(data["corpus_version"]),
+        schema_version=_required_string(data, "schema_version", document_id),
+        corpus_version=_required_string(data, "corpus_version", document_id),
         document_id=document_id,
-        title=str(data["title"]),
-        source_url=str(data["source_url"]),
-        source_type=str(data["source_type"]),
-        ingested_at=str(data["ingested_at"]),
+        title=_required_string(data, "title", document_id),
+        source_url=_required_string(data, "source_url", document_id),
+        source_type=_required_string(data, "source_type", document_id),
+        ingested_at=_required_string(data, "ingested_at", document_id),
         metadata=dict(data.get("metadata", {})),
     )
+
+
+def _required_string(data: dict[str, object], key: str, document_id: str) -> str:
+    value = str(data.get(key, "")).strip()
+    if not value:
+        raise ValueError(f"{document_id}:missing_{key}")
+    return value
 
 
 def _chunk_from_dict(data: dict[str, object]) -> NVIDIAKnowledgeChunk:

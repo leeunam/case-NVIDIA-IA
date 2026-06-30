@@ -85,7 +85,7 @@ Já existe walking skeleton implementado para o fluxo upstream e downstream loca
 - sinal preliminar de oportunidade;
 - persistência JSON/SQL;
 - runner local compatível com LangGraph;
-- contrato local de `NVIDIA Knowledge` com corpus fixture oficial e BM25 lexical;
+- contrato local de `NVIDIA Knowledge` com corpus fixture oficial, taxonomia de stacks/programas, metadados obrigatórios e BM25 lexical;
 - contrato de embeddings com fake determinístico, busca vetorial local e retrieval híbrido reprodutível;
 - caminho opcional de persistência de embeddings em Postgres/pgvector, com schema e adapter SQL;
 - contrato de adapter para retrieval framework-free e futuros retrievers como LlamaIndex;
@@ -135,7 +135,7 @@ Sem considerar frontend, o core local já existe. Para o projeto ficar operacion
 1. Validar scraping real com casos brasileiros e medir qualidade de Playwright, trafilatura e BeautifulSoup.
 2. Integrar Firecrawl e Scrapy apenas como adapters opcionais, quando houver ganho medido sobre o caminho local.
 3. Persistir runs reais completos em Postgres local, incluindo páginas, perfis, evidências, assessment, retrieval, recommendations e briefings.
-4. Expandir o corpus oficial NVIDIA com taxonomia, descrição curta e descrição profunda por stack, programa e caso de uso.
+4. Manter e ampliar periodicamente o corpus oficial NVIDIA conforme novos stacks, programas e casos de uso forem validados.
 5. Indexar o corpus NVIDIA em Postgres/pgvector com embedding real versionado e rebuild explícito.
 6. Tornar retrieval híbrido o caminho padrão de produção: BM25 lexical, busca vetorial pgvector, merge reprodutível, top K e métricas de precision, recall e F1.
 7. Habilitar reranking real opcional sobre o top K e manter comparação antes/depois.
@@ -183,6 +183,14 @@ python -m mypy src
 Ruff e mypy usam um baseline intencionalmente permissivo nesta primeira adoção de tooling. Ruff está limitado a erros de sintaxe/estilo críticos e Pyflakes; mypy roda sobre `src` com tolerância para imports ausentes, `strict_optional = false` e checagem de corpos não tipados. A baseline também adia categorias de erro de tipos já existentes, como `arg-type`, `assignment`, `attr-defined`, `call-overload`, `return-value` e `union-attr`. Aumentos de strictness devem entrar em fatias futuras, junto com ajustes de código específicos.
 
 Os comandos estáticos pressupõem `ruff` e `mypy` instalados no ambiente Python usado para validação.
+
+## Atualização Do Corpus NVIDIA
+
+O snapshot local do corpus oficial NVIDIA usado pela suíte default fica em `tests/fixtures/nvidia_knowledge_official_fixture.json`. Ele é uma fixture auditável, não um crawler: Não busque páginas NVIDIA ao vivo na suíte default. Atualizações devem entrar como edição explícita do snapshot, com fontes oficiais revisadas e testes locais.
+
+Cada documento do corpus precisa manter `schema_version`, `corpus_version`, `document_id`, `title`, `source_url`, `source_type`, `ingested_at` e metadados de taxonomia com `stack_id`, `stack_name`, `topic`, `brief_description`, `technical_description`, `categories`, `use_cases` e `supported_gap_types`. Cada item exposto por `nvidia_stack_profiles_from_corpus` também precisa resolver `citation_chunk_ids` para chunks reais do mesmo documento.
+
+Ao editar chunks, preserve estabilidade: `chunk_id` deve seguir `document_id:chunk_index`, os índices de cada documento devem ser consecutivos a partir de zero, e IDs duplicados tornam o corpus inválido. Mude `corpus_version` sempre que alterar fontes, metadados de taxonomia, texto de chunks, chunking, cobertura de gap types ou qualquer conteúdo que possa afetar retrieval, recommendation, embeddings ou métricas. Mudanças puramente documentais fora do snapshot não exigem nova versão de corpus.
 
 ## CLI Controlada
 
@@ -293,6 +301,34 @@ python -m pytest -q tests/integration/test_playwright_collection_integration_smo
 ```
 
 Esse caminho exige `playwright` e os browser binaries instalados com `python -m playwright install chromium`. Falhas são reportadas como `OPTIONAL PLAYWRIGHT COLLECTION SMOKE FAILED` para separar problema de ambiente real da suíte determinística local.
+
+## Validação Opcional Production Scraping
+
+A issue de scraping de produção usa um smoke opt-in para medir se o caminho Playwright-first atual encontra evidência pública suficiente em uma lista pequena de startups brasileiras antes de adicionar Firecrawl, Scrapy ou outros serviços externos.
+
+Execute contra URLs públicas controladas e grave o JSON em `runs/production-scraping/`, que fica fora das fixtures versionadas:
+
+```bash
+mkdir -p runs/production-scraping
+PYTHONPATH=src python -m nvidia_startup_intel.production_scraping_smoke \
+  https://startup-brasileira.example/ \
+  https://outra-startup.example/ \
+  --max-pages 2 \
+  --max-depth 1 \
+  --output runs/production-scraping/smoke-$(date -u +%Y%m%dT%H%M%SZ).json
+```
+
+O payload retorna `production_scraping_validation.v1` com `run_id`, estratégia de coleta, decisão de política, decisão de `robots.txt`, limites de crawl, erros auditáveis, tempo decorrido, tamanho de texto por página, páginas vazias ou com pouco texto, completude do `startup_profile.v1`, taxa de `unknown`, conflitos e prontidão para AI-Native Assessment.
+
+Também existe um teste de integração isolado, desabilitado por padrão:
+
+```bash
+NVIDIA_STARTUP_INTEL_RUN_PRODUCTION_SCRAPING_SMOKE=1 \
+NVIDIA_STARTUP_INTEL_PRODUCTION_SCRAPING_URLS="https://startup-brasileira.example/,https://outra-startup.example/" \
+python -m pytest -q tests/integration/test_production_scraping_integration_smoke.py -m production_scraping_integration
+```
+
+Esse caminho pode usar rede e navegador real apenas quando explicitamente habilitado. Não use URLs privadas, autenticadas, paywalled ou protegidas por login; bloqueios de política, `robots.txt`, browser, rede e extração devem aparecer como dados auditáveis no relatório, não como fixtures commitadas.
 
 ## Validação Opcional Pgvector
 
