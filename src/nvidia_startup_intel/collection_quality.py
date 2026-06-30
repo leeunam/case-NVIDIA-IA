@@ -35,6 +35,19 @@ class SourceQualitySummary:
 
 
 @dataclass(frozen=True)
+class CollectionStrategyQualitySummary:
+    strategy_name: str
+    attempts: int
+    page_count: int
+    error_count: int
+    failure_rate: float
+    unknown_text_rate: float
+    empty_or_low_text_rate: float
+    average_text_length: float
+    extraction_strategies: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class CollectionQualitySummary:
     candidate_count: int
     official_site_found_count: int
@@ -99,6 +112,23 @@ def collection_quality_to_dict(summary: CollectionQualitySummary) -> dict[str, o
     return asdict(summary)
 
 
+def compare_collection_strategy_quality(
+    collection_results_by_strategy: Mapping[str, PageCollectionResult],
+    *,
+    low_text_threshold: int = 80,
+) -> tuple[CollectionStrategyQualitySummary, ...]:
+    """Compare Collection strategies using project-owned output contracts."""
+
+    return tuple(
+        _strategy_quality_summary(
+            strategy_name,
+            result,
+            low_text_threshold=low_text_threshold,
+        )
+        for strategy_name, result in sorted(collection_results_by_strategy.items())
+    )
+
+
 def _official_site_found_count(
     candidates: tuple[CandidateStartup, ...],
     profiles: tuple[StartupProfile, ...],
@@ -153,6 +183,32 @@ def _source_success_rates(
     return tuple(sorted(summaries, key=lambda item: (-item.success_rate, item.source_name)))
 
 
+def _strategy_quality_summary(
+    strategy_name: str,
+    result: PageCollectionResult,
+    *,
+    low_text_threshold: int,
+) -> CollectionStrategyQualitySummary:
+    page_count = len(result.pages)
+    error_count = len(result.errors)
+    attempts = page_count + error_count
+    text_lengths = tuple(_page_text_length(page.main_text) for page in result.pages)
+    unknown_text_count = sum(1 for page in result.pages if page.main_text == UNKNOWN)
+    empty_or_low_text_count = sum(1 for length in text_lengths if length < low_text_threshold)
+    extraction_strategies = tuple(sorted({page.extraction_strategy for page in result.pages}))
+    return CollectionStrategyQualitySummary(
+        strategy_name=strategy_name,
+        attempts=attempts,
+        page_count=page_count,
+        error_count=error_count,
+        failure_rate=_rate(error_count, attempts),
+        unknown_text_rate=_rate(unknown_text_count, page_count),
+        empty_or_low_text_rate=_rate(empty_or_low_text_count, page_count),
+        average_text_length=_average_text_length(text_lengths),
+        extraction_strategies=extraction_strategies,
+    )
+
+
 def _readiness_reasons(
     summary: CollectionQualitySummary,
     *,
@@ -177,3 +233,15 @@ def _rate(numerator: int, denominator: int) -> float:
     if denominator == 0:
         return 0.0
     return round(numerator / denominator, 2)
+
+
+def _page_text_length(main_text: str) -> int:
+    if main_text == UNKNOWN:
+        return 0
+    return len(main_text)
+
+
+def _average_text_length(text_lengths: tuple[int, ...]) -> float:
+    if not text_lengths:
+        return 0.0
+    return round(sum(text_lengths) / len(text_lengths), 2)
