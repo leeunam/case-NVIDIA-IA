@@ -272,7 +272,11 @@ Esse smoke exige `psycopg` apenas no ambiente usado para validação opcional. A
 
 LiteLLM e LangChain não fazem parte da suíte local padrão. A validação default continua usando fakes e contract tests, sem rede, credenciais, chamadas reais de LLM, LiteLLM ou LangChain instalados.
 
-Os adapters opcionais ficam atrás do contrato `LLMClient` em `framework_adapters.py`. Para validar uma integração real com LiteLLM, instale a dependência no ambiente local e configure explicitamente o provider por variáveis de ambiente:
+Os adapters opcionais ficam atrás do contrato `LLMClient` em `llm_adapters.py`. Para validar uma integração real com LiteLLM, instale a dependência no ambiente local e configure explicitamente o provider por variáveis de ambiente:
+
+```bash
+python -m pip install -e ".[llm]"
+```
 
 ```bash
 export NVIDIA_STARTUP_INTEL_LLM_PROVIDER=litellm
@@ -282,7 +286,7 @@ export NVIDIA_STARTUP_INTEL_LLM_API_KEY_ENV=GROQ_API_KEY
 export GROQ_API_KEY=<secret>
 ```
 
-`NVIDIA_STARTUP_INTEL_LLM_API_KEY_ENV` guarda apenas o nome da variável que contém a credencial; a credencial não deve entrar em código, fixtures, prompts, payloads persistidos ou artefatos de briefing. O workflow downstream pode usar esse adapter para gerar `briefing_narrative.v1` com narrativas separadas de gap técnico e abordagem comercial, sempre derivadas dos artefatos validados e com fallback determinístico quando a resposta do LLM não for segura. Configurações opcionais aceitas pelo adapter incluem `NVIDIA_STARTUP_INTEL_LLM_API_BASE`, `NVIDIA_STARTUP_INTEL_LLM_TIMEOUT_SECONDS`, `NVIDIA_STARTUP_INTEL_LLM_TEMPERATURE` e `NVIDIA_STARTUP_INTEL_LLM_MAX_TOKENS`.
+`NVIDIA_STARTUP_INTEL_LLM_API_KEY_ENV` guarda apenas o nome da variável que contém a credencial; a credencial não deve entrar em código, fixtures, logs, prompts ou payloads persistidos. Se uma chave tiver sido exposta em conversa, issue, terminal compartilhado ou arquivo versionado, rotacione a chave no provedor antes de reutilizá-la. O workflow downstream pode usar esse adapter para gerar `briefing_narrative.v1` com narrativas separadas de gap técnico e abordagem comercial, sempre derivadas dos artefatos validados e com fallback determinístico quando a resposta do LLM não for segura. Configurações opcionais aceitas pelo adapter incluem `NVIDIA_STARTUP_INTEL_LLM_API_BASE`, `NVIDIA_STARTUP_INTEL_LLM_TIMEOUT_SECONDS`, `NVIDIA_STARTUP_INTEL_LLM_TEMPERATURE` e `NVIDIA_STARTUP_INTEL_LLM_MAX_TOKENS`.
 
 Para LangChain, configure `NVIDIA_STARTUP_INTEL_LLM_PROVIDER=langchain` e passe um chat model já instanciado para `LangChainLLMClient`. Objetos LiteLLM ou LangChain devem ser convertidos para `LLMGenerationResponse` antes de qualquer Recommendation, Briefing, workflow state ou payload de persistência.
 
