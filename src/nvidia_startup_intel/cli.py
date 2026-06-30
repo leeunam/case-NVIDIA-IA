@@ -13,6 +13,11 @@ import sys
 from typing import TextIO
 
 from nvidia_startup_intel.collection_adapters import PublicPageCollectionAdapter
+from nvidia_startup_intel.operational_entrypoint import (
+    DEFAULT_NVIDIA_CORPUS_PATH,
+    OperationalEntrypointOptions,
+    run_operational_intelligence,
+)
 from nvidia_startup_intel.page_collection import (
     FetchResponse,
     PlaywrightPageRenderer,
@@ -40,6 +45,7 @@ from nvidia_startup_intel.pipeline import (
     run_controlled_startup_collection,
 )
 from nvidia_startup_intel.robots import RobotsCache, RobotsFetcher
+from nvidia_startup_intel.search_execution import SearchClient
 from nvidia_startup_intel.search_params import UNKNOWN
 from nvidia_startup_intel.sql_repository import SqlPipelineRepository, postgres_repository_from_env
 
@@ -59,6 +65,7 @@ def main(
     fetcher: Fetcher | None = None,
     playwright_renderer: PlaywrightRenderer | None = None,
     robots_fetcher: RobotsFetcher | None = None,
+    search_client: SearchClient | None = None,
     clock: Clock | None = None,
     sql_repository_factory: SqlRepositoryFactory | None = None,
 ) -> int:
@@ -88,6 +95,17 @@ def main(
             fetcher=fetcher,
             playwright_renderer=playwright_renderer,
             robots_fetcher=robots_fetcher,
+            clock=now,
+            sql_repository_factory=sql_repository_factory,
+        )
+    if args.command == "run-intelligence":
+        return _run_intelligence(
+            args,
+            stdout=output,
+            fetcher=fetcher,
+            playwright_renderer=playwright_renderer,
+            robots_fetcher=robots_fetcher,
+            search_client=search_client,
             clock=now,
             sql_repository_factory=sql_repository_factory,
         )
@@ -166,6 +184,90 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output-dir",
         default="runs",
         help="Base directory for JSON audit artifacts; the run id is created below it.",
+    )
+
+    run = subparsers.add_parser(
+        "run-intelligence",
+        help="Run the complete operational intelligence flow for one startup URL or bounded query.",
+    )
+    input_group = run.add_mutually_exclusive_group(required=True)
+    input_group.add_argument("--startup-url", help="Known public startup URL to analyze deeply.")
+    input_group.add_argument("--query", help="Bounded discovery query to run through the full flow.")
+    run.add_argument(
+        "--startup-name",
+        default=UNKNOWN,
+        help="Optional startup name for --startup-url runs.",
+    )
+    run.add_argument("--limit", type=int, default=1, help="Maximum startup candidates for query runs.")
+    run.add_argument("--max-pages", type=int, default=1, help="Maximum pages to collect per candidate.")
+    run.add_argument("--max-depth", type=int, default=0, help="Maximum crawl depth per candidate.")
+    run.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=15,
+        help="HTTP or browser timeout for production collection adapters.",
+    )
+    run.add_argument(
+        "--output-dir",
+        default="runs",
+        help="Base directory for JSON audit artifacts when JSON persistence is enabled.",
+    )
+    run.add_argument(
+        "--persistence-mode",
+        choices=("json", "postgres", "json-postgres", "none"),
+        default="json",
+        help="Where operational artifacts are persisted.",
+    )
+    run.add_argument(
+        "--nvidia-corpus-path",
+        default=DEFAULT_NVIDIA_CORPUS_PATH,
+        help="Path to the versioned official NVIDIA Knowledge corpus JSON.",
+    )
+    run.add_argument(
+        "--enable-playwright",
+        action="store_true",
+        dest="render_js",
+        help="Enable real Playwright rendering for collection.",
+    )
+    run.set_defaults(render_js=False)
+    run.add_argument(
+        "--robots-policy",
+        choices=("conservative", "permissive-on-error", "off"),
+        default="conservative",
+        help="robots.txt policy for collection.",
+    )
+    run.add_argument(
+        "--retrieval-mode",
+        choices=("bm25", "pgvector"),
+        default="bm25",
+        help="NVIDIA retrieval adapter to use.",
+    )
+    run.add_argument(
+        "--orchestration",
+        choices=("local", "langgraph"),
+        default="local",
+        help="Workflow orchestration engine.",
+    )
+    run.add_argument(
+        "--enable-search-provider",
+        action="store_true",
+        help="Use the configured external SearchClient from environment for --query runs.",
+    )
+    run.add_argument(
+        "--enable-reranking",
+        action="store_true",
+        help="Enable the configured reranker over top-K retrieval candidates.",
+    )
+    run.add_argument(
+        "--reranker-model",
+        default="",
+        help="Optional reranker model name used when reranking is enabled.",
+    )
+    run.add_argument(
+        "--enable-groq-narrative",
+        action="store_true",
+        dest="llm_narrative",
+        help="Enable Groq/LiteLLM briefing narrative generation from environment configuration.",
     )
     return parser
 
@@ -277,6 +379,51 @@ def _run_collect_startup(
         },
     }
     _write_payload(payload, output_path=None, stdout=stdout)
+    return 0
+
+
+def _run_intelligence(
+    args: argparse.Namespace,
+    *,
+    stdout: TextIO,
+    fetcher: Fetcher | None,
+    playwright_renderer: PlaywrightRenderer | None,
+    robots_fetcher: RobotsFetcher | None,
+    search_client: SearchClient | None,
+    clock: Clock,
+    sql_repository_factory: SqlRepositoryFactory | None,
+) -> int:
+    payload = run_operational_intelligence(
+        OperationalEntrypointOptions(
+            startup_url=args.startup_url,
+            query=args.query,
+            startup_name=args.startup_name,
+            limit=args.limit,
+            max_pages=args.max_pages,
+            max_depth=args.max_depth,
+            timeout_seconds=args.timeout_seconds,
+            output_dir=args.output_dir,
+            persistence_mode=args.persistence_mode,
+            nvidia_corpus_path=args.nvidia_corpus_path,
+            render_js=args.render_js,
+            robots_policy=args.robots_policy,
+            retrieval_mode=args.retrieval_mode,
+            orchestration=args.orchestration,
+            enable_search_provider=args.enable_search_provider,
+            enable_reranking=args.enable_reranking,
+            reranker_model=args.reranker_model,
+            llm_narrative=args.llm_narrative,
+        ),
+        fetcher=fetcher,
+        playwright_renderer=playwright_renderer,
+        robots_fetcher=robots_fetcher,
+        search_client=search_client,
+        clock=clock,
+        sql_repository_factory=sql_repository_factory,
+    )
+    _write_payload(payload, output_path=None, stdout=stdout)
+    if payload["workflow_outcome"] == "failed_with_auditable_error":
+        return 1
     return 0
 
 

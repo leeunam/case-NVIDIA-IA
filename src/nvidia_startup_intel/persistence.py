@@ -65,6 +65,57 @@ class JsonDownstreamArtifactStore:
             )
 
 
+class JsonIntelligenceArtifactStore:
+    """Persist complete intelligence workflow artifacts in a JSON run directory."""
+
+    def __init__(
+        self,
+        base_dir: str | Path,
+        *,
+        created_at: datetime | None = None,
+    ) -> None:
+        self.base_dir = Path(base_dir)
+        self.created_at = created_at
+        self.run: PipelineRun | None = None
+
+    def create_run(self, *, run_id: str) -> str:
+        if self.run is not None:
+            if self.run.run_id != run_id:
+                raise ValueError(f"json_store_run_id_mismatch:{self.run.run_id}:{run_id}")
+            return self.run.run_id
+
+        self.run = create_pipeline_run(
+            self.base_dir,
+            run_id=run_id,
+            created_at=self.created_at,
+        )
+        return self.run.run_id
+
+    def save_pipeline_result(self, run_id: str, result: Any) -> None:
+        run = self._ensure_run(run_id)
+        save_search_params(run, result.search_params)
+        save_search_plan(run, result.search_plan)
+        save_raw_discovery_results(run, result.raw_results)
+        save_candidate_startups(run, result.candidates)
+        save_collected_pages(run, result.collected_pages_by_candidate)
+        save_startup_profiles(run, result.profiles)
+        save_field_evidences(run, result.evidence_groups_by_profile)
+        save_collection_quality(run, result.quality_summary)
+
+    def save_ai_native_assessments(self, run_id: str, assessments_by_profile: Any) -> None:
+        save_ai_native_assessments(self._ensure_run(run_id), assessments_by_profile)
+
+    def save_downstream_state(self, state: dict[str, Any]) -> None:
+        run = self._ensure_run(str(state.get("run_id", "unknown")))
+        JsonDownstreamArtifactStore(run).save_downstream_state(state)
+
+    def _ensure_run(self, run_id: str) -> PipelineRun:
+        if self.run is None:
+            self.create_run(run_id=run_id)
+        assert self.run is not None
+        return self.run
+
+
 def create_pipeline_run(
     base_dir: str | Path,
     *,
