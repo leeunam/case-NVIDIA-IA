@@ -111,6 +111,7 @@ class HybridNVIDIAPgvectorKnowledgeRetriever:
     corpus: NVIDIAKnowledgeCorpus
     embedding_client: EmbeddingClient
     vector_store: NVIDIAVectorKnowledgeStore
+    lexical_retriever: NVIDIAKnowledgeRetriever | None = None
     lexical_top_k: int = 3
     vector_top_k: int = 3
     lexical_weight: float = 1.0
@@ -125,10 +126,9 @@ class HybridNVIDIAPgvectorKnowledgeRetriever:
         query: NVIDIAKnowledgeQuery,
         top_k: int,
     ) -> NVIDIAKnowledgeRetrieval:
-        lexical_retrieval = retrieve_nvidia_knowledge(
-            self.corpus,
+        lexical_retrieval = (self.lexical_retriever or LocalBM25NVIDIAKnowledgeRetriever(self.corpus)).retrieve_for_query(
             run_id=run_id,
-            query_request=query,
+            query=query,
             top_k=self.lexical_top_k,
         )
         vector_retrieval = self.vector_store.retrieve_by_vector(
@@ -162,11 +162,9 @@ class HybridNVIDIAPgvectorKnowledgeRetriever:
         startup_signals: tuple[str, ...],
         top_k: int,
     ) -> NVIDIAKnowledgeRetrieval:
-        lexical_retrieval = retrieve_nvidia_knowledge_by_gap(
-            self.corpus,
+        lexical_retrieval = (self.lexical_retriever or LocalBM25NVIDIAKnowledgeRetriever(self.corpus)).retrieve_for_gap(
             run_id=run_id,
-            gap_type=gap.gap_type,
-            description=gap.description,
+            gap=gap,
             startup_signals=startup_signals,
             top_k=self.lexical_top_k,
         )

@@ -17,7 +17,11 @@ from nvidia_startup_intel.nvidia_reranking import (
     nvidia_rerank_result_to_dict,
     rerank_nvidia_retrieval,
 )
-from nvidia_startup_intel.nvidia_retrievers import RankBM25NVIDIAKnowledgeRetriever
+from nvidia_startup_intel.nvidia_embeddings import DeterministicFakeEmbeddingClient
+from nvidia_startup_intel.nvidia_retrievers import (
+    HybridNVIDIAPgvectorKnowledgeRetriever,
+    RankBM25NVIDIAKnowledgeRetriever,
+)
 from nvidia_startup_intel.nvidia_knowledge import (
     NVIDIACitation,
     NVIDIAKnowledgeChunk,
@@ -67,6 +71,45 @@ class FrameworkAdapterContractTests(unittest.TestCase):
         )
         self.assertEqual(retrieval.results[0].index_parameters["library"], "rank_bm25")
         self.assertEqual(retrieval.results[0].citation.source_url, "https://developer.nvidia.com/doc-a")
+        self.assertIn("model", fake_ranker.query_tokens)
+        self.assertNotIn("_FakeBM25Okapi", json.dumps(nvidia_knowledge_retrieval_to_dict(retrieval)))
+
+    def test_hybrid_pgvector_retriever_can_use_injected_rank_bm25_adapter(self) -> None:
+        corpus = _adapter_corpus()
+        fake_ranker = _FakeBM25Okapi(scores=(0.1, 2.5, 0.0))
+        lexical_retriever = RankBM25NVIDIAKnowledgeRetriever(
+            corpus=corpus,
+            bm25_factory=lambda tokenized_corpus: fake_ranker.capture(tokenized_corpus),
+        )
+        vector_store = _FakeVectorStore(corpus, chunk_ids=("doc-a:0",))
+        adapter = HybridNVIDIAPgvectorKnowledgeRetriever(
+            corpus=corpus,
+            embedding_client=DeterministicFakeEmbeddingClient(dimension=6),
+            vector_store=vector_store,
+            lexical_retriever=lexical_retriever,
+            lexical_top_k=1,
+            vector_top_k=1,
+        )
+
+        retrieval = adapter.retrieve_for_gap(
+            run_id="run-hybrid-rank-bm25-001",
+            gap=TechnicalGap(
+                gap_type="model_serving",
+                description="Needs production inference with low latency.",
+                severity="high",
+                confidence=0.9,
+                evidences=(),
+            ),
+            startup_signals=("inference", "latency"),
+            top_k=2,
+        )
+
+        self.assertEqual([result.chunk.chunk_id for result in retrieval.results], ["doc-a:0", "doc-a:1"])
+        self.assertEqual(retrieval.results[0].retrieval_strategy, "hybrid_bm25_vector")
+        self.assertEqual(retrieval.results[1].bm25_score, 2.5)
+        self.assertEqual(retrieval.results[1].vector_score, 0.0)
+        self.assertEqual(retrieval.results[1].index_parameters["source_ranks"], {"bm25_lexical": 1})
+        self.assertEqual(vector_store.requests, (("run-hybrid-rank-bm25-001", "test-corpus.v1", 1),))
         self.assertIn("model", fake_ranker.query_tokens)
         self.assertNotIn("_FakeBM25Okapi", json.dumps(nvidia_knowledge_retrieval_to_dict(retrieval)))
 
@@ -419,6 +462,70 @@ class _FakeBM25Okapi:
     def get_scores(self, query_tokens: list[str]) -> tuple[float, ...]:
         self.query_tokens = query_tokens
         return self.scores
+
+
+class _FakeVectorStore:
+    def __init__(self, corpus: NVIDIAKnowledgeCorpus, *, chunk_ids: tuple[str, ...]) -> None:
+        self.corpus = corpus
+        self.chunk_ids = chunk_ids
+        self.requests: tuple[tuple[str, str, int], ...] = ()
+
+    def retrieve_by_vector(
+        self,
+        embedding_client: DeterministicFakeEmbeddingClient,
+        *,
+        run_id: str,
+        corpus_version: str,
+        gap_type: str = "",
+        opportunity_type: str = "",
+        description: str = "",
+        startup_signals: tuple[str, ...] = (),
+        query_terms: tuple[str, ...] = (),
+        normalized_query: str = "",
+        top_k: int = 3,
+        min_vector_score: float = 0.0,
+    ) -> NVIDIAKnowledgeRetrieval:
+        self.requests = (*self.requests, (run_id, corpus_version, top_k))
+        document = self.corpus.documents[0]
+        chunks_by_id = {chunk.chunk_id: chunk for chunk in self.corpus.chunks}
+        results = tuple(
+            RetrievedNVIDIAKnowledge(
+                chunk=chunks_by_id[chunk_id],
+                citation=NVIDIACitation(
+                    schema_version="nvidia_knowledge.v1",
+                    corpus_version=corpus_version,
+                    document_id=document.document_id,
+                    document_title=document.title,
+                    source_url=document.source_url,
+                    source_type=document.source_type,
+                    ingested_at=document.ingested_at,
+                    chunk_id=chunk_id,
+                    excerpt=chunks_by_id[chunk_id].text,
+                    chunk_index=chunks_by_id[chunk_id].chunk_index,
+                ),
+                score=round(0.9 - index / 100, 6),
+                retrieval_strategy="vector_semantic",
+                rationale="Fixture pgvector vector result.",
+                rank=index + 1,
+                vector_score=round(0.9 - index / 100, 6),
+                embedding_metadata={
+                    "schema_version": embedding_client.metadata.schema_version,
+                    "embedding_model": embedding_client.metadata.embedding_model,
+                },
+                index_parameters={"storage": "postgres_pgvector", "index_type": "exact_pgvector_sql"},
+                ranking_strategy="cosine_similarity_desc",
+                tie_breakers=("document_id", "chunk_index", "chunk_id"),
+            )
+            for index, chunk_id in enumerate(self.chunk_ids[:top_k])
+        )
+        return NVIDIAKnowledgeRetrieval(
+            schema_version="nvidia_knowledge.v1",
+            run_id=run_id,
+            corpus_version=corpus_version,
+            query=" ".join((gap_type.replace("_", " "), description, *startup_signals)).strip(),
+            results=results,
+            documents=(document,) if results else (),
+        )
 
 
 if __name__ == "__main__":
