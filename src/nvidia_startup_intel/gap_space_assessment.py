@@ -104,7 +104,10 @@ class CommercialOpportunityMapping:
 class GapSpaceQuality:
     ready_for_recommendation: bool
     requires_human_review: bool
+    needs_more_collection: bool
     reasons: tuple[str, ...]
+    human_review_reasons: tuple[str, ...]
+    evidence_collection_targets: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -437,10 +440,19 @@ def _quality(
         reasons.append("no_gap_space_mapping")
 
     reason_tuple = tuple(dict.fromkeys(reasons))
+    evidence_collection_targets = _evidence_collection_targets(
+        reason_tuple,
+        mappings=mappings,
+        commercial_mappings=commercial_mappings,
+    )
+    is_ready = not reason_tuple
     return GapSpaceQuality(
-        ready_for_recommendation=not reason_tuple,
-        requires_human_review=bool(reason_tuple),
+        ready_for_recommendation=is_ready,
+        requires_human_review=not is_ready,
+        needs_more_collection=bool(evidence_collection_targets),
         reasons=reason_tuple or ("gap_space_ready_for_recommendation",),
+        human_review_reasons=reason_tuple,
+        evidence_collection_targets=evidence_collection_targets,
     )
 
 
@@ -450,6 +462,28 @@ def _startup_identifier(profile: StartupProfile, assessment: AINativeAssessment)
     if assessment.company_name:
         return assessment.company_name
     return UNKNOWN
+
+
+def _evidence_collection_targets(
+    reasons: tuple[str, ...],
+    *,
+    mappings: tuple[GapSpaceMapping, ...],
+    commercial_mappings: tuple[CommercialOpportunityMapping, ...],
+) -> tuple[str, ...]:
+    targets: list[str] = []
+    for reason in reasons:
+        if reason == "collection_quality_not_ready":
+            targets.append("collection_quality")
+        elif reason.startswith("unknown_field:"):
+            targets.append(reason.split(":", maxsplit=1)[1])
+
+    for mapping in mappings:
+        if "missing_observed_gap_evidence" in mapping.review_reasons:
+            targets.append(mapping.gap_type)
+    for mapping in commercial_mappings:
+        if "missing_observed_opportunity_evidence" in mapping.review_reasons:
+            targets.append(mapping.opportunity_type)
+    return tuple(dict.fromkeys(targets))
 
 
 def _startup_signals(profile: StartupProfile) -> tuple[str, ...]:

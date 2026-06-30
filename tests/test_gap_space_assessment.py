@@ -8,16 +8,25 @@ from nvidia_startup_intel.ai_native_assessment import (
     DiagnosticQuality,
     TechnicalGap,
     WrapperDependencyRisk,
+    assess_ai_native_maturity,
 )
-from nvidia_startup_intel.collection_quality import CollectionQualitySummary
-from nvidia_startup_intel.evidence import FieldEvidenceGroup
+from nvidia_startup_intel.collection_quality import CollectionQualitySummary, summarize_collection_quality
+from nvidia_startup_intel.discovery import CandidateStartup, DiscoverySourceType
+from nvidia_startup_intel.evidence import claims_from_profile, FieldEvidenceGroup, structure_evidence_by_field
 from nvidia_startup_intel.gap_space_assessment import assess_gap_space
 from nvidia_startup_intel.nvidia_knowledge import (
     build_nvidia_knowledge_query,
     load_nvidia_knowledge_corpus,
 )
+from nvidia_startup_intel.page_collection import CollectedPage
 from nvidia_startup_intel.search_params import UNKNOWN
-from nvidia_startup_intel.startup_profile import ClaimSource, FieldEvidence, ProfileField, StartupProfile
+from nvidia_startup_intel.startup_profile import (
+    ClaimSource,
+    extract_startup_profile,
+    FieldEvidence,
+    ProfileField,
+    StartupProfile,
+)
 
 
 class GapSpaceAssessmentTests(unittest.TestCase):
@@ -297,6 +306,138 @@ class GapSpaceAssessmentTests(unittest.TestCase):
         self.assertEqual(mapping.taxonomy_targets, ())
         self.assertIn("unsupported_gap_type", mapping.review_reasons)
 
+    def test_reviewed_startup_case_expectations_cover_gap_space_paths(self) -> None:
+        corpus = load_nvidia_knowledge_corpus(_fixture_path())
+        case_expectations = (
+            (
+                "strong_ai_native",
+                _reviewed_case_inputs(
+                    "VisionOps AI",
+                    (
+                        "Resumo: Plataforma AI-native para inspecao industrial. "
+                        "Setor: industria. "
+                        "Produto: Computer vision para controle de qualidade. "
+                        "Sinais de IA: modelos proprietarios, fine-tuning, MLOps e feedback loop. "
+                        "Tecnologias: inferencia em producao, model serving, dados proprietarios e computer vision. "
+                        "Localizacao: Sao Paulo, SP."
+                    ),
+                ),
+                "ai_native",
+                True,
+                False,
+                False,
+                (),
+                (),
+            ),
+            (
+                "wrapper_risk_ai_enabled",
+                _reviewed_case_inputs(
+                    "SupportBot AI",
+                    (
+                        "Resumo: Plataforma de atendimento com chatbot. "
+                        "Setor: atendimento ao cliente. "
+                        "Produto: Chatbot para suporte ao cliente. "
+                        "Sinais de IA: usa IA generativa via OpenAI API. "
+                        "Tecnologias: ChatGPT e GPT API. "
+                        "Localizacao: Curitiba, PR."
+                    ),
+                ),
+                "ai_enabled",
+                False,
+                True,
+                False,
+                ("assessment_not_ready_for_recommendation", "high_wrapper_risk"),
+                (),
+            ),
+            (
+                "low_signal_non_ai",
+                _reviewed_case_inputs(
+                    "LedgerOps",
+                    (
+                        "Resumo: SaaS financeiro para conciliacao. "
+                        "Setor: fintech. "
+                        "Produto: Plataforma de gestao financeira para PMEs. "
+                        "Sinais de IA: nenhum uso informado. "
+                        "Tecnologias: integracoes bancarias e automacao de relatorios. "
+                        "Localizacao: Belo Horizonte, MG."
+                    ),
+                ),
+                "non_ai",
+                False,
+                True,
+                False,
+                ("assessment_not_ready_for_recommendation", "no_gap_space_mapping"),
+                (),
+            ),
+            (
+                "conflicting_profile_evidence",
+                _reviewed_case_inputs(
+                    "ConflictAI",
+                    (
+                        "Resumo: Plataforma AI-native para triagem. "
+                        "Setor: healthtech. "
+                        "Produto: IA para triagem automatizada. "
+                        "Sinais de IA: modelos proprietarios, fine-tuning, MLOps e feedback loop. "
+                        "Tecnologias: inferencia em producao, model serving e dados proprietarios. "
+                        "Localizacao: Recife, PE."
+                    ),
+                    conflicting_field="product",
+                ),
+                "ai_native",
+                False,
+                True,
+                False,
+                ("conflicting_startup_evidence",),
+                (),
+            ),
+            (
+                "insufficient_public_evidence",
+                _insufficient_reviewed_case_inputs(),
+                "insufficient_evidence",
+                False,
+                True,
+                True,
+                ("collection_quality_not_ready", "assessment_not_ready_for_recommendation"),
+                ("collection_quality",),
+            ),
+        )
+
+        for (
+            case_name,
+            inputs,
+            expected_classification,
+            expected_ready,
+            expected_human_review,
+            expected_more_collection,
+            expected_review_reasons,
+            expected_collection_targets,
+        ) in case_expectations:
+            with self.subTest(case_name=case_name):
+                profile, evidence_groups, collection_quality = inputs
+                assessment = assess_ai_native_maturity(
+                    profile,
+                    evidence_groups,
+                    collection_quality,
+                    run_id=f"run-{case_name}",
+                )
+                gap_space = assess_gap_space(
+                    profile=profile,
+                    collection_quality=collection_quality,
+                    assessment=assessment,
+                    evidence_groups=evidence_groups,
+                    corpus=corpus,
+                    run_id=f"run-{case_name}",
+                )
+
+                self.assertEqual(assessment.classification, expected_classification)
+                self.assertEqual(gap_space.quality.ready_for_recommendation, expected_ready)
+                self.assertEqual(gap_space.quality.requires_human_review, expected_human_review)
+                self.assertEqual(gap_space.quality.needs_more_collection, expected_more_collection)
+                for reason in expected_review_reasons:
+                    self.assertIn(reason, gap_space.quality.human_review_reasons)
+                for target in expected_collection_targets:
+                    self.assertIn(target, gap_space.quality.evidence_collection_targets)
+
 
 def _fixture_path() -> Path:
     return Path(__file__).parent / "fixtures" / "nvidia_knowledge_official_fixture.json"
@@ -380,6 +521,60 @@ def _profile(
         ai_signals=ProfileField(value="inferencia em producao", claim_source=ClaimSource.OBSERVED, evidences=(evidence,)),
         location=unknown,
     )
+
+
+def _reviewed_case_inputs(
+    company_name: str,
+    page_text: str,
+    *,
+    conflicting_field: str = "",
+) -> tuple[StartupProfile, tuple[FieldEvidenceGroup, ...], CollectionQualitySummary]:
+    site = f"https://{company_name.lower().replace(' ', '')}.ai"
+    profile = extract_startup_profile(
+        (
+            CollectedPage(
+                url=site,
+                title=company_name,
+                main_text=page_text,
+                collected_at="2026-06-26T12:00:00+00:00",
+                status_code=200,
+            ),
+        ),
+        official_site=site,
+    )
+    candidate = CandidateStartup(
+        name=company_name,
+        normalized_name=company_name.lower(),
+        primary_url=site,
+        discovery_source="fixture",
+        evidence_snippet=f"{company_name} reviewed fixture.",
+        confidence_score=0.9,
+        source_types=(DiscoverySourceType.COMPANY,),
+        evidences=(),
+    )
+    quality = summarize_collection_quality((candidate,), (profile,))
+    evidence_groups = structure_evidence_by_field(claims_from_profile(profile))
+    if conflicting_field:
+        evidence_groups = (
+            *evidence_groups,
+            FieldEvidenceGroup(
+                field_name=conflicting_field,
+                value="AI product",
+                evidences=profile.product.evidences,
+                has_conflict=True,
+                conflicting_values=("AI product", "consulting"),
+            ),
+        )
+    return profile, evidence_groups, quality
+
+
+def _insufficient_reviewed_case_inputs() -> tuple[
+    StartupProfile,
+    tuple[FieldEvidenceGroup, ...],
+    CollectionQualitySummary,
+]:
+    profile = extract_startup_profile((), fallback_company_name="Unknown AI")
+    return profile, (), summarize_collection_quality((), ())
 
 
 if __name__ == "__main__":
