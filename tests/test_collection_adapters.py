@@ -6,6 +6,7 @@ from nvidia_startup_intel.collection_adapters import (
     ScrapyCollectionAdapter,
 )
 from nvidia_startup_intel.page_collection import FetchResponse, PageCollectionResult
+from nvidia_startup_intel.scraping_policy import ScrapingPolicy
 
 
 FIXED_TIME = datetime(2026, 6, 26, 15, 30, tzinfo=UTC)
@@ -130,6 +131,32 @@ def test_firecrawl_adapter_failure_returns_categorized_collection_error() -> Non
     assert result.errors[0].error_category == "firecrawl_adapter_failed"
 
 
+def test_firecrawl_adapter_respects_policy_block_without_calling_provider() -> None:
+    client = _RecordingFirecrawlClient(
+        {
+            "markdown": "Nao deve ser coletado.",
+            "metadata": {"title": "Blocked", "sourceURL": "https://startup.ai/"},
+        }
+    )
+
+    result = FirecrawlCollectionAdapter(
+        client=client,
+        scraping_policy=ScrapingPolicy(blocked_domains=frozenset({"startup.ai"})),
+    ).collect(
+        "https://startup.ai/",
+        max_pages=1,
+        max_depth=0,
+        clock=fixed_clock,
+    )
+
+    assert result.pages == ()
+    assert len(result.errors) == 1
+    assert result.errors[0].url == "https://startup.ai"
+    assert result.errors[0].error_type == "ScrapeBlocked"
+    assert result.errors[0].error_category == "blocked_domain"
+    assert client.calls == ()
+
+
 def test_scrapy_adapter_failure_returns_categorized_collection_error() -> None:
     result = ScrapyCollectionAdapter(crawler=_FailingScrapyCrawler()).collect(
         "https://startup.ai/",
@@ -182,6 +209,22 @@ class _FakeFirecrawlClient:
         formats: tuple[str, ...],
         only_main_content: bool,
     ) -> object:
+        return self.response
+
+
+class _RecordingFirecrawlClient:
+    def __init__(self, response: object) -> None:
+        self.response = response
+        self.calls: tuple[tuple[str, tuple[str, ...], bool], ...] = ()
+
+    def scrape(
+        self,
+        url: str,
+        *,
+        formats: tuple[str, ...],
+        only_main_content: bool,
+    ) -> object:
+        self.calls = (*self.calls, (url, formats, only_main_content))
         return self.response
 
 

@@ -16,6 +16,8 @@ from nvidia_startup_intel.page_collection import (
     PageCollectionError,
     PageCollectionResult,
     collect_public_pages,
+    collection_policy_error_type,
+    evaluate_collection_request,
 )
 from nvidia_startup_intel.robots import RobotsCache
 from nvidia_startup_intel.scraping_policy import ScrapingPolicy
@@ -95,6 +97,8 @@ class FirecrawlCollectionAdapter:
     client: FirecrawlClient
     formats: tuple[str, ...] = ("markdown", "html")
     only_main_content: bool = True
+    scraping_policy: ScrapingPolicy | None = None
+    robots_cache: RobotsCache | None = None
 
     def collect(
         self,
@@ -105,6 +109,19 @@ class FirecrawlCollectionAdapter:
         clock: CollectionClock | None = None,
     ) -> PageCollectionResult:
         collected_at = _format_time((clock or _utc_now)())
+        decision = evaluate_collection_request(
+            start_url,
+            self.scraping_policy or ScrapingPolicy(),
+            self.robots_cache,
+        )
+        if not decision.allowed:
+            return _blocked_adapter_result(
+                start_url,
+                collected_at=collected_at,
+                error_type=collection_policy_error_type(decision.reason),
+                message=decision.message,
+                error_category=decision.reason.value,
+            )
         try:
             response = self.client.scrape(
                 start_url,
@@ -207,6 +224,28 @@ def _adapter_error_result(
                 message=str(error),
                 collected_at=collected_at,
                 status_code=_error_status_code(error),
+                error_category=error_category,
+            ),
+        ),
+    )
+
+
+def _blocked_adapter_result(
+    url: str,
+    *,
+    collected_at: str,
+    error_type: str,
+    message: str,
+    error_category: str,
+) -> PageCollectionResult:
+    return PageCollectionResult(
+        pages=(),
+        errors=(
+            PageCollectionError(
+                url=normalize_url(url),
+                error_type=error_type,
+                message=message,
+                collected_at=collected_at,
                 error_category=error_category,
             ),
         ),
