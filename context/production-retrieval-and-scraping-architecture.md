@@ -202,6 +202,13 @@ Opcoes:
 
 O reranker so pode reordenar ou descartar chunks. Ele nao pode gerar novas afirmacoes.
 
+O reranking real permanece opt-in ate que fixtures ou casos reais revisados mostrem melhoria
+mensuravel sobre o retrieval hibrido sem regressao de suporte. O limiar minimo para promover o
+caminho real e `top_1_expected_delta >= 1`, com `f1_delta >= 0.0`, `recall_delta >= 0.0`,
+`precision_delta >= 0.0` e `coverage_delta >= 0.0` em `compare_rerank_retrieval_quality`.
+Se a melhoria aparecer apenas em uma expectation estreita, mantenha o reranker como experimento
+e amplie os casos antes de alterar o caminho padrao.
+
 ## Metricas Obrigatorias
 
 O projeto ja mede recall, precision e F1 em fixtures locais. O proximo passo e ampliar expectations por etapa, casos reais revisados e comparacao entre estrategias.

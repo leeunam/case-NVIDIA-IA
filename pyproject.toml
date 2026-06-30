@@ -31,6 +31,9 @@ scraping-services = [
 embeddings = [
     "sentence-transformers",
 ]
+reranking = [
+    "sentence-transformers",
+]
 pgvector = [
     "psycopg[binary]",
 ]

@@ -75,6 +75,22 @@ class ToolingConfigTests(unittest.TestCase):
         self.assertIn("NVIDIA_STARTUP_INTEL_EMBEDDING_PROVIDER", readme)
         self.assertIn("NVIDIA_STARTUP_INTEL_EMBEDDING_MODEL", readme)
 
+    def test_readme_documents_optional_reranking_enablement_threshold(self) -> None:
+        readme_path = Path(__file__).resolve().parents[1] / "README.md"
+        pyproject_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
+
+        readme = readme_path.read_text(encoding="utf-8")
+        with pyproject_path.open("rb") as pyproject_file:
+            config = tomllib.load(pyproject_file)
+
+        self.assertIn("Validação Opcional Reranking", readme)
+        self.assertIn("reranking real só deve ser habilitado", readme)
+        self.assertIn("top_1_expected_delta >= 1", readme)
+        self.assertIn("f1_delta >= 0.0", readme)
+        self.assertIn("não faz parte da suíte local padrão", readme)
+        self.assertIn("sentence-transformers", config["project"]["optional-dependencies"]["reranking"])
+        self.assertNotIn("sentence-transformers", config["project"]["dependencies"])
+
     def test_readme_documents_nvidia_corpus_snapshot_update_contract(self) -> None:
         readme_path = Path(__file__).resolve().parents[1] / "README.md"
 
