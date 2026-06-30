@@ -207,6 +207,51 @@ class DownstreamWorkflowTests(unittest.TestCase):
         self.assertEqual(query.query, state["gap_space_assessment"].retrieval_queries[0])
         self.assertIn("inferencia em producao", query.query)
 
+    def test_gap_space_commercial_opportunity_feeds_program_recommendation(self) -> None:
+        startup_evidence = _startup_evidence(
+            snippet=(
+                "A VetAI precisa reduzir latencia de inferencia em producao e busca "
+                "suporte tecnico e go-to-market para escalar a solucao de IA."
+            )
+        )
+        profile = _profile(
+            startup_evidence,
+            company_summary=(
+                "AI-native veterinary triage platform seeking technical support "
+                "and go-to-market help."
+            ),
+        )
+        workflow = build_local_downstream_workflow(
+            DownstreamWorkflowRuntime(corpus=load_nvidia_knowledge_corpus(_fixture_path()))
+        )
+
+        state = workflow.invoke(
+            {
+                "run_id": "run-issue-81",
+                "profile": profile,
+                "evidence_groups": (),
+                "collection_quality": _collection_quality(),
+                "assessment": _assessment(_model_serving_gap(startup_evidence), run_id="run-issue-81"),
+            }
+        )
+
+        gap_space = state["gap_space_assessment"]
+        self.assertEqual(gap_space.commercial_opportunities[0].opportunity_type, "inception_program_fit")
+        self.assertEqual(tuple(retrieval.query for retrieval in state["retrievals"]), gap_space.retrieval_queries)
+
+        recommendation_set = state["recommendation_set"]
+        self.assertEqual(recommendation_set.technical_recommendations[0].state, "supported")
+        self.assertEqual(recommendation_set.program_recommendations[0].state, "supported")
+        self.assertEqual(
+            recommendation_set.program_recommendations[0].opportunity,
+            gap_space.commercial_opportunities[0],
+        )
+        self.assertEqual(
+            recommendation_set.program_recommendations[0].nvidia_citations[0].document_id,
+            "nvidia-inception",
+        )
+        self.assertEqual(state["workflow_outcome"], "briefing_generated")
+
     def test_supported_gap_generates_executive_briefing_without_langgraph(self) -> None:
         startup_evidence = _startup_evidence(
             snippet="A VetAI precisa reduzir latencia de inferencia em producao para modelos de triagem."
@@ -809,7 +854,11 @@ def _low_collection_quality() -> CollectionQualitySummary:
     )
 
 
-def _profile(evidence: FieldEvidence) -> StartupProfile:
+def _profile(
+    evidence: FieldEvidence,
+    *,
+    company_summary: str = "AI-native veterinary triage platform.",
+) -> StartupProfile:
     unknown = ProfileField(value=UNKNOWN, claim_source=ClaimSource.UNKNOWN, evidences=())
     return StartupProfile(
         schema_version="startup_profile.v1",
@@ -820,7 +869,7 @@ def _profile(evidence: FieldEvidence) -> StartupProfile:
             evidences=(evidence,),
         ),
         company_summary=ProfileField(
-            value="AI-native veterinary triage platform.",
+            value=company_summary,
             claim_source=ClaimSource.OBSERVED,
             evidences=(evidence,),
         ),

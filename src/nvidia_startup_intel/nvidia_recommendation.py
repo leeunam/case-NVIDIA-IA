@@ -13,7 +13,7 @@ import re
 from nvidia_startup_intel.ai_native_assessment import AINativeAssessment, TechnicalGap
 from nvidia_startup_intel.collection_quality import CollectionQualitySummary
 from nvidia_startup_intel.evidence import FieldEvidenceGroup
-from nvidia_startup_intel.gap_space_assessment import GapSpaceAssessment
+from nvidia_startup_intel.gap_space_assessment import CommercialOpportunity, GapSpaceAssessment
 from nvidia_startup_intel.normalization import normalize_text
 from nvidia_startup_intel.nvidia_knowledge import (
     NVIDIACitation,
@@ -65,15 +65,6 @@ class RecommendationQuality:
     states: tuple[str, ...]
     reasons: tuple[str, ...]
     metrics: RecommendationMetrics
-
-
-@dataclass(frozen=True)
-class CommercialOpportunity:
-    opportunity_type: str
-    description: str
-    confidence: float
-    evidences: tuple[FieldEvidence, ...]
-    is_hypothesis: bool = False
 
 
 @dataclass(frozen=True)
