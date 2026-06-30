@@ -123,6 +123,26 @@ class ToolingConfigTests(unittest.TestCase):
             config["tool"]["pytest"]["ini_options"]["markers"],
         )
 
+    def test_readme_documents_optional_langgraph_checkpoint_smoke_separately(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        readme = (project_root / "README.md").read_text(encoding="utf-8")
+        with (project_root / "pyproject.toml").open("rb") as pyproject_file:
+            config = tomllib.load(pyproject_file)
+
+        optional_dependencies = config["project"]["optional-dependencies"]
+        self.assertIn("langgraph", optional_dependencies["workflow"])
+        self.assertIn("langgraph-checkpoint-postgres", optional_dependencies["workflow"])
+        self.assertNotIn("langgraph", config["project"]["dependencies"])
+        self.assertIn("Validação Opcional LangGraph Checkpoint", readme)
+        self.assertIn("NVIDIA_STARTUP_INTEL_RUN_LANGGRAPH_CHECKPOINT_SMOKE", readme)
+        self.assertIn("tests/integration/test_intelligence_workflow_langgraph_checkpoint_smoke.py", readme)
+        self.assertIn("não fazem parte da suíte local padrão", readme)
+        self.assertIn(
+            "langgraph_checkpoint_integration: optional real LangGraph/Postgres checkpoint smoke "
+            "tests, skipped unless explicitly enabled",
+            config["tool"]["pytest"]["ini_options"]["markers"],
+        )
+
     def test_downstream_docs_mark_walking_skeleton_capabilities_as_implemented(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         readme = (project_root / "README.md").read_text(encoding="utf-8")

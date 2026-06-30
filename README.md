@@ -96,6 +96,8 @@ Já existe walking skeleton implementado para o fluxo upstream e downstream loca
 - `executive_briefing.v1` determinístico para recommendation set suportado;
 - `Human Review Briefing` versionado para baixo sinal, alto wrapper risk, conflito, unknowns ou falta de citação;
 - workflow downstream local com branches auditáveis `ready_for_recommendation`, `ready_for_briefing`, `briefing_generated`, `human_review_requested` e `needs_more_collection_or_human_review`;
+- workflow completo local conectando search, collection, profile extraction, evidence quality, assessment, NVIDIA retrieval, recommendation, briefing e persistence references por `run_id`;
+- builder LangGraph opcional para o workflow completo, com checkpointer injetável para produção e smoke Postgres desligado por padrão;
 - persistência downstream JSON/SQL de retrievals, recommendation sets e briefings por run e startup;
 - métricas downstream para retrieval, recomendação, gaps sem recomendação, bloqueios e motivos de revisão humana;
 - suíte local focada no downstream atual, sem rede, credenciais, Postgres real, LangGraph obrigatório ou provedores externos.
@@ -128,6 +130,12 @@ Embeddings reais e Postgres/pgvector também ficam fora da instalação default:
 python -m pip install -e ".[embeddings,pgvector]"
 ```
 
+LangGraph e o checkpointer Postgres ficam em extra separado porque a suíte local padrão usa runners locais:
+
+```bash
+python -m pip install -e ".[workflow]"
+```
+
 ## O Que Falta Para Ficar Inteiro
 
 Sem considerar frontend, o core local já existe. Para o projeto ficar operacionalmente completo em produção, ainda faltam estas frentes:
@@ -140,7 +148,7 @@ Sem considerar frontend, o core local já existe. Para o projeto ficar operacion
 6. Tornar retrieval híbrido o caminho padrão de produção: BM25 lexical, busca vetorial pgvector, merge reprodutível, top K e métricas de precision, recall e F1.
 7. Habilitar reranking real opcional sobre o top K e manter comparação antes/depois.
 8. Calibrar o gap-space assessment com startups reais revisadas.
-9. Conectar LangGraph real com checkpoints, retries, branches e human-in-the-loop quando o fluxo operacional exigir.
+9. Validar o workflow LangGraph completo com checkpoint Postgres em ambiente operacional real, incluindo retries e human-in-the-loop quando o fluxo exigir.
 10. Conectar Groq/LiteLLM para narrativa técnica e comercial do briefing, sempre atrás de `LLMClient` e com fallback determinístico.
 11. Criar um endpoint ou comando operacional único para rodar a análise completa de uma startup ou consulta controlada.
 12. Ampliar validação de integração opt-in para Playwright real, Postgres/pgvector, embeddings reais, reranking real e LLM real sem colocar essas dependências na suíte default.
@@ -339,6 +347,32 @@ python -m pytest -q tests/integration/test_production_scraping_integration_smoke
 ```
 
 Esse caminho pode usar rede e navegador real apenas quando explicitamente habilitado. Não use URLs privadas, autenticadas, paywalled ou protegidas por login; bloqueios de política, `robots.txt`, browser, rede e extração devem aparecer como dados auditáveis no relatório, não como fixtures commitadas.
+
+## Validação Opcional LangGraph Checkpoint
+
+LangGraph e `langgraph-checkpoint-postgres` não fazem parte da suíte local padrão. O workflow completo possui runner local determinístico e builder LangGraph opcional; o checkpointer é injetado apenas em produção ou smoke opt-in.
+
+Instale o extra opcional e suba o Postgres local antes do smoke:
+
+```bash
+python -m pip install -e ".[workflow]"
+docker compose up -d postgres
+```
+
+Configure a conexão do checkpointer sem commitar credenciais:
+
+```bash
+export NVIDIA_STARTUP_INTEL_LANGGRAPH_CHECKPOINT_DATABASE_URL="$DATABASE_URL"
+```
+
+Rode o smoke explicitamente:
+
+```bash
+NVIDIA_STARTUP_INTEL_RUN_LANGGRAPH_CHECKPOINT_SMOKE=1 \
+python -m pytest -q tests/integration/test_intelligence_workflow_langgraph_checkpoint_smoke.py -m langgraph_checkpoint_integration
+```
+
+O smoke compila `build_intelligence_langgraph` com checkpointer Postgres e valida o caminho de resume downstream a partir de artefatos upstream já carregados, sem repetir scraping. Sem a variável `NVIDIA_STARTUP_INTEL_RUN_LANGGRAPH_CHECKPOINT_SMOKE=1`, o teste fica pulado.
 
 ## Validação Opcional Pgvector
 
