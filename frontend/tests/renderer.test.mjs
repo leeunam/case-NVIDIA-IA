@@ -18,6 +18,28 @@ test("renders the operational shell and first-viewport workbench", () => {
   assert.doesNotMatch(html, /hero/i);
 });
 
+test("renders the run launcher with preserved query state and production markers", () => {
+  const html = renderApp(
+    createInitialState({
+      launcherForm: {
+        input_mode: "query",
+        query: "Brazilian AI-native startups in health",
+        limit: 3,
+        retrieval_mode: "pgvector",
+        enable_reranking: true,
+        reranker_model: "cross-encoder"
+      }
+    })
+  );
+
+  assert.match(html, /value="query" type="radio" data-launcher-autosync checked/);
+  assert.match(html, /Brazilian AI-native startups in health/);
+  assert.match(html, /pgvector production/);
+  assert.match(html, /Groq narrative/);
+  assert.match(html, /local defaults/);
+  assert.match(html, /cross-encoder/);
+});
+
 test("renders run-driven status, evidence, assessment, NVIDIA match, and briefing states", () => {
   const currentRun = buildMockRunRecord(
     {
