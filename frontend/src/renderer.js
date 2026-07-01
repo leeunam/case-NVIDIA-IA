@@ -1023,25 +1023,525 @@ function renderSourceUrl(url) {
 }
 
 function renderAssessment(state) {
-  const assessment = state.currentRun?.final_payload?.ai_native_assessment;
+  const run = state.currentRun;
+  const payload = objectRecord(run?.final_payload) || {};
+  const assessment = objectRecord(payload.ai_native_assessment);
   if (!assessment || typeof assessment !== "object") {
     return renderSectionPanel("Assessment", renderEmptyState("No assessment payload yet.", "The API record has no AI-Native Assessment details."));
   }
-  const record = /** @type {Record<string, unknown>} */ (assessment);
-  const gaps = Array.isArray(record.technical_gaps) ? record.technical_gaps : [];
-  const risks = Array.isArray(record.wrapper_dependency_risks) ? record.wrapper_dependency_risks : [];
+  const gapSpace = objectRecord(payload.gap_space_assessment);
+  const humanReview = firstRecord(
+    payload.human_review_briefing,
+    payload.briefing_narrative,
+    payload.executive_briefing
+  );
+  const criteria = records(assessment.criteria_results);
+  const signals = records(assessment.positive_signals);
+  const gaps = records(assessment.technical_gaps);
+  const risks = records(assessment.wrapper_dependency_risks);
+  const commercialOpportunities = commercialOpportunitiesFromPayload(payload, gapSpace, humanReview);
+  const reviewReasons = assessmentReviewReasons(run, assessment, gapSpace, humanReview, payload);
+  const pendingQuestions = assessmentPendingQuestions(assessment, payload, humanReview);
   return renderSectionPanel(
     "Assessment",
     `
-      <div class="metric-row">
-        ${metric("Classification", String(record.classification || "unknown"))}
-        ${metric("Opportunity signal", String(record.opportunity_signal || "unknown"))}
-        ${metric("Wrapper risks", String(risks.length))}
-      </div>
-      ${renderObjectList("Technical gaps", gaps)}
-      ${renderObjectList("Wrapper dependency risks", risks)}
+      ${renderAssessmentOverview(assessment, criteria, gaps, risks)}
+      ${renderAssessmentEvidenceContext(assessment, reviewReasons)}
+      ${renderAssessmentCriteria(criteria)}
+      ${renderPositiveSignals(signals)}
+      ${renderAssessmentGaps(gaps)}
+      ${renderWrapperRisks(risks)}
+      ${renderCommercialOpportunities(commercialOpportunities)}
+      ${renderAssessmentHumanReview(assessment, reviewReasons, pendingQuestions)}
     `
   );
+}
+
+function renderAssessmentOverview(assessment, criteria, gaps, risks) {
+  const readiness = assessmentReadiness(assessment);
+  const opportunitySignal = String(assessment.nvidia_opportunity_urgency || assessment.opportunity_signal || "unknown");
+  return `
+    <div class="metric-row assessment-metrics">
+      ${metric("Classification", String(assessment.classification || "unknown"))}
+      ${metric("Confidence", formatConfidence(assessment.confidence))}
+      ${metric("Opportunity signal", opportunitySignal)}
+    </div>
+    <div class="metric-row assessment-metrics">
+      ${metric("Readiness", readiness)}
+      ${metric("Criteria", String(criteria.length))}
+      ${metric("Wrapper/API signals", String(risks.length))}
+    </div>
+    <div class="metric-row assessment-metrics">
+      ${metric("Technical gaps", String(gaps.length))}
+      ${metric("Evidence references", String(assessmentEvidenceCount(assessment)))}
+      ${metric("Schema", String(assessment.schema_version || "unknown"))}
+    </div>
+  `;
+}
+
+function renderAssessmentEvidenceContext(assessment, reviewReasons) {
+  const diagnostic = objectRecord(assessment.diagnostic_quality) || {};
+  const insufficientFields = arrayValues(assessment.insufficient_evidence_fields);
+  return `
+    <section class="assessment-section" aria-label="Assessment evidence context">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Evidence context</p>
+          <h4>Diagnostic inputs and support</h4>
+        </div>
+        ${renderEvidenceContextButton("assessment-overview")}
+      </div>
+      <dl class="evidence-definition-list">
+        <div><dt>Company</dt><dd>${escapeHtml(String(assessment.company_name || "unknown"))}</dd></div>
+        <div><dt>Diagnostic quality</dt><dd>${escapeHtml(assessmentReadiness(assessment))}</dd></div>
+        <div><dt>Human review required</dt><dd>${escapeHtml(String(Boolean(diagnostic.requires_human_review)))}</dd></div>
+        <div><dt>Diagnostic reasons</dt><dd>${renderInlineList(reviewReasons.length ? reviewReasons : diagnosticReasons(assessment))}</dd></div>
+        <div><dt>Insufficient evidence fields</dt><dd>${renderInlineList(insufficientFields)}</dd></div>
+      </dl>
+    </section>
+  `;
+}
+
+function renderAssessmentCriteria(criteria) {
+  return `
+    <section class="assessment-section" aria-label="Criteria results">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Criteria results</p>
+          <h4>Passed, failed, unknown, and conflict conditions</h4>
+        </div>
+      </div>
+      ${
+        criteria.length
+          ? `<div class="assessment-card-list">${criteria.map((criterion) => renderCriterionResult(criterion)).join("")}</div>`
+          : renderEmptyState("No criteria results.", "The assessment payload did not include criterion-level diagnostics.")
+      }
+    </section>
+  `;
+}
+
+function renderCriterionResult(criterion) {
+  const status = String(criterion.status || "unknown");
+  const evidences = evidenceRecordsFrom(criterion);
+  return `
+    <article class="assessment-card ${status === "conflict" ? "has-conflict" : ""}">
+      <div class="field-title-row">
+        <h4>${escapeHtml(String(criterion.criterion || "unknown_criterion"))}</h4>
+        <span class="status-badge ${assessmentStatusClass(status)}">${escapeHtml(assessmentStatusLabel(status))}</span>
+      </div>
+      <dl class="evidence-definition-list compact">
+        <div><dt>Status</dt><dd>${escapeHtml(status)}</dd></div>
+        <div><dt>Confidence</dt><dd>${escapeHtml(formatConfidence(criterion.confidence))}</dd></div>
+        <div><dt>Rationale</dt><dd>${escapeHtml(String(criterion.rationale || "unknown"))}</dd></div>
+      </dl>
+      ${renderAssessmentEvidenceBlock(evidences, "Criterion evidence", String(criterion.criterion || "criterion"))}
+    </article>
+  `;
+}
+
+function renderPositiveSignals(signals) {
+  return `
+    <section class="assessment-section" aria-label="Positive signals">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Positive signals</p>
+          <h4>Observed or inferred AI-native indicators</h4>
+        </div>
+      </div>
+      ${
+        signals.length
+          ? `<div class="assessment-card-list">${signals.map((signal) => renderPositiveSignal(signal)).join("")}</div>`
+          : renderEmptyState("No positive AI-native signals.", "The assessment payload did not include supported positive signals.")
+      }
+    </section>
+  `;
+}
+
+function renderPositiveSignal(signal) {
+  const evidences = evidenceRecordsFrom(signal);
+  return `
+    <article class="assessment-card">
+      <div class="field-title-row">
+        <h4>${escapeHtml(String(signal.signal_type || "unknown_signal"))}</h4>
+        <span class="status-badge status-completed">Supported signal</span>
+      </div>
+      <dl class="evidence-definition-list compact">
+        <div><dt>Description</dt><dd>${escapeHtml(String(signal.description || "unknown"))}</dd></div>
+        <div><dt>Confidence</dt><dd>${escapeHtml(formatConfidence(signal.confidence))}</dd></div>
+      </dl>
+      ${renderAssessmentEvidenceBlock(evidences, "Signal evidence", String(signal.signal_type || "signal"))}
+    </article>
+  `;
+}
+
+function renderAssessmentGaps(gaps) {
+  return `
+    <section class="assessment-section" aria-label="Technical gaps">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Technical gaps</p>
+          <h4>Gap hypotheses tied to startup-side evidence</h4>
+        </div>
+      </div>
+      ${
+        gaps.length
+          ? `<div class="assessment-card-list">${gaps.map((gap) => renderAssessmentGap(gap)).join("")}</div>`
+          : renderEmptyState("No technical gaps.", "The assessment payload did not include supported or hypothesized gaps.")
+      }
+    </section>
+  `;
+}
+
+function renderAssessmentGap(gap) {
+  const evidences = evidenceRecordsFrom(gap);
+  return `
+    <article class="assessment-card">
+      <div class="field-title-row">
+        <h4>${escapeHtml(String(gap.gap_type || "unknown_gap"))}</h4>
+        <span class="status-badge ${severityClass(gap.severity)}">${escapeHtml(String(gap.severity || "unknown"))}</span>
+      </div>
+      <dl class="evidence-definition-list compact">
+        <div><dt>Type</dt><dd>${escapeHtml(String(gap.gap_type || "unknown"))}</dd></div>
+        <div><dt>Description</dt><dd>${escapeHtml(String(gap.description || gap.rationale || "unknown"))}</dd></div>
+        <div><dt>Severity</dt><dd>${escapeHtml(String(gap.severity || "unknown"))}</dd></div>
+        <div><dt>Confidence</dt><dd>${escapeHtml(formatConfidence(gap.confidence))}</dd></div>
+        <div><dt>Hypothesis</dt><dd>${escapeHtml(String(Boolean(gap.is_hypothesis)))}</dd></div>
+      </dl>
+      ${renderAssessmentEvidenceBlock(evidences, "Gap evidence", String(gap.gap_type || "gap"))}
+    </article>
+  `;
+}
+
+function renderWrapperRisks(risks) {
+  return `
+    <section class="assessment-section" aria-label="Wrapper/API-dependency signals">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Wrapper/API-dependency signals</p>
+          <h4>Dependency risks and validation status</h4>
+        </div>
+      </div>
+      ${
+        risks.length
+          ? `<div class="assessment-card-list">${risks.map((risk) => renderWrapperRisk(risk)).join("")}</div>`
+          : renderEmptyState("No wrapper/API-dependency signals.", "The assessment payload did not include wrapper risk diagnostics.")
+      }
+    </section>
+  `;
+}
+
+function renderWrapperRisk(risk) {
+  const evidences = evidenceRecordsFrom(risk);
+  const shouldValidate = Boolean(risk.is_hypothesis) || !evidences.length || String(risk.severity || "") === "high";
+  return `
+    <article class="assessment-card ${String(risk.severity || "") === "high" ? "has-conflict" : ""}">
+      <div class="field-title-row">
+        <h4>${escapeHtml(String(risk.risk_type || "unknown_risk"))}</h4>
+        <span class="status-badge ${severityClass(risk.severity)}">${escapeHtml(String(risk.severity || "unknown"))}</span>
+      </div>
+      <dl class="evidence-definition-list compact">
+        <div><dt>Signal</dt><dd>${escapeHtml(String(risk.risk_type || "unknown"))}</dd></div>
+        <div><dt>Severity</dt><dd>${escapeHtml(String(risk.severity || "unknown"))}</dd></div>
+        <div><dt>Confidence</dt><dd>${escapeHtml(formatConfidence(risk.confidence))}</dd></div>
+        <div><dt>Rationale</dt><dd>${escapeHtml(String(risk.rationale || "unknown"))}</dd></div>
+        <div><dt>Hypothesis</dt><dd>${escapeHtml(String(Boolean(risk.is_hypothesis)))}</dd></div>
+      </dl>
+      ${
+        shouldValidate
+          ? `<p class="review-signal-line">Review signal: public evidence may be incomplete; validate before treating this as dependency risk.</p>`
+          : ""
+      }
+      ${renderAssessmentEvidenceBlock(evidences, "Risk evidence", String(risk.risk_type || "risk"))}
+    </article>
+  `;
+}
+
+function renderCommercialOpportunities(opportunities) {
+  return `
+    <section class="assessment-section" aria-label="Commercial opportunities">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Commercial opportunities</p>
+          <h4>Program or ecosystem opportunities from downstream gap-space context</h4>
+        </div>
+      </div>
+      ${
+        opportunities.length
+          ? `<div class="assessment-card-list">${opportunities.map((opportunity) => renderCommercialOpportunity(opportunity)).join("")}</div>`
+          : renderEmptyState("No commercial opportunities.", "The payload did not include gap-space or human-review commercial opportunities.")
+      }
+    </section>
+  `;
+}
+
+function renderCommercialOpportunity(opportunity) {
+  const opportunityType = String(
+    opportunity.opportunity_type || opportunity.recommendation_type || opportunity.title || "unknown_opportunity"
+  );
+  const evidences = evidenceRecordsFrom(opportunity, ["evidences", "observed_evidences", "startup_evidences"]);
+  return `
+    <article class="assessment-card">
+      <div class="field-title-row">
+        <h4>${escapeHtml(opportunityType)}</h4>
+        <span class="status-badge ${Boolean(opportunity.is_hypothesis) ? "status-running" : "status-completed"}">${
+          Boolean(opportunity.is_hypothesis) ? "Hypothesis" : "Supported"
+        }</span>
+      </div>
+      <dl class="evidence-definition-list compact">
+        <div><dt>Type</dt><dd>${escapeHtml(opportunityType)}</dd></div>
+        <div><dt>Description</dt><dd>${escapeHtml(
+          String(
+            opportunity.description ||
+              opportunity.opportunity_description ||
+              opportunity.commercial_rationale ||
+              opportunity.rationale ||
+              "unknown"
+          )
+        )}</dd></div>
+        <div><dt>Confidence</dt><dd>${escapeHtml(formatConfidence(opportunity.confidence))}</dd></div>
+        <div><dt>Hypothesis</dt><dd>${escapeHtml(String(Boolean(opportunity.is_hypothesis)))}</dd></div>
+      </dl>
+      ${renderAssessmentEvidenceBlock(evidences, "Opportunity evidence", opportunityType)}
+    </article>
+  `;
+}
+
+function renderAssessmentHumanReview(assessment, reviewReasons, pendingQuestions) {
+  if (assessmentReadiness(assessment) === "ready_for_recommendation" && !reviewReasons.length && !pendingQuestions.length) {
+    return "";
+  }
+  return `
+    <section class="assessment-section" aria-label="Human review reasons">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Human review</p>
+          <h4>Reasons and pending validation questions</h4>
+        </div>
+        <span class="status-badge ${reviewReasons.length ? "status-failed" : "status-running"}">${
+          reviewReasons.length ? "review_required" : "review_signal"
+        }</span>
+      </div>
+      <div class="unknown-field-strip">
+        <h4>Human review reasons</h4>
+        <div class="chip-list">
+          ${
+            reviewReasons.length
+              ? reviewReasons.map((reason) => `<span class="unknown-chip">${escapeHtml(reason)}</span>`).join("")
+              : `<span class="unknown-chip">none</span>`
+          }
+        </div>
+      </div>
+      <div class="pending-question-list">
+        <h4>Pending validation questions</h4>
+        ${
+          pendingQuestions.length
+            ? pendingQuestions.map((question) => renderPendingQuestion(question)).join("")
+            : `<p class="muted-line">No pending validation questions were included.</p>`
+        }
+      </div>
+    </section>
+  `;
+}
+
+function renderPendingQuestion(question) {
+  return `
+    <article class="pending-question-item">
+      <div class="field-title-row">
+        <h4>${escapeHtml(String(question.field_name || "unknown_field"))}</h4>
+        <span class="status-badge ${String(question.priority || "") === "critical" ? "status-failed" : "status-running"}">${
+          escapeHtml(String(question.priority || "unknown"))
+        }</span>
+      </div>
+      <p>${escapeHtml(String(question.question || "unknown"))}</p>
+      <dl class="evidence-definition-list compact">
+        <div><dt>Reason</dt><dd>${escapeHtml(String(question.reason || "unknown"))}</dd></div>
+      </dl>
+    </article>
+  `;
+}
+
+function renderAssessmentEvidenceBlock(evidences, title, context) {
+  return `
+    <div class="assessment-evidence-block">
+      <div class="assessment-evidence-toolbar">
+        <span>${escapeHtml(title)}: ${escapeHtml(String(evidences.length))}</span>
+        ${renderEvidenceContextButton(context)}
+      </div>
+      ${
+        evidences.length
+          ? renderEvidenceSnippetList(evidences, title)
+          : `<p class="insufficient-line">insufficient evidence: no_linked_evidence</p>`
+      }
+    </div>
+  `;
+}
+
+function renderEvidenceContextButton(context) {
+  return `<button type="button" class="context-link" data-section="evidence" data-evidence-context="${escapeAttr(
+    context
+  )}">Evidence tab</button>`;
+}
+
+function firstRecord(...values) {
+  for (const value of values) {
+    const record = objectRecord(value);
+    if (record) {
+      return record;
+    }
+  }
+  return null;
+}
+
+function assessmentReadiness(assessment) {
+  const diagnostic = objectRecord(assessment.diagnostic_quality) || {};
+  if (typeof assessment.ready_for_recommendation === "boolean") {
+    return assessment.ready_for_recommendation ? "ready_for_recommendation" : "not_ready_for_recommendation";
+  }
+  if (typeof diagnostic.ready_for_recommendation === "boolean") {
+    return diagnostic.ready_for_recommendation ? "ready_for_recommendation" : "not_ready_for_recommendation";
+  }
+  return "unknown";
+}
+
+function assessmentEvidenceCount(assessment) {
+  return evidenceRecordsFrom(assessment).length;
+}
+
+function diagnosticReasons(assessment) {
+  const diagnostic = objectRecord(assessment.diagnostic_quality) || {};
+  return arrayValues(diagnostic.reasons).filter((reason) => !isReadyReason(reason));
+}
+
+function assessmentReviewReasons(run, assessment, gapSpace, humanReview, payload) {
+  const diagnostic = objectRecord(assessment.diagnostic_quality) || {};
+  const gapQuality = objectRecord(gapSpace?.quality) || {};
+  const reasons = [
+    ...arrayValues(run?.human_review_reasons),
+    ...arrayValues(payload.human_review_reasons),
+    ...arrayValues(diagnostic.reasons),
+    ...arrayValues(gapQuality.human_review_reasons),
+    ...arrayValues(humanReview?.review_reasons)
+  ];
+  if (gapQuality.ready_for_recommendation === false || gapQuality.requires_human_review === true) {
+    reasons.push(...arrayValues(gapQuality.reasons));
+  }
+  return dedupeStrings(reasons.filter((reason) => !isReadyReason(reason)));
+}
+
+function assessmentPendingQuestions(assessment, payload, humanReview) {
+  return dedupeRecordsByKey(
+    [
+      ...records(assessment.pending_questions),
+      ...records(payload.pending_questions),
+      ...records(humanReview?.pending_questions),
+      ...records(objectRecord(payload.briefing_narrative)?.pending_questions),
+      ...records(objectRecord(payload.executive_briefing)?.pending_questions)
+    ],
+    (question) =>
+      [
+        String(question.field_name || "unknown_field"),
+        String(question.question || "unknown"),
+        String(question.reason || "unknown")
+      ].join("|")
+  );
+}
+
+function commercialOpportunitiesFromPayload(payload, gapSpace, humanReview) {
+  return dedupeRecordsByKey(
+    [
+      ...records(payload.commercial_opportunities),
+      ...records(gapSpace?.commercial_opportunities),
+      ...records(gapSpace?.commercial_mappings),
+      ...records(humanReview?.commercial_opportunities)
+    ],
+    (opportunity) =>
+      String(
+        opportunity.opportunity_type ||
+          opportunity.recommendation_type ||
+          opportunity.opportunity_description ||
+          opportunity.title ||
+          "unknown_opportunity"
+      )
+  );
+}
+
+function evidenceRecordsFrom(record, keys = ["evidences", "evidence_references", "observed_evidences"]) {
+  const evidences = [];
+  for (const key of keys) {
+    evidences.push(...records(objectRecord(record)?.[key]));
+  }
+  return dedupeRecordsByKey(evidences, (evidence) =>
+    [String(evidence.url || "unknown"), String(evidence.snippet || "unknown"), String(evidence.source_type || "unknown")].join("|")
+  );
+}
+
+function dedupeRecordsByKey(items, keyFn) {
+  const seen = new Set();
+  const unique = [];
+  for (const item of items) {
+    const key = keyFn(item);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(item);
+  }
+  return unique;
+}
+
+function dedupeStrings(items) {
+  return Array.from(new Set(items.map((item) => String(item || "").trim()).filter(Boolean)));
+}
+
+function isReadyReason(reason) {
+  return new Set(["ready_for_recommendation", "gap_space_ready_for_recommendation"]).has(String(reason));
+}
+
+function formatConfidence(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "unknown";
+  }
+  return formatPercent(number);
+}
+
+function assessmentStatusLabel(status) {
+  const normalized = String(status || "unknown");
+  const labels = {
+    positive: "Passed",
+    negative: "Failed",
+    unknown: "Unknown",
+    conflict: "Conflict"
+  };
+  return labels[normalized] || normalized;
+}
+
+function assessmentStatusClass(status) {
+  const normalized = String(status || "unknown").toLowerCase();
+  if (normalized === "positive") {
+    return "status-completed";
+  }
+  if (normalized === "negative" || normalized === "conflict") {
+    return "status-failed";
+  }
+  if (normalized === "unknown") {
+    return "status-idle";
+  }
+  return statusClass(normalized);
+}
+
+function severityClass(severity) {
+  const normalized = String(severity || "unknown").toLowerCase();
+  if (normalized === "high") {
+    return "status-failed";
+  }
+  if (normalized === "medium") {
+    return "status-running";
+  }
+  if (normalized === "low") {
+    return "status-completed";
+  }
+  return "status-idle";
 }
 
 function renderNvidiaMatch(state) {
@@ -1683,30 +2183,6 @@ function reasonCountItems(counts) {
   return objectEntries(counts).map(([reason, count]) => ({ reason, count: numericValue(count, 1) }));
 }
 
-function evidenceRecordsFrom(record, keys = ["evidences", "evidence_references", "observed_evidences"]) {
-  const evidences = [];
-  for (const key of keys) {
-    evidences.push(...records(objectRecord(record)?.[key]));
-  }
-  return dedupeRecordsByKey(evidences, (evidence) =>
-    [String(evidence.url || "unknown"), String(evidence.snippet || "unknown"), String(evidence.source_type || "unknown")].join("|")
-  );
-}
-
-function dedupeRecordsByKey(items, keyFn) {
-  const seen = new Set();
-  const unique = [];
-  for (const item of items) {
-    const key = keyFn(item);
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    unique.push(item);
-  }
-  return unique;
-}
-
 function textArrayValues(value) {
   if (Array.isArray(value)) {
     return value
@@ -1723,10 +2199,89 @@ function renderBriefing(state) {
   if (!run) {
     return renderSectionPanel("Briefing", renderEmptyState("No briefing selected.", "Briefing references will appear after a completed run."));
   }
-  const reference =
-    run.briefing_reference && typeof run.briefing_reference === "object"
-      ? /** @type {Record<string, unknown>} */ (run.briefing_reference)
-      : null;
+  const payload = objectRecord(run.final_payload) || {};
+  const reference = objectRecord(run.briefing_reference || payload.briefing_reference);
+  const artifact = selectBriefingArtifact(run, payload, reference);
+  if (!artifact) {
+    return renderBriefingReferenceFallback(run, reference);
+  }
+  if (artifact.type === "human_review") {
+    return renderHumanReviewBriefing(run, artifact.record, objectRecord(payload.briefing_narrative));
+  }
+  return renderExecutiveBriefing(run, artifact.record, objectRecord(payload.briefing_narrative));
+}
+
+function renderExecutiveBriefing(run, briefing, narrative) {
+  return renderSectionPanel(
+    "Executive Briefing",
+    `
+      ${renderBriefingActions(run)}
+      <div class="metric-row briefing-metrics">
+        ${metric("Workflow outcome", run.workflow_outcome)}
+        ${metric("Status", String(briefing.status || "unknown"))}
+        ${metric("Next action", String(briefing.next_action || run.next_action || "unknown"))}
+      </div>
+      <div class="metric-row briefing-metrics">
+        ${metric("Opportunity", String(briefing.opportunity || "unknown"))}
+        ${metric("Human review reasons", renderReasonCount(run.human_review_reasons))}
+        ${metric("Schema", String(briefing.schema_version || "unknown"))}
+      </div>
+      ${renderNarrativeSection(narrative, briefing)}
+      <div class="briefing-grid">
+        ${renderBriefingTextBlock("Summary", briefing.executive_summary)}
+        ${renderBriefingTextBlock("Diagnosis", briefing.diagnosis)}
+      </div>
+      ${renderTextList("Risks", arrayValues(briefing.risks))}
+      ${renderTextList("Recommendations", arrayValues(briefing.recommendations))}
+      ${renderPendingQuestions("Pending questions", records(briefing.pending_questions))}
+      ${renderClaims("Claims", records(briefing.claims))}
+      ${renderReferences("Evidence refs", records(briefing.evidence_references), "evidence")}
+      ${renderReferences("Citation refs", records(briefing.citation_references), "citation")}
+      ${renderTextList("Audit reasons", arrayValues(briefing.audit_reasons))}
+    `
+  );
+}
+
+function renderHumanReviewBriefing(run, briefing, narrative) {
+  return renderSectionPanel(
+    "Human Review Briefing",
+    `
+      ${renderBriefingActions(run)}
+      <div class="metric-row briefing-metrics">
+        ${metric("Workflow outcome", run.workflow_outcome)}
+        ${metric("Status", String(briefing.status || "unknown"))}
+        ${metric("Area", String(briefing.area_of_operation || "unknown"))}
+      </div>
+      <div class="metric-row briefing-metrics">
+        ${metric("Next action", String(briefing.next_action || run.next_action || "unknown"))}
+        ${metric("Reasons for review", String(arrayValues(briefing.review_reasons).length || run.human_review_reasons.length))}
+        ${metric("Unknowns", String(arrayValues(briefing.unknowns).length))}
+      </div>
+      <div class="metric-row briefing-metrics">
+        ${metric("Wrapper risks", String(records(briefing.wrapper_risks).length))}
+        ${metric("Citation refs", String(records(briefing.citation_references).length))}
+        ${metric("Schema", String(briefing.schema_version || "unknown"))}
+      </div>
+      ${renderNarrativeSection(narrative, briefing)}
+      ${renderClaims("Discoveries", records(briefing.discoveries))}
+      ${renderBriefingObjectList("Suspected gaps", records(briefing.suspected_gaps))}
+      ${renderBriefingObjectList("Commercial opportunities", records(briefing.commercial_opportunities))}
+      ${renderBriefingObjectList("Wrapper risks", records(briefing.wrapper_risks))}
+      ${renderBriefingObjectList("Conflicts", records(briefing.conflicts))}
+      ${renderTextList("Unknowns", arrayValues(briefing.unknowns))}
+      ${renderTextList("Reasons for review", arrayValues(briefing.review_reasons))}
+      ${renderPendingQuestions("Validation questions", records(briefing.pending_questions))}
+      ${renderBriefingObjectList("Supported recommendations", records(briefing.supported_recommendations))}
+      ${renderBriefingObjectList("Hypothesis recommendations", records(briefing.hypothesis_recommendations))}
+      ${renderBriefingObjectList("Blocked recommendations", records(briefing.blocked_recommendations))}
+      ${renderReferences("Evidence refs", records(briefing.evidence_references), "evidence")}
+      ${renderReferences("Citation refs", records(briefing.citation_references), "citation")}
+      ${renderTextList("Audit reasons", arrayValues(briefing.audit_reasons))}
+    `
+  );
+}
+
+function renderBriefingReferenceFallback(run, reference) {
   return renderSectionPanel(
     "Briefing",
     `
@@ -1742,8 +2297,525 @@ function renderBriefing(state) {
               .join("")}</ul>`
           : renderEmptyState("No briefing reference in this run.", "The run may need human review or additional collection.")
       }
+      ${renderEmptyState("Full briefing artifact is not loaded.", "This frontend can render executive and human-review briefings when the API record includes the downstream briefing payload.")}
     `
   );
+}
+
+function renderBriefingActions(run) {
+  return `
+    <div class="briefing-actions" aria-label="Briefing actions">
+      <button type="button" class="secondary-action" data-copy-briefing="${escapeAttr(run.run_id)}">Copy</button>
+      <button type="button" class="secondary-action" data-download-briefing="${escapeAttr(run.run_id)}">Export</button>
+      <button type="button" class="secondary-action" data-print-briefing>Print</button>
+    </div>
+    <pre class="briefing-export-text" data-briefing-export>${escapeHtml(briefingExportText(run))}</pre>
+  `;
+}
+
+function renderNarrativeSection(narrative, sourceBriefing) {
+  if (!narrative || !narrativeMatchesSource(narrative, sourceBriefing)) {
+    return `
+      <section class="briefing-section narrative-section" aria-label="Deterministic briefing">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Deterministic briefing</p>
+            <h4>No LLM narrative is attached to this run.</h4>
+          </div>
+        </div>
+        <p class="section-note">The workspace is showing deterministic briefing fields, typed claims, evidence refs, and citation refs from the backend contract.</p>
+      </section>
+    `;
+  }
+  const rejected = narrativeRejected(narrative);
+  const response = objectRecord(narrative.llm_response) || {};
+  return `
+    <section class="briefing-section narrative-section${rejected ? " is-fallback" : ""}" aria-label="LLM narrative">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">${rejected ? "LLM narrative fallback" : "LLM narrative"}</p>
+          <h4>${rejected ? "Unsafe or malformed narrative was replaced with deterministic content." : "Generated narrative draft from validated briefing claims."}</h4>
+        </div>
+        <span class="schema-pill">${escapeHtml(String(narrative.schema_version || "briefing_narrative.v1"))}</span>
+      </div>
+      <div class="briefing-grid">
+        ${renderBriefingTextBlock("Technical gap narrative", narrative.technical_gap_narrative)}
+        ${renderBriefingTextBlock("Commercial approach narrative", narrative.commercial_approach_narrative)}
+      </div>
+      ${renderLlmMetadata(response, narrative)}
+    </section>
+  `;
+}
+
+function renderLlmMetadata(response, narrative) {
+  const metadata = objectRecord(response.metadata) || {};
+  const items = [
+    ["Provider", response.provider],
+    ["Model", response.model],
+    ["Model version", response.model_version],
+    ["Finish reason", response.finish_reason],
+    ["Source schema", narrative.source_briefing_schema_version],
+    ["Source status", narrative.source_briefing_status],
+    ["Credential env var", metadata.configured_api_key_env_var],
+    ["Adapter", metadata.adapter],
+    ["Content rejected", metadata.content_rejected],
+    ["Rejection reason", metadata.rejection_reason],
+  ].filter(([, value]) => value !== undefined && value !== null && String(value) !== "");
+  return `
+    <dl class="llm-metadata">
+      ${items
+        .map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(String(value))}</dd></div>`)
+        .join("")}
+      <div><dt>Audit</dt><dd>${renderInlineList(arrayValues(narrative.audit_reasons))}</dd></div>
+    </dl>
+  `;
+}
+
+function renderBriefingTextBlock(title, value) {
+  const text = String(value || "unknown");
+  return `
+    <section class="briefing-section">
+      <p class="eyebrow">${escapeHtml(title)}</p>
+      <p class="briefing-text">${escapeHtml(text)}</p>
+    </section>
+  `;
+}
+
+function renderTextList(title, items) {
+  if (!items.length) {
+    return renderBriefingEmptySection(title, "No entries in this briefing artifact.");
+  }
+  return `
+    <section class="briefing-section" aria-label="${escapeAttr(title)}">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">${escapeHtml(title)}</p>
+          <h4>${escapeHtml(title)}</h4>
+        </div>
+      </div>
+      <ul class="briefing-list">
+        ${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+      </ul>
+    </section>
+  `;
+}
+
+function renderPendingQuestions(title, questions) {
+  if (!questions.length) {
+    return renderBriefingEmptySection(title, "No pending questions in this briefing artifact.");
+  }
+  return `
+    <section class="briefing-section" aria-label="${escapeAttr(title)}">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">${escapeHtml(title)}</p>
+          <h4>${escapeHtml(title)}</h4>
+        </div>
+      </div>
+      <div class="question-list">
+        ${questions
+          .map(
+            (question) => `
+              <article class="question-card">
+                <span class="status-badge">${escapeHtml(String(question.priority || "unknown"))}</span>
+                <strong>${escapeHtml(String(question.field_name || "unknown"))}</strong>
+                <p>${escapeHtml(String(question.question || "unknown"))}</p>
+                <small>${escapeHtml(String(question.reason || ""))}</small>
+              </article>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderClaims(title, claims) {
+  if (!claims.length) {
+    return renderBriefingEmptySection(title, "No typed claims in this briefing artifact.");
+  }
+  return `
+    <section class="briefing-section" aria-label="${escapeAttr(title)}">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">${escapeHtml(title)}</p>
+          <h4>${escapeHtml(title)}</h4>
+        </div>
+      </div>
+      <div class="claim-grid">
+        ${claims.map(renderClaim).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderClaim(claim) {
+  const claimType = normalizeClaimType(claim.claim_type);
+  const evidenceRefs = records(claim.evidence_references).map(evidenceReferenceLabel);
+  const citationRefs = records(claim.citation_references).map(citationReferenceLabel);
+  return `
+    <article class="claim-card claim-type-${escapeAttr(claimType)}">
+      <div class="claim-card-header">
+        <span class="claim-pill claim-type-${escapeAttr(claimType)}">${escapeHtml(claimType)}</span>
+        <span>${escapeHtml(String(claim.section || "unknown"))} · ${escapeHtml(formatConfidence(claim.confidence))}</span>
+      </div>
+      <p>${escapeHtml(String(claim.text || "unknown"))}</p>
+      ${claim.reason ? `<small>${escapeHtml(String(claim.reason))}</small>` : ""}
+      ${renderInlineRefs("Evidence refs", evidenceRefs)}
+      ${renderInlineRefs("Citation refs", citationRefs)}
+    </article>
+  `;
+}
+
+function renderBriefingObjectList(title, items) {
+  if (!items.length) {
+    return renderBriefingEmptySection(title, "No entries in this briefing artifact.");
+  }
+  return `
+    <section class="briefing-section" aria-label="${escapeAttr(title)}">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">${escapeHtml(title)}</p>
+          <h4>${escapeHtml(title)}</h4>
+        </div>
+      </div>
+      <div class="object-grid">
+        ${items.map(renderBriefingObjectCard).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderBriefingObjectCard(item) {
+  const title = String(
+    item.title ||
+      item.gap_type ||
+      item.risk_type ||
+      item.opportunity_type ||
+      item.nvidia_technology ||
+      item.nvidia_program ||
+      item.recommendation_type ||
+      item.field_name ||
+      "item"
+  );
+  const body = String(
+    item.description ||
+      item.rationale ||
+      item.technical_rationale ||
+      item.commercial_rationale ||
+      item.value ||
+      ""
+  );
+  const chips = [
+    item.severity,
+    item.priority,
+    item.confidence !== undefined ? formatConfidence(item.confidence) : "",
+    item.has_conflict === true ? "conflict" : "",
+  ].filter(Boolean);
+  const evidenceRefs = [
+    ...records(item.evidences),
+    ...records(item.evidence_references),
+    ...records(item.startup_evidences),
+  ].map(evidenceReferenceLabel);
+  const citationRefs = [
+    ...records(item.nvidia_citations),
+    ...records(item.citation_references),
+  ].map(citationReferenceLabel);
+  const conflicts = arrayValues(item.conflicting_values);
+  return `
+    <article class="briefing-object-card">
+      <div class="claim-card-header">
+        <strong>${escapeHtml(title)}</strong>
+        <span>${chips.map((chip) => escapeHtml(String(chip))).join(" · ")}</span>
+      </div>
+      ${body ? `<p>${escapeHtml(body)}</p>` : ""}
+      ${conflicts.length ? renderInlineRefs("Conflicting values", conflicts) : ""}
+      ${renderInlineRefs("Evidence refs", evidenceRefs)}
+      ${renderInlineRefs("Citation refs", citationRefs)}
+    </article>
+  `;
+}
+
+function renderReferences(title, refs, type) {
+  if (!refs.length) {
+    return renderBriefingEmptySection(title, "No references in this briefing artifact.");
+  }
+  return `
+    <section class="briefing-section" aria-label="${escapeAttr(title)}">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">${escapeHtml(title)}</p>
+          <h4>${escapeHtml(title)}</h4>
+        </div>
+      </div>
+      <ul class="source-list">
+        ${refs
+          .map((ref) => {
+            const label = type === "citation" ? citationReferenceLabel(ref) : evidenceReferenceLabel(ref);
+            const detail = type === "citation" ? ref.document_title || ref.source_url : ref.snippet || ref.source_type;
+            return `<li><strong>${escapeHtml(label)}</strong><span>${escapeHtml(String(detail || ""))}</span></li>`;
+          })
+          .join("")}
+      </ul>
+    </section>
+  `;
+}
+
+function renderBriefingEmptySection(title, detail) {
+  return `
+    <section class="briefing-section" aria-label="${escapeAttr(title)}">
+      ${renderEmptyState(`No ${title.toLowerCase()}.`, detail)}
+    </section>
+  `;
+}
+
+function renderInlineRefs(label, refs) {
+  if (!refs.length) {
+    return "";
+  }
+  return `
+    <dl class="inline-refs">
+      <div><dt>${escapeHtml(label)}</dt><dd>${renderInlineList(refs)}</dd></div>
+    </dl>
+  `;
+}
+
+function selectBriefingArtifact(run, payload, reference) {
+  const executive = objectRecord(payload.executive_briefing);
+  const humanReview = objectRecord(payload.human_review_briefing);
+  const referenceType = String(reference?.briefing_type || "");
+  const outcome = String(run.workflow_outcome || payload.workflow_outcome || "");
+  if (
+    humanReview &&
+    (referenceType === "human_review" ||
+      outcome.includes("human_review") ||
+      String(humanReview.status || "").includes("human_review"))
+  ) {
+    return { type: "human_review", record: humanReview };
+  }
+  if (executive && String(executive.status || "") === "ready_for_use") {
+    return { type: "executive", record: executive };
+  }
+  if (humanReview) {
+    return { type: "human_review", record: humanReview };
+  }
+  if (executive) {
+    return { type: "executive", record: executive };
+  }
+  return null;
+}
+
+function narrativeMatchesSource(narrative, sourceBriefing) {
+  const sourceSchema = String(sourceBriefing.schema_version || "");
+  const narrativeSource = String(narrative.source_briefing_schema_version || "");
+  return !sourceSchema || !narrativeSource || sourceSchema === narrativeSource;
+}
+
+function narrativeRejected(narrative) {
+  const metadata = objectRecord(objectRecord(narrative.llm_response)?.metadata) || {};
+  return (
+    metadata.content_rejected === true ||
+    arrayValues(narrative.audit_reasons).some((reason) => reason.includes("llm_narrative_rejected"))
+  );
+}
+
+export function briefingExportText(run) {
+  if (!run) {
+    return "No briefing selected.";
+  }
+  const payload = objectRecord(run.final_payload) || {};
+  const reference = objectRecord(run.briefing_reference || payload.briefing_reference);
+  const artifact = selectBriefingArtifact(run, payload, reference);
+  if (!artifact) {
+    const lines = [
+      "Briefing reference",
+      `Run ID: ${run.run_id}`,
+      `Workflow outcome: ${run.workflow_outcome}`,
+      `Next action: ${run.next_action}`,
+      `Human review reasons: ${arrayValues(run.human_review_reasons).join(", ") || "none"}`,
+    ];
+    if (reference) {
+      lines.push("Reference:");
+      for (const [key, value] of objectEntries(reference)) {
+        lines.push(`- ${key}: ${String(value)}`);
+      }
+    }
+    return lines.join("\n");
+  }
+  return artifact.type === "human_review"
+    ? humanReviewBriefingExportText(run, artifact.record, objectRecord(payload.briefing_narrative))
+    : executiveBriefingExportText(run, artifact.record, objectRecord(payload.briefing_narrative));
+}
+
+function executiveBriefingExportText(run, briefing, narrative) {
+  const lines = [
+    `Executive Briefing: ${String(briefing.startup_identifier || run.startup_identifier)}`,
+    `Run ID: ${String(briefing.run_id || run.run_id)}`,
+    `Status: ${String(briefing.status || "unknown")}`,
+    `Opportunity: ${String(briefing.opportunity || "unknown")}`,
+    `Next action: ${String(briefing.next_action || run.next_action || "unknown")}`,
+    "",
+    "Summary:",
+    String(briefing.executive_summary || "unknown"),
+    "",
+    "Diagnosis:",
+    String(briefing.diagnosis || "unknown"),
+  ];
+  appendExportList(lines, "Risks", arrayValues(briefing.risks));
+  appendExportList(lines, "Recommendations", arrayValues(briefing.recommendations));
+  appendQuestionsExport(lines, "Pending questions", records(briefing.pending_questions));
+  appendClaimsExport(lines, records(briefing.claims));
+  appendReferencesExport(lines, "Evidence refs", records(briefing.evidence_references), evidenceReferenceLabel);
+  appendReferencesExport(lines, "Citation refs", records(briefing.citation_references), citationReferenceLabel);
+  appendNarrativeExport(lines, narrative, briefing);
+  return lines.join("\n");
+}
+
+function humanReviewBriefingExportText(run, briefing, narrative) {
+  const lines = [
+    `Human Review Briefing: ${String(briefing.startup_identifier || run.startup_identifier)}`,
+    `Run ID: ${String(briefing.run_id || run.run_id)}`,
+    `Status: ${String(briefing.status || "unknown")}`,
+    `Area: ${String(briefing.area_of_operation || "unknown")}`,
+    `Next action: ${String(briefing.next_action || run.next_action || "unknown")}`,
+  ];
+  appendClaimsExport(lines, records(briefing.discoveries), "Discoveries");
+  appendObjectsExport(lines, "Suspected gaps", records(briefing.suspected_gaps));
+  appendObjectsExport(lines, "Commercial opportunities", records(briefing.commercial_opportunities));
+  appendObjectsExport(lines, "Wrapper risks", records(briefing.wrapper_risks));
+  appendObjectsExport(lines, "Conflicts", records(briefing.conflicts));
+  appendExportList(lines, "Unknowns", arrayValues(briefing.unknowns));
+  appendExportList(lines, "Reasons for review", arrayValues(briefing.review_reasons));
+  appendQuestionsExport(lines, "Validation questions", records(briefing.pending_questions));
+  appendObjectsExport(lines, "Supported recommendations", records(briefing.supported_recommendations));
+  appendObjectsExport(lines, "Hypothesis recommendations", records(briefing.hypothesis_recommendations));
+  appendObjectsExport(lines, "Blocked recommendations", records(briefing.blocked_recommendations));
+  appendReferencesExport(lines, "Evidence refs", records(briefing.evidence_references), evidenceReferenceLabel);
+  appendReferencesExport(lines, "Citation refs", records(briefing.citation_references), citationReferenceLabel);
+  appendNarrativeExport(lines, narrative, briefing);
+  return lines.join("\n");
+}
+
+function appendExportList(lines, title, items) {
+  lines.push("", `${title}:`);
+  if (!items.length) {
+    lines.push("- none");
+    return;
+  }
+  for (const item of items) {
+    lines.push(`- ${item}`);
+  }
+}
+
+function appendQuestionsExport(lines, title, questions) {
+  lines.push("", `${title}:`);
+  if (!questions.length) {
+    lines.push("- none");
+    return;
+  }
+  for (const question of questions) {
+    lines.push(`- [${String(question.priority || "unknown")}] ${String(question.field_name || "unknown")}: ${String(question.question || "unknown")} (${String(question.reason || "no reason")})`);
+  }
+}
+
+function appendClaimsExport(lines, claims, title = "Claims") {
+  lines.push("", `${title}:`);
+  if (!claims.length) {
+    lines.push("- none");
+    return;
+  }
+  for (const claim of claims) {
+    lines.push(`- [${normalizeClaimType(claim.claim_type)}] ${String(claim.text || "unknown")}`);
+    const evidenceRefs = records(claim.evidence_references).map(evidenceReferenceLabel);
+    const citationRefs = records(claim.citation_references).map(citationReferenceLabel);
+    if (evidenceRefs.length) {
+      lines.push(`  Evidence refs: ${evidenceRefs.join("; ")}`);
+    }
+    if (citationRefs.length) {
+      lines.push(`  Citation refs: ${citationRefs.join("; ")}`);
+    }
+  }
+}
+
+function appendObjectsExport(lines, title, items) {
+  lines.push("", `${title}:`);
+  if (!items.length) {
+    lines.push("- none");
+    return;
+  }
+  for (const item of items) {
+    const label = String(
+      item.title ||
+        item.gap_type ||
+        item.risk_type ||
+        item.opportunity_type ||
+        item.nvidia_technology ||
+        item.nvidia_program ||
+        item.recommendation_type ||
+        item.field_name ||
+        "item"
+    );
+    const detail = String(
+      item.description ||
+        item.rationale ||
+        item.technical_rationale ||
+        item.commercial_rationale ||
+        item.value ||
+        ""
+    );
+    lines.push(`- ${label}${detail ? `: ${detail}` : ""}`);
+  }
+}
+
+function appendReferencesExport(lines, title, refs, formatter) {
+  lines.push("", `${title}:`);
+  if (!refs.length) {
+    lines.push("- none");
+    return;
+  }
+  for (const ref of refs) {
+    lines.push(`- ${formatter(ref)}`);
+  }
+}
+
+function appendNarrativeExport(lines, narrative, sourceBriefing) {
+  lines.push("", "Narrative:");
+  if (!narrative || !narrativeMatchesSource(narrative, sourceBriefing)) {
+    lines.push("- No LLM narrative is attached to this run.");
+    return;
+  }
+  lines.push(`- Status: ${narrativeRejected(narrative) ? "fallback" : "accepted"}`);
+  lines.push(`- Technical gap narrative: ${String(narrative.technical_gap_narrative || "unknown")}`);
+  lines.push(`- Commercial approach narrative: ${String(narrative.commercial_approach_narrative || "unknown")}`);
+  const response = objectRecord(narrative.llm_response) || {};
+  const metadata = objectRecord(response.metadata) || {};
+  lines.push(`- Provider: ${String(response.provider || "unknown")}`);
+  lines.push(`- Model: ${String(response.model || "unknown")}`);
+  if (metadata.configured_api_key_env_var) {
+    lines.push(`- Credential env var: ${String(metadata.configured_api_key_env_var)}`);
+  }
+  appendExportList(lines, "Narrative audit reasons", arrayValues(narrative.audit_reasons));
+}
+
+function evidenceReferenceLabel(ref) {
+  const sourceType = String(ref.source_type || "source");
+  const url = String(ref.url || "unknown");
+  return `${sourceType}: ${url}`;
+}
+
+function citationReferenceLabel(ref) {
+  const documentId = String(ref.document_id || "unknown");
+  const chunkId = String(ref.chunk_id || "unknown");
+  const sourceUrl = String(ref.source_url || "");
+  return `${documentId}:${chunkId}${sourceUrl ? ` ${sourceUrl}` : ""}`;
+}
+
+function normalizeClaimType(value) {
+  const claimType = String(value || "unknown").toLowerCase();
+  if (["observed", "inferred", "recommended", "unknown"].includes(claimType)) {
+    return claimType;
+  }
+  return "unknown";
 }
 
 function renderProductionSmokes(state) {
@@ -1858,7 +2930,7 @@ function sectionTitle(activeSection) {
     evidence: "Evidence references",
     assessment: "AI-Native assessment",
     "nvidia-match": "NVIDIA opportunity match",
-    briefing: "Executive briefing",
+    briefing: "Briefing workspace",
     "production-smokes": "Production smoke readiness"
   };
   return labels[activeSection] || "Run command center";
@@ -2099,13 +3171,6 @@ function renderReasonCount(reasons) {
   return String(Array.isArray(reasons) ? reasons.length : 0);
 }
 
-function objectEntries(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return [];
-  }
-  return Object.entries(value);
-}
-
 function objectRecord(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -2118,8 +3183,15 @@ function records(value) {
     return [];
   }
   return value
-    .filter((item) => item && typeof item === "object" && !Array.isArray(item))
-    .map((item) => /** @type {Record<string, unknown>} */ (item));
+    .map((item) => objectRecord(item))
+    .filter((item) => item !== null);
+}
+
+function objectEntries(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return [];
+  }
+  return Object.entries(value);
 }
 
 function escapeHtml(value) {
