@@ -1298,6 +1298,75 @@ dd {
   overflow-wrap: anywhere;
 }
 
+.match-section {
+  margin-bottom: 16px;
+}
+
+.match-metrics {
+  margin-bottom: 12px;
+}
+
+.match-card-list,
+.retrieval-result-list {
+  display: grid;
+  gap: 12px;
+}
+
+.match-card,
+.retrieval-result {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfbfa;
+}
+
+.match-card.is-top {
+  border-color: rgb(67 107 0 / 32%);
+  background: rgb(118 185 0 / 9%);
+}
+
+.match-card.has-hypothesis,
+.retrieval-result.has-hypothesis,
+.snippet-item.has-hypothesis {
+  border-color: rgb(183 121 31 / 28%);
+  background: rgb(183 121 31 / 7%);
+}
+
+.match-card.has-block {
+  border-color: rgb(180 35 24 / 28%);
+  background: rgb(180 35 24 / 6%);
+}
+
+.retrieval-result-list {
+  margin-top: 12px;
+}
+
+.match-excerpt {
+  margin: 10px 0 0;
+  color: var(--ink);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.match-evidence-block {
+  margin-top: 12px;
+}
+
+.match-evidence-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  margin-bottom: 8px;
+  color: var(--ink-muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 .audit-section {
   margin-top: 16px;
 }

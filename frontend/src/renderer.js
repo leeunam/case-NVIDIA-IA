@@ -1545,25 +1545,653 @@ function severityClass(severity) {
 }
 
 function renderNvidiaMatch(state) {
-  const match = state.currentRun?.final_payload?.nvidia_match;
-  if (!match || typeof match !== "object") {
-    return renderSectionPanel("NVIDIA Match", renderEmptyState("No NVIDIA match payload yet.", "Recommendations remain empty until the API record includes matched citations."));
+  const run = state.currentRun;
+  const payload = objectRecord(run?.final_payload) || {};
+  const match = objectRecord(payload.nvidia_match) || objectRecord(payload.recommendation_set);
+  const retrievals = nvidiaRetrievalsFromPayload(payload, match);
+  const rerankResults = nvidiaRerankResultsFromPayload(payload, match);
+  const metricsReport = nvidiaMetricsReportFromPayload(payload, match);
+  if (!match && !retrievals.length && !rerankResults.length && !metricsReport) {
+    return renderSectionPanel(
+      "NVIDIA Match",
+      renderEmptyState(
+        "No NVIDIA match payload yet.",
+        "Recommendations remain empty until the API record includes matched citations."
+      )
+    );
   }
-  const record = /** @type {Record<string, unknown>} */ (match);
-  const supported = Array.isArray(record.supported_recommendations) ? record.supported_recommendations : [];
-  const blocked = Array.isArray(record.blocked_recommendations) ? record.blocked_recommendations : [];
+  const record = match || {};
+  const groups = nvidiaRecommendationGroups(record);
   return renderSectionPanel(
     "NVIDIA Match",
     `
-      <div class="metric-row">
-        ${metric("Priority", String(record.priority || "unknown"))}
-        ${metric("Supported", String(supported.length))}
-        ${metric("Blocked", String(blocked.length))}
-      </div>
-      ${renderObjectList("Supported recommendations", supported)}
-      ${renderObjectList("Blocked recommendations", blocked)}
+      ${renderNvidiaMatchOverview(record, retrievals, rerankResults, run)}
+      ${renderNvidiaQualityMetrics(record, metricsReport, run)}
+      ${renderNvidiaRetrievals(retrievals)}
+      ${renderNvidiaReranking(rerankResults)}
+      ${renderRecommendationSection("Top recommendations per gap", groups.top, "supported", { highlightTop: true })}
+      ${renderRecommendationSection("Supported recommendations", groups.supported, "supported")}
+      ${renderRecommendationSection("Alternatives", groups.alternatives, "supported")}
+      ${renderRecommendationSection("Hypotheses", groups.hypotheses, "hypothesis")}
+      ${renderRecommendationSection("Blocked recommendations", groups.blocked, "blocked")}
     `
   );
+}
+
+function renderNvidiaMatchOverview(match, retrievals, rerankResults, run) {
+  const quality = objectRecord(match.quality) || {};
+  const metrics = objectRecord(quality.metrics) || {};
+  const supported = numericValue(metrics.supported_recommendation_count, records(match.technical_recommendations).length);
+  const hypotheses = numericValue(metrics.hypothesis_recommendation_count, records(match.hypotheses).length);
+  const blocked = numericValue(metrics.blocked_recommendation_count, records(match.blocked_recommendations).length);
+  return `
+    <div class="metric-row match-metrics">
+      ${metric("Priority", String(match.final_nvidia_opportunity_priority || match.priority || "unknown"))}
+      ${metric("Next action", String(match.next_action || run?.next_action || "unknown"))}
+      ${metric("Ready for briefing", String(Boolean(quality.ready_for_briefing)))}
+    </div>
+    <div class="metric-row match-metrics">
+      ${metric("Supported", String(supported))}
+      ${metric("Hypotheses", String(hypotheses))}
+      ${metric("Blocked", String(blocked))}
+    </div>
+    <div class="metric-row match-metrics">
+      ${metric("Corpus version", String(match.corpus_version || corpusVersionFromRetrievals(retrievals) || "unknown"))}
+      ${metric("Retrieval results", String(retrievals.reduce((total, retrieval) => total + records(retrieval.results).length, 0)))}
+      ${metric("Reranked Top K", String(rerankResults.reduce((total, result) => total + records(result.results).length, 0)))}
+    </div>
+  `;
+}
+
+function renderNvidiaQualityMetrics(match, metricsReport, run) {
+  const retrievalMetrics = objectRecord(metricsReport?.retrieval_metrics) || objectRecord(match.retrieval_metrics);
+  const recommendationMetrics =
+    objectRecord(metricsReport?.recommendation_metrics) ||
+    objectRecord(objectRecord(match.quality)?.metrics) ||
+    objectRecord(match.recommendation_metrics) ||
+    objectRecord(match.metrics);
+  const quality = objectRecord(match.quality) || {};
+  if (!retrievalMetrics && !recommendationMetrics && !objectEntries(quality).length && !arrayValues(run?.human_review_reasons).length) {
+    return "";
+  }
+  return `
+    <section class="match-section" aria-label="NVIDIA match quality metrics">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Quality metrics</p>
+          <h4>Retrieval and recommendation quality</h4>
+        </div>
+        <span class="schema-pill">${escapeHtml(String(metricsReport?.schema_version || match.schema_version || "metrics"))}</span>
+      </div>
+      ${
+        retrievalMetrics
+          ? `<div class="metric-row match-metrics">
+              ${metric("Recall", formatPercent(retrievalMetrics.recall))}
+              ${metric("Precision", formatPercent(retrievalMetrics.precision))}
+              ${metric("F1", formatPercent(retrievalMetrics.f1))}
+            </div>
+            <div class="metric-row match-metrics">
+              ${metric("Coverage", formatPercent(retrievalMetrics.coverage))}
+              ${metric("Top-1 expected", String(retrievalMetrics.top_1_expected_count ?? "unknown"))}
+              ${metric("Retrieval strategy", String(retrievalMetrics.retrieval_strategy || "unknown"))}
+            </div>`
+          : renderEmptyState("No retrieval metrics.", "Recall, precision, F1, and coverage were not included in this run.")
+      }
+      ${
+        recommendationMetrics
+          ? `<div class="metric-row match-metrics">
+              ${metric("Supported recommendations", String(recommendationMetrics.supported_recommendation_count ?? "unknown"))}
+              ${metric("Hypothesis recommendations", String(recommendationMetrics.hypothesis_recommendation_count ?? "unknown"))}
+              ${metric("Blocked recommendations", String(recommendationMetrics.blocked_recommendation_count ?? "unknown"))}
+            </div>
+            <div class="metric-row match-metrics">
+              ${metric(
+                "Official NVIDIA citations",
+                String(recommendationMetrics.recommendations_with_official_nvidia_citation_count ?? "unknown")
+              )}
+              ${metric(
+                "Startup evidence refs",
+                String(recommendationMetrics.recommendations_with_startup_evidence_count ?? "unknown")
+              )}
+              ${metric("Blocked briefings", String(recommendationMetrics.blocked_briefing_count ?? "unknown"))}
+            </div>`
+          : ""
+      }
+      <div class="unknown-field-strip">
+        <h4>Human review reason counts</h4>
+        ${renderHumanReviewReasonCounts(recommendationMetrics?.human_review_reason_counts, run)}
+      </div>
+      <dl class="evidence-definition-list compact">
+        <div><dt>Ready for briefing</dt><dd>${escapeHtml(String(Boolean(quality.ready_for_briefing)))}</dd></div>
+        <div><dt>Human review requested</dt><dd>${escapeHtml(String(Boolean(quality.human_review_requested)))}</dd></div>
+        <div><dt>Quality reasons</dt><dd>${renderInlineList(quality.reasons)}</dd></div>
+      </dl>
+    </section>
+  `;
+}
+
+function renderNvidiaRetrievals(retrievals) {
+  return `
+    <section class="match-section" aria-label="Retrieved NVIDIA Knowledge">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Retrieved NVIDIA Knowledge</p>
+          <h4>Official source chunks and retrieval scores</h4>
+        </div>
+      </div>
+      ${
+        retrievals.length
+          ? `<div class="match-card-list">${retrievals.map((retrieval) => renderNvidiaRetrieval(retrieval)).join("")}</div>`
+          : renderEmptyState("No retrieval payloads.", "NVIDIA Knowledge chunks were not included in this API record.")
+      }
+    </section>
+  `;
+}
+
+function renderNvidiaRetrieval(retrieval) {
+  const results = records(retrieval.results);
+  return `
+    <article class="match-card retrieval-card">
+      <div class="field-title-row">
+        <h4>${escapeHtml(String(retrieval.query || "unknown retrieval query"))}</h4>
+        <span class="status-badge status-completed">${escapeHtml(String(retrieval.schema_version || "nvidia_knowledge.v1"))}</span>
+      </div>
+      <dl class="evidence-definition-list compact">
+        <div><dt>corpus_version</dt><dd>${escapeHtml(String(retrieval.corpus_version || "unknown"))}</dd></div>
+        <div><dt>Result count</dt><dd>${escapeHtml(String(results.length))}</dd></div>
+        <div><dt>Retrieval strategy</dt><dd>${escapeHtml(retrievalStrategyFor(retrieval))}</dd></div>
+      </dl>
+      ${
+        results.length
+          ? `<div class="retrieval-result-list">${results.map((result) => renderNvidiaRetrievalResult(result, retrieval)).join("")}</div>`
+          : `<p class="insufficient-line">insufficient citation support: no_retrieved_citation</p>`
+      }
+    </article>
+  `;
+}
+
+function renderNvidiaRetrievalResult(result, retrieval) {
+  const citation = objectRecord(result.citation) || {};
+  const chunk = objectRecord(result.chunk) || {};
+  const sourceUrl = String(citation.source_url || "unknown");
+  const official = isOfficialNvidiaCitation(citation);
+  return `
+    <article class="retrieval-result ${official ? "" : "has-hypothesis"}">
+      <div class="field-title-row">
+        <h4>${escapeHtml(String(citation.document_title || chunk.document_id || "unknown NVIDIA document"))}</h4>
+        <span class="status-badge ${official ? "status-completed" : "status-running"}">${
+          official ? "Official NVIDIA source" : "Non-official or insufficient citation"
+        }</span>
+      </div>
+      <p class="match-excerpt">${escapeHtml(String(citation.excerpt || chunk.text || "unknown excerpt"))}</p>
+      <dl class="evidence-definition-list compact">
+        <div><dt>chunk id</dt><dd>${escapeHtml(String(citation.chunk_id || chunk.chunk_id || "unknown"))}</dd></div>
+        <div><dt>document title</dt><dd>${escapeHtml(String(citation.document_title || "unknown"))}</dd></div>
+        <div><dt>official source URL</dt><dd>${renderSourceUrl(sourceUrl)}</dd></div>
+        <div><dt>corpus_version</dt><dd>${escapeHtml(String(citation.corpus_version || retrieval.corpus_version || "unknown"))}</dd></div>
+        <div><dt>retrieval strategy</dt><dd>${escapeHtml(String(result.retrieval_strategy || retrievalStrategyFor(retrieval)))}</dd></div>
+        <div><dt>rank</dt><dd>${escapeHtml(String(result.rank ?? "unknown"))}</dd></div>
+        <div><dt>score</dt><dd>${escapeHtml(formatScore(result.score))}</dd></div>
+        <div><dt>BM25 score</dt><dd>${escapeHtml(formatScore(result.bm25_score))}</dd></div>
+        <div><dt>vector score</dt><dd>${escapeHtml(formatScore(result.vector_score))}</dd></div>
+        <div><dt>hybrid score</dt><dd>${escapeHtml(formatScore(result.hybrid_score))}</dd></div>
+      </dl>
+      <p class="muted-line">${escapeHtml(String(result.rationale || "retrieval rationale unavailable"))}</p>
+    </article>
+  `;
+}
+
+function renderNvidiaReranking(rerankResults) {
+  return `
+    <section class="match-section" aria-label="NVIDIA reranking output">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Reranking</p>
+          <h4>Top K reorder audit</h4>
+        </div>
+      </div>
+      ${
+        rerankResults.length
+          ? `<p class="review-signal-line">Rerank scores reorder supplied Top K retrieval candidates only; they do not create new facts.</p>
+            <div class="match-card-list">${rerankResults.map((result) => renderNvidiaRerankResult(result)).join("")}</div>`
+          : renderEmptyState("No reranking payload.", "Rerank score and rationale will appear only when the run includes nvidia_rerank.v1 output.")
+      }
+    </section>
+  `;
+}
+
+function renderNvidiaRerankResult(rerankResult) {
+  const results = records(rerankResult.results);
+  return `
+    <article class="match-card rerank-card">
+      <div class="field-title-row">
+        <h4>${escapeHtml(String(rerankResult.query || "unknown rerank query"))}</h4>
+        <span class="status-badge status-running">${escapeHtml(String(rerankResult.ranking_strategy || "unknown_strategy"))}</span>
+      </div>
+      <dl class="evidence-definition-list compact">
+        <div><dt>candidate_top_k</dt><dd>${escapeHtml(String(rerankResult.candidate_top_k ?? "unknown"))}</dd></div>
+        <div><dt>reranker model</dt><dd>${escapeHtml(String(rerankResult.reranker_model_name || "unknown"))}</dd></div>
+        <div><dt>audit reasons</dt><dd>${renderInlineList(rerankResult.audit_reasons)}</dd></div>
+      </dl>
+      <div class="retrieval-result-list">
+        ${
+          results.length
+            ? results.map((result) => renderRerankedNvidiaCandidate(result)).join("")
+            : `<p class="insufficient-line">No reranked candidates were included.</p>`
+        }
+      </div>
+    </article>
+  `;
+}
+
+function renderRerankedNvidiaCandidate(result) {
+  const citation = objectRecord(result.citation) || {};
+  const chunk = objectRecord(result.chunk) || {};
+  return `
+    <article class="retrieval-result">
+      <div class="field-title-row">
+        <h4>${escapeHtml(String(citation.document_title || chunk.document_id || "unknown NVIDIA document"))}</h4>
+        <span class="status-badge status-running">Rerank rank ${escapeHtml(String(result.rerank_rank ?? "unknown"))}</span>
+      </div>
+      <dl class="evidence-definition-list compact">
+        <div><dt>chunk id</dt><dd>${escapeHtml(String(citation.chunk_id || chunk.chunk_id || "unknown"))}</dd></div>
+        <div><dt>original rank</dt><dd>${escapeHtml(String(result.original_retrieval_rank ?? "unknown"))}</dd></div>
+        <div><dt>original score</dt><dd>${escapeHtml(formatScore(result.original_score))}</dd></div>
+        <div><dt>original BM25 score</dt><dd>${escapeHtml(formatScore(result.original_bm25_score))}</dd></div>
+        <div><dt>original vector score</dt><dd>${escapeHtml(formatScore(result.original_vector_score))}</dd></div>
+        <div><dt>original hybrid score</dt><dd>${escapeHtml(formatScore(result.original_hybrid_score))}</dd></div>
+        <div><dt>rerank score</dt><dd>${escapeHtml(formatScore(result.rerank_score))}</dd></div>
+        <div><dt>rerank rationale</dt><dd>${escapeHtml(String(result.rerank_rationale || "unknown"))}</dd></div>
+      </dl>
+    </article>
+  `;
+}
+
+function renderRecommendationSection(title, recommendations, fallbackState, options = {}) {
+  return `
+    <section class="match-section" aria-label="${escapeAttr(title)}">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">${escapeHtml(title)}</p>
+          <h4>${escapeHtml(recommendationSectionSubtitle(title))}</h4>
+        </div>
+      </div>
+      ${
+        recommendations.length
+          ? `<div class="match-card-list">${recommendations
+              .map((recommendation) =>
+                renderNvidiaRecommendation(recommendation, fallbackState, Boolean(options.highlightTop))
+              )
+              .join("")}</div>`
+          : renderEmptyState(`No ${title.toLowerCase()}.`, "The API record did not include entries for this recommendation group.")
+      }
+    </section>
+  `;
+}
+
+function renderNvidiaRecommendation(recommendation, fallbackState, highlightTop) {
+  const declaredState = String(recommendation.state || fallbackState || "unknown").toLowerCase();
+  const hasOfficialCitation = recommendationHasOfficialCitation(recommendation);
+  const effectiveState = declaredState === "supported" && !hasOfficialCitation ? "hypothesis" : declaredState;
+  const stateLabel = recommendationStateLabel(effectiveState);
+  const citations = records(recommendation.nvidia_citations);
+  const startupEvidences = evidenceRecordsFrom(recommendation, [
+    "startup_evidences",
+    "startup_evidence_refs",
+    "evidences",
+    "evidence_references",
+  ]);
+  const title = recommendationTitle(recommendation);
+  return `
+    <article class="match-card recommendation-card ${highlightTop ? "is-top" : ""} ${
+      effectiveState === "blocked" ? "has-block" : effectiveState === "hypothesis" ? "has-hypothesis" : ""
+    }">
+      <div class="field-title-row">
+        <h4>${escapeHtml(title)}</h4>
+        <div class="pill-stack">
+          ${highlightTop ? `<span class="safe-pill">Top recommendation</span>` : ""}
+          <span class="status-badge ${recommendationStateClass(effectiveState)}">${escapeHtml(stateLabel)}</span>
+        </div>
+      </div>
+      <dl class="evidence-definition-list compact">
+        <div><dt>Type</dt><dd>${escapeHtml(String(recommendation.recommendation_type || "unknown"))}</dd></div>
+        <div><dt>State</dt><dd>${escapeHtml(effectiveState)}</dd></div>
+        <div><dt>Priority</dt><dd>${escapeHtml(String(recommendation.nvidia_opportunity_priority || recommendation.priority || "unknown"))}</dd></div>
+        <div><dt>Complexity</dt><dd>${escapeHtml(String(recommendation.complexity || "unknown"))}</dd></div>
+        <div><dt>Next action</dt><dd>${escapeHtml(String(recommendation.next_action || "unknown"))}</dd></div>
+        <div><dt>Gap or opportunity</dt><dd>${escapeHtml(recommendationTarget(recommendation))}</dd></div>
+        <div><dt>NVIDIA fit</dt><dd>${escapeHtml(String(recommendation.nvidia_technology || recommendation.nvidia_program || title))}</dd></div>
+        <div><dt>Selection reasons</dt><dd>${renderInlineList(recommendation.selection_reasons)}</dd></div>
+      </dl>
+      <p class="match-excerpt">${escapeHtml(
+        String(recommendation.technical_rationale || recommendation.rationale || recommendation.commercial_rationale || "unknown rationale")
+      )}</p>
+      ${
+        hasOfficialCitation
+          ? ""
+          : `<p class="review-signal-line">Non-official or insufficient NVIDIA citation: treat as ${
+              effectiveState === "blocked" ? "blocked" : "hypothesis"
+            } until validated.</p>`
+      }
+      ${renderStartupEvidenceReferences(startupEvidences, recommendation)}
+      ${renderNvidiaCitationReferences(citations)}
+    </article>
+  `;
+}
+
+function renderStartupEvidenceReferences(evidences, recommendation) {
+  const refValues = textArrayValues(recommendation.startup_evidence_refs || recommendation.evidence_references);
+  return `
+    <div class="match-evidence-block">
+      <div class="match-evidence-toolbar">
+        <span>Startup evidence refs: ${escapeHtml(String(evidences.length || refValues.length))}</span>
+        <button type="button" class="context-link" data-section="evidence" data-evidence-context="${escapeAttr(
+          recommendationTarget(recommendation)
+        )}">Evidence tab</button>
+      </div>
+      ${
+        evidences.length
+          ? renderEvidenceSnippetList(evidences, "Startup-side evidence")
+          : refValues.length
+            ? renderInlineList(refValues)
+            : `<p class="insufficient-line">insufficient startup evidence: no_linked_evidence</p>`
+      }
+    </div>
+  `;
+}
+
+function renderNvidiaCitationReferences(citations) {
+  return `
+    <div class="match-evidence-block">
+      <div class="match-evidence-toolbar">
+        <span>NVIDIA citation refs: ${escapeHtml(String(citations.length))}</span>
+      </div>
+      ${
+        citations.length
+          ? `<div class="snippet-stack">${citations.map((citation) => renderNvidiaCitationReference(citation)).join("")}</div>`
+          : `<p class="insufficient-line">insufficient citation support: missing_official_nvidia_citation</p>`
+      }
+    </div>
+  `;
+}
+
+function renderNvidiaCitationReference(citation) {
+  const official = isOfficialNvidiaCitation(citation);
+  const sourceUrl = String(citation.source_url || "unknown");
+  return `
+    <article class="snippet-item ${official ? "" : "has-hypothesis"}">
+      <div class="field-title-row">
+        <h4>${escapeHtml(String(citation.document_title || "unknown NVIDIA citation"))}</h4>
+        <span class="status-badge ${official ? "status-completed" : "status-running"}">${
+          official ? "Official NVIDIA citation" : "Non-official or insufficient NVIDIA citation"
+        }</span>
+      </div>
+      <p>${escapeHtml(String(citation.excerpt || "unknown excerpt"))}</p>
+      <dl class="evidence-definition-list compact">
+        <div><dt>chunk id</dt><dd>${escapeHtml(String(citation.chunk_id || "unknown"))}</dd></div>
+        <div><dt>document id</dt><dd>${escapeHtml(String(citation.document_id || "unknown"))}</dd></div>
+        <div><dt>source URL</dt><dd>${renderSourceUrl(sourceUrl)}</dd></div>
+        <div><dt>source type</dt><dd>${escapeHtml(String(citation.source_type || "unknown"))}</dd></div>
+        <div><dt>corpus_version</dt><dd>${escapeHtml(String(citation.corpus_version || "unknown"))}</dd></div>
+      </dl>
+    </article>
+  `;
+}
+
+function nvidiaRecommendationGroups(match) {
+  const supported = uniqueRecommendations([
+    ...records(match.technical_recommendations),
+    ...records(match.program_recommendations),
+    ...records(match.supported_recommendations)
+  ]);
+  const top = uniqueRecommendations(records(match.top_recommendations_by_gap));
+  return {
+    top,
+    supported: supported.length ? supported : top,
+    alternatives: uniqueRecommendations(records(match.alternatives)),
+    hypotheses: uniqueRecommendations(records(match.hypotheses)),
+    blocked: uniqueRecommendations(records(match.blocked_recommendations))
+  };
+}
+
+function uniqueRecommendations(items) {
+  return dedupeRecordsByKey(items, (item) =>
+    String(
+      item.recommendation_id ||
+        [
+          item.recommendation_type,
+          recommendationTarget(item),
+          item.nvidia_technology,
+          item.nvidia_program,
+          item.title,
+          item.state
+        ].join("|")
+    )
+  );
+}
+
+function recommendationSectionSubtitle(title) {
+  const subtitles = {
+    "Top recommendations per gap": "Highest-ranked NVIDIA fit for each observed gap",
+    "Supported recommendations": "Supported technical and program actions with citation refs",
+    Alternatives: "Close alternatives that remain inspectable",
+    Hypotheses: "Potential fit that requires citation or evidence validation",
+    "Blocked recommendations": "Items blocked from supported briefing use"
+  };
+  return subtitles[title] || "NVIDIA recommendation details";
+}
+
+function recommendationTitle(recommendation) {
+  return String(
+    recommendation.title ||
+      recommendation.nvidia_technology ||
+      recommendation.nvidia_program ||
+      recommendation.recommendation_id ||
+      recommendationTarget(recommendation)
+  );
+}
+
+function recommendationTarget(recommendation) {
+  const gap = objectRecord(recommendation.gap);
+  const opportunity = objectRecord(recommendation.opportunity);
+  return String(
+    gap?.gap_type ||
+      opportunity?.opportunity_type ||
+      recommendation.gap_type ||
+      recommendation.opportunity_type ||
+      recommendation.recommendation_type ||
+      "unknown_target"
+  );
+}
+
+function recommendationHasOfficialCitation(recommendation) {
+  return records(recommendation.nvidia_citations).some((citation) => isOfficialNvidiaCitation(citation));
+}
+
+function recommendationStateLabel(state) {
+  const labels = {
+    supported: "Supported",
+    hypothesis: "Hypothesis",
+    blocked: "Blocked"
+  };
+  return labels[state] || state || "unknown";
+}
+
+function recommendationStateClass(state) {
+  if (state === "supported") {
+    return "status-completed";
+  }
+  if (state === "blocked") {
+    return "status-failed";
+  }
+  if (state === "hypothesis") {
+    return "status-running";
+  }
+  return statusClass(state);
+}
+
+function isOfficialNvidiaCitation(citation) {
+  const sourceType = String(citation.source_type || "").toLowerCase();
+  if (sourceType.includes("official_nvidia")) {
+    return true;
+  }
+  try {
+    const url = new URL(String(citation.source_url || ""));
+    const hostname = url.hostname.toLowerCase();
+    if (hostname === "github.com") {
+      return /^\/nvidia(\/|$)/i.test(url.pathname);
+    }
+    return hostname === "nvidia.com" || hostname.endsWith(".nvidia.com");
+  } catch {
+    return false;
+  }
+}
+
+function nvidiaRetrievalsFromPayload(payload, match) {
+  return dedupeRecordsByKey(
+    [
+      ...versionedPayloadsFrom(payload.retrievals),
+      ...versionedPayloadsFrom(payload.nvidia_retrievals),
+      ...versionedPayloadsFrom(payload.nvidia_knowledge_retrievals),
+      ...versionedPayloadsFrom(payload.downstream_retrievals),
+      ...versionedPayloadsFrom(match?.retrievals),
+      ...versionedPayloadsFrom(match?.nvidia_retrievals)
+    ].filter(isNvidiaRetrievalPayload),
+    (retrieval) => [retrieval.run_id, retrieval.query, retrieval.corpus_version, records(retrieval.results).length].join("|")
+  );
+}
+
+function nvidiaRerankResultsFromPayload(payload, match) {
+  return dedupeRecordsByKey(
+    [
+      ...versionedPayloadsFrom(payload.rerank_results),
+      ...versionedPayloadsFrom(payload.nvidia_rerank_results),
+      ...versionedPayloadsFrom(payload.reranking_results),
+      ...versionedPayloadsFrom(match?.rerank_results),
+      ...versionedPayloadsFrom(match?.nvidia_rerank_results)
+    ].filter(isNvidiaRerankPayload),
+    (result) => [result.run_id, result.query, result.ranking_strategy, records(result.results).length].join("|")
+  );
+}
+
+function nvidiaMetricsReportFromPayload(payload, match) {
+  const reports = [
+    ...versionedPayloadsFrom(payload.downstream_quality_report),
+    ...versionedPayloadsFrom(payload.downstream_metrics),
+    ...versionedPayloadsFrom(payload.metrics),
+    ...versionedPayloadsFrom(match?.downstream_quality_report),
+    ...versionedPayloadsFrom(match?.metrics_report)
+  ].filter(isDownstreamMetricsPayload);
+  return reports[0] || null;
+}
+
+function versionedPayloadsFrom(value) {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => versionedPayloadsFrom(item));
+  }
+  const record = objectRecord(value);
+  if (!record) {
+    return [];
+  }
+  return [
+    ...versionedPayloadsFrom(record.payload),
+    ...versionedPayloadsFrom(record.items),
+    ...versionedPayloadsFrom(record.retrievals),
+    ...versionedPayloadsFrom(record.rerank_results),
+    record
+  ];
+}
+
+function isNvidiaRetrievalPayload(record) {
+  return (
+    record.schema_version === "nvidia_knowledge.v1" ||
+    (records(record.results).some((result) => objectRecord(result.citation) || objectRecord(result.chunk)) &&
+      ("query" in record || "corpus_version" in record))
+  );
+}
+
+function isNvidiaRerankPayload(record) {
+  return (
+    record.schema_version === "nvidia_rerank.v1" ||
+    records(record.results).some((result) => "rerank_score" in result || "original_retrieval_rank" in result)
+  );
+}
+
+function isDownstreamMetricsPayload(record) {
+  return Boolean(
+    record.schema_version === "downstream_metrics.v1" ||
+      objectRecord(record.retrieval_metrics) ||
+      objectRecord(record.recommendation_metrics)
+  );
+}
+
+function corpusVersionFromRetrievals(retrievals) {
+  return String(retrievals.find((retrieval) => retrieval.corpus_version)?.corpus_version || "");
+}
+
+function retrievalStrategyFor(retrieval) {
+  const firstResult = records(retrieval.results)[0];
+  return String(firstResult?.retrieval_strategy || retrieval.retrieval_strategy || retrieval.ranking_strategy || "no_results");
+}
+
+function formatScore(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "unknown";
+  }
+  return String(Math.round(number * 1000) / 1000);
+}
+
+function renderHumanReviewReasonCounts(counts, run) {
+  const items = reasonCountItems(counts);
+  if (items.length) {
+    return `
+      <div class="chip-list">
+        ${items
+          .map((item) => `<span class="unknown-chip">${escapeHtml(item.reason)} (${escapeHtml(String(item.count))})</span>`)
+          .join("")}
+      </div>
+    `;
+  }
+  const reasons = arrayValues(run?.human_review_reasons);
+  if (reasons.length) {
+    return `<div class="chip-list">${reasons
+      .map((reason) => `<span class="unknown-chip">${escapeHtml(reason)} (1)</span>`)
+      .join("")}</div>`;
+  }
+  return `<p class="muted-line">none</p>`;
+}
+
+function reasonCountItems(counts) {
+  if (Array.isArray(counts)) {
+    return counts
+      .map((item) => {
+        if (Array.isArray(item)) {
+          return { reason: String(item[0] || "unknown_reason"), count: numericValue(item[1], 1) };
+        }
+        const record = objectRecord(item);
+        if (record) {
+          return {
+            reason: String(record.reason || record.name || record.human_review_reason || "unknown_reason"),
+            count: numericValue(record.count, 1)
+          };
+        }
+        return { reason: String(item || "unknown_reason"), count: 1 };
+      })
+      .filter((item) => item.reason !== "unknown_reason");
+  }
+  return objectEntries(counts).map(([reason, count]) => ({ reason, count: numericValue(count, 1) }));
+}
+
+function textArrayValues(value) {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item) => !item || typeof item !== "object")
+      .map((item) => String(item || "").trim())
+      .filter(Boolean);
+  }
+  const text = String(value || "").trim();
+  return text ? [text] : [];
 }
 
 function renderBriefing(state) {
