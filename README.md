@@ -97,6 +97,7 @@ Já existe walking skeleton implementado para o fluxo upstream e downstream loca
 - `Human Review Briefing` versionado para baixo sinal, alto wrapper risk, conflito, unknowns ou falta de citação;
 - workflow downstream local com branches auditáveis `ready_for_recommendation`, `ready_for_briefing`, `briefing_generated`, `human_review_requested` e `needs_more_collection_or_human_review`;
 - workflow completo local conectando search, collection, profile extraction, evidence quality, assessment, NVIDIA retrieval, recommendation, briefing e persistence references por `run_id`;
+- fundacao de frontend operacional em `frontend/`, com shell de workbench, navegacao por contexto, launcher/status de run, mock local e cliente do contrato `frontend_api_run.v1`;
 - builder LangGraph opcional para o workflow completo, com checkpointer injetável para produção e smoke Postgres desligado por padrão;
 - persistência downstream JSON/SQL de retrievals, recommendation sets e briefings por run e startup;
 - métricas downstream para retrieval, recomendação, gaps sem recomendação, bloqueios e motivos de revisão humana;
@@ -146,7 +147,7 @@ Sem considerar frontend, o backend já possui o fluxo completo local e os adapte
 4. Manter o corpus oficial NVIDIA atualizado quando novas stacks, programas, fontes ou casos de uso entrarem no escopo.
 5. Rodar o fluxo operacional completo com `run-intelligence` antes de demo: primeiro local determinístico, depois com integrações reais explicitamente habilitadas.
 
-Depois dessas validações, a principal entrega restante de produto é o frontend.
+Depois dessas validações, a principal entrega restante de produto é evoluir o frontend para workflows revisados com casos reais, mantendo a fundacao atual conectada aos contratos auditaveis.
 
 ## Frameworks E Retrieval
 
@@ -170,6 +171,7 @@ O guia operacional completo está em [Arquitetura de produção para scraping, r
 - [Adapters de coleta](context/collection-adapters.md)
 - [Arquitetura de produção para scraping, retrieval, LangGraph e LLM](context/production-retrieval-and-scraping-architecture.md)
 - [Production Smoke Matrix](context/production-smoke-matrix.md)
+- [Frontend Foundation](frontend/README.md)
 - [ADRs](context/adr)
 
 ## Validação
@@ -341,6 +343,26 @@ curl -s http://127.0.0.1:8000/api/runs \
 ```
 
 O response usa `frontend_api_run.v1` e inclui `status`, `workflow_outcome`, `run_id`, `startup_identifier`, `next_action`, `briefing_reference`, `human_review_reasons`, `artifact_references`, `errors`, `options` e o `final_payload` operacional original. Erros auditáveis do workflow são retornados como dados estruturados, não como objetos de framework ou SDK de provider.
+
+## Frontend App
+
+A fundacao de UI fica em `frontend/` e carrega um workbench operacional, nao uma landing page. A primeira tela traz navegacao para `Runs`, `Evidence`, `Assessment`, `NVIDIA Match`, `Briefing` e `Production Smokes`, com launcher/status de run e estados vazios baseados no contrato da API.
+
+Comandos principais:
+
+```bash
+npm --prefix frontend run dev
+npm --prefix frontend run build
+npm --prefix frontend test
+```
+
+Por padrao, a UI usa mock mode local sem rede. Para conectar no backend opcional, suba `nvidia-startup-intel-api --host 127.0.0.1 --port 8000` e abra:
+
+```text
+http://127.0.0.1:5173?api=real&baseUrl=http://127.0.0.1:8000
+```
+
+O contrato tipado fica em `frontend/src/api-contract.js`; dados ausentes no payload continuam como estados vazios na UI.
 
 Para validar o caminho operacional completo de persistência Postgres com fixture local, rode o smoke opt-in. Ele aplica o schema via repositório, persiste coleta, perfil, evidências, qualidade, AI-Native Assessment, retrievals NVIDIA, Recommendation Set, briefing e métricas downstream, e valida que os artifacts podem ser recarregados para reprocessamento quando o `corpus_version` bate.
 
