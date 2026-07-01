@@ -1,6 +1,6 @@
 import { createFrontendApiClient } from "./api-contract.js";
 import { createMockFrontendApiClient } from "./mock-data.js";
-import { createInitialState, renderApp } from "./renderer.js";
+import { briefingExportText, createInitialState, renderApp } from "./renderer.js";
 
 const root = document.querySelector("#app");
 const params = new URLSearchParams(window.location.search);
@@ -57,6 +57,24 @@ function bindEvents() {
   for (const button of root.querySelectorAll("[data-load-smokes]")) {
     button.addEventListener("click", () => {
       void loadSmokeMatrix();
+    });
+  }
+
+  for (const button of root.querySelectorAll("[data-copy-briefing]")) {
+    button.addEventListener("click", () => {
+      void copyBriefing();
+    });
+  }
+
+  for (const button of root.querySelectorAll("[data-download-briefing]")) {
+    button.addEventListener("click", () => {
+      downloadBriefing();
+    });
+  }
+
+  for (const button of root.querySelectorAll("[data-print-briefing]")) {
+    button.addEventListener("click", () => {
+      window.print();
     });
   }
 }
@@ -125,6 +143,48 @@ async function loadSmokeMatrix(options = {}) {
       notice: ""
     });
   }
+}
+
+async function copyBriefing() {
+  if (!state.currentRun) {
+    return;
+  }
+  if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+    commit({
+      notice: "",
+      errorMessage: "Clipboard API is not available in this browser."
+    });
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(briefingExportText(state.currentRun));
+    commit({
+      notice: "Briefing copied with evidence and citation references.",
+      errorMessage: ""
+    });
+  } catch (error) {
+    commit({
+      notice: "",
+      errorMessage: error instanceof Error ? error.message : "briefing_copy_failed"
+    });
+  }
+}
+
+function downloadBriefing() {
+  if (!state.currentRun) {
+    return;
+  }
+  const blob = new Blob([briefingExportText(state.currentRun)], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${state.currentRun.run_id}-briefing.txt`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+  commit({
+    notice: "Briefing export prepared with evidence and citation references.",
+    errorMessage: ""
+  });
 }
 
 function runRequestFromForm(formData) {
