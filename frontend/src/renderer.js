@@ -2829,6 +2829,8 @@ function renderProductionSmokes(state) {
       `
     );
   }
+  const steps = records(matrix.matrix.steps);
+  const counts = smokeStatusCounts(steps);
   return renderSectionPanel(
     "Production Smokes",
     `
@@ -2839,28 +2841,238 @@ function renderProductionSmokes(state) {
         </div>
         <button type="button" class="secondary-action" data-load-smokes>Refresh</button>
       </div>
-      <div class="smoke-table" role="table" aria-label="Production smoke matrix">
-        <div class="smoke-row smoke-head" role="row">
-          <span role="columnheader">Integration</span>
-          <span role="columnheader">Status</span>
-          <span role="columnheader">Bottleneck</span>
-          <span role="columnheader">Message</span>
+      <div class="smoke-readiness-grid" aria-label="Production validation modes">
+        <article class="smoke-guidance">
+          <p class="eyebrow">Default local validation</p>
+          <h4>Deterministic suite</h4>
+          <p>Run without real services, credentials, Postgres, LangGraph, LLM, embedding, or browser dependencies.</p>
+          ${renderCodeList(["python -m pytest -q", "python -m ruff check .", "python -m mypy src"])}
+        </article>
+        <article class="smoke-guidance warning-guidance">
+          <p class="eyebrow">Opt-in real integrations</p>
+          <h4>Maintainer readiness</h4>
+          <p>Set one enable flag at a time, keep secrets in shell env vars, and do not paste credential values into this UI.</p>
+          <p>Generated smoke artifacts belong outside commits unless a reviewed fixture intentionally requires them.</p>
+        </article>
+      </div>
+      <div class="metric-row smoke-summary">
+        ${metric("Integrations", String(steps.length))}
+        ${metric("Passed", String(counts.passed))}
+        ${metric("Failed", String(counts.failed))}
+        ${metric("Skipped", String(counts.skipped))}
+      </div>
+      <div class="smoke-card-list" aria-label="Production smoke integrations">
+        ${steps.map(renderSmokeStepCard).join("")}
+      </div>
+    `
+  );
+}
+
+function renderSmokeStepCard(step) {
+  const requiredEnvVars = arrayValues(step.required_env_vars);
+  const prerequisites = arrayValues(step.prerequisites);
+  const expectedArtifacts = arrayValues(step.expected_artifacts);
+  const cleanup = arrayValues(step.cleanup);
+  return `
+    <article class="smoke-card ${statusClass(step.status)}">
+      <div class="smoke-card-header">
+        <div>
+          <p class="eyebrow">${escapeHtml(String(step.integration_id || "unknown_integration"))}</p>
+          <h4>${escapeHtml(String(step.title || "Untitled smoke"))}</h4>
         </div>
-        ${matrix.matrix.steps
+        <span class="status-badge ${statusClass(step.status)}">${escapeHtml(String(step.status || "unknown"))}</span>
+      </div>
+      <dl class="smoke-definition-list">
+        <div><dt>Bottleneck</dt><dd>${escapeHtml(String(step.bottleneck || "unknown"))}</dd></div>
+        <div><dt>Env flag</dt><dd><code>${escapeHtml(smokeEnvFlag(step))}</code></dd></div>
+        <div><dt>Message</dt><dd>${escapeHtml(String(step.message || "unknown"))}</dd></div>
+        <div><dt>Command</dt><dd><code>${escapeHtml(String(step.command || "unknown"))}</code></dd></div>
+      </dl>
+      ${renderSmokeEnvStatus(step)}
+      <div class="smoke-detail-grid">
+        ${renderSmokeList("Prerequisites", prerequisites, "No extra prerequisite listed.")}
+        ${renderSmokeList("Required env vars", requiredEnvVars, "No required env vars beyond the enable flag.")}
+        ${renderSmokeList("Expected artifacts", expectedArtifacts, "No persisted artifact expected.")}
+        ${renderSmokeList("Cleanup", cleanup, "No cleanup step listed.")}
+      </div>
+      ${renderSmokeDiagnostic(step)}
+      ${renderSmokePayloadHygiene(step)}
+      ${renderFullOperationalSmokeGuidance(step)}
+    </article>
+  `;
+}
+
+function renderSmokeEnvStatus(step) {
+  const rows = smokeEnvStatusRows(step);
+  return `
+    <div class="smoke-env-status">
+      <h4>Configured variables</h4>
+      <div class="env-chip-row">
+        ${rows
           .map(
-            (step) => `
-              <div class="smoke-row" role="row">
-                <strong role="cell">${escapeHtml(step.title)}</strong>
-                <span role="cell" class="status-badge ${statusClass(step.status)}">${escapeHtml(step.status)}</span>
-                <span role="cell">${escapeHtml(step.bottleneck)}</span>
-                <span role="cell">${escapeHtml(step.message)}</span>
-              </div>
+            (row) => `
+              <span class="env-chip ${row.configured === true ? "is-configured" : ""}">
+                <code>${escapeHtml(row.name)}</code>
+                <strong>${escapeHtml(envStatusLabel(row))}</strong>
+              </span>
             `
           )
           .join("")}
       </div>
-    `
-  );
+    </div>
+  `;
+}
+
+function renderSmokeList(title, items, emptyText) {
+  return `
+    <section class="smoke-mini-section">
+      <h4>${escapeHtml(title)}</h4>
+      ${
+        items.length
+          ? `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+          : `<p class="muted-line">${escapeHtml(emptyText)}</p>`
+      }
+    </section>
+  `;
+}
+
+function renderSmokeDiagnostic(step) {
+  const status = String(step.status || "unknown").toLowerCase();
+  const bottleneck = String(step.bottleneck || "unknown");
+  const message = String(step.message || "unknown");
+  let diagnostic = "Review prerequisites, variable names, expected artifacts, and cleanup before running this integration.";
+  if (status === "failed" && bottleneck === "credential_hygiene") {
+    diagnostic =
+      "Credential hygiene failed: inspect the reported smoke payload or generated artifact, remove the leaked value, rotate the credential if it escaped the environment, and rerun the smoke.";
+  } else if (status === "failed") {
+    diagnostic = `Fix the ${bottleneck} bottleneck, then rerun only this integration. Diagnostic: ${message}`;
+  } else if (status === "skipped" && message.includes("missing env vars")) {
+    diagnostic = "Missing environment variables: configure the listed variable names in the shell without exposing their values here.";
+  } else if (status === "skipped") {
+    diagnostic = "Skipped by default: enable only after prerequisites are ready and the maintainer intentionally opts in.";
+  } else if (status === "passed") {
+    diagnostic = "Passed in the current matrix: confirm expected artifacts and cleanup before sharing results.";
+  }
+  return `
+    <div class="smoke-diagnostic">
+      <strong>Actionable diagnostic</strong>
+      <p>${escapeHtml(diagnostic)}</p>
+    </div>
+  `;
+}
+
+function renderSmokePayloadHygiene(step) {
+  const payload = objectRecord(step.payload);
+  if (!payload || !objectEntries(payload).length) {
+    return "";
+  }
+  const redactedFields = redactedPayloadFields(payload);
+  const payloadKeys = payloadFieldNames(payload);
+  return `
+    <div class="smoke-payload-hygiene">
+      <strong>Payload hygiene</strong>
+      <p>Payload values are not displayed. Field names available: ${renderInlineList(payloadKeys)}</p>
+      ${
+        redactedFields.length
+          ? `<p>Redacted credential fields: ${renderInlineList(redactedFields)}</p>`
+          : `<p>No redacted credential field marker was reported.</p>`
+      }
+    </div>
+  `;
+}
+
+function renderFullOperationalSmokeGuidance(step) {
+  if (String(step.integration_id || "") !== "full_operational_smoke") {
+    return "";
+  }
+  return `
+    <aside class="smoke-full-guidance">
+      <strong>Full operational smoke boundary</strong>
+      <p>Use a bounded public startup URL or bounded query only. Keep generated output under the smoke run directory, review it for credential hygiene, and do not commit generated artifacts.</p>
+    </aside>
+  `;
+}
+
+function renderCodeList(items) {
+  return `<ul class="code-list">${items.map((item) => `<li><code>${escapeHtml(item)}</code></li>`).join("")}</ul>`;
+}
+
+function smokeStatusCounts(steps) {
+  return {
+    passed: steps.filter((step) => String(step.status || "").toLowerCase() === "passed").length,
+    failed: steps.filter((step) => String(step.status || "").toLowerCase() === "failed").length,
+    skipped: steps.filter((step) => String(step.status || "").toLowerCase() === "skipped").length
+  };
+}
+
+function smokeEnvFlag(step) {
+  return String(step.env_flag || smokeEnvStatusRows(step).find((row) => row.role === "enable_flag")?.name || "unknown");
+}
+
+function smokeEnvStatusRows(step) {
+  const explicitRows = records(step.env_status).map((row) => ({
+    name: String(row.name || "unknown_env_var"),
+    role: String(row.role || "required"),
+    configured: typeof row.configured === "boolean" ? row.configured : null
+  }));
+  if (explicitRows.length) {
+    return explicitRows;
+  }
+  return [
+    {
+      name: String(step.env_flag || "unknown_env_flag"),
+      role: "enable_flag",
+      configured: null
+    },
+    ...arrayValues(step.required_env_vars).map((name) => ({
+      name,
+      role: "required",
+      configured: null
+    }))
+  ];
+}
+
+function envStatusLabel(row) {
+  const role = row.role === "enable_flag" ? "enable flag" : "required";
+  if (row.configured === true) {
+    return `${role}: configured`;
+  }
+  if (row.configured === false) {
+    return `${role}: missing`;
+  }
+  return `${role}: status unavailable`;
+}
+
+function redactedPayloadFields(payload) {
+  const fields = [];
+  visitPayload(payload, "", (path, value) => {
+    if (value === "[REDACTED]") {
+      fields.push(path);
+    }
+  });
+  return fields;
+}
+
+function payloadFieldNames(payload) {
+  const fields = [];
+  visitPayload(payload, "", (path) => {
+    fields.push(path);
+  });
+  return fields.slice(0, 12);
+}
+
+function visitPayload(value, prefix, visit) {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => visitPayload(item, `${prefix}[${String(index)}]`, visit));
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, child] of Object.entries(value)) {
+      const path = prefix ? `${prefix}.${key}` : key;
+      visit(path, child);
+      visitPayload(child, path, visit);
+    }
+  }
 }
 
 function renderSectionPanel(title, body) {
@@ -3154,7 +3366,12 @@ function statusClass(status) {
   if (normalized.includes("fail") || normalized.includes("blocked") || normalized.includes("not_found")) {
     return "status-failed";
   }
-  if (normalized.includes("complete") || normalized.includes("generated") || normalized.includes("ready")) {
+  if (
+    normalized.includes("pass") ||
+    normalized.includes("complete") ||
+    normalized.includes("generated") ||
+    normalized.includes("ready")
+  ) {
     return "status-completed";
   }
   if (normalized.includes("skip") || normalized.includes("idle")) {

@@ -52,9 +52,11 @@ export const SMOKE_MATRIX_SCHEMA_VERSION = "frontend_api_production_smoke_matrix
  * @property {string} status
  * @property {string} bottleneck
  * @property {string} message
+ * @property {string} env_flag
  * @property {string} command
  * @property {string[]} prerequisites
  * @property {string[]} required_env_vars
+ * @property {{name: string, role: string, configured: boolean}[]=} env_status
  * @property {string[]} expected_artifacts
  * @property {string[]} cleanup
  * @property {Record<string, unknown>} payload

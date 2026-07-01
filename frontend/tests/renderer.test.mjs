@@ -442,6 +442,234 @@ test("renders production smoke matrix from API contract", () => {
   assert.match(html, /postgres/);
 });
 
+test("renders all-skipped production smoke matrix with safe opt-in guidance", () => {
+  const smokeMatrix = buildMockSmokeMatrix();
+  const html = renderApp(createInitialState({ activeSection: "production-smokes", smokeMatrix }));
+
+  assert.match(html, /Default local validation/);
+  assert.match(html, /python -m pytest -q/);
+  assert.match(html, /Opt-in real integrations/);
+  assert.match(html, /do not paste credential values into this UI/);
+  assert.match(html, /Integrations/);
+  assert.match(html, /Skipped/);
+  assert.match(html, /Playwright real collection/);
+  assert.match(html, /Postgres persistence/);
+  assert.match(html, /pgvector retrieval/);
+  assert.match(html, /Real embedding model/);
+  assert.match(html, /Hybrid BM25 plus pgvector retrieval/);
+  assert.match(html, /Real reranking/);
+  assert.match(html, /LangGraph Postgres checkpointing/);
+  assert.match(html, /Groq\/LiteLLM briefing narrative/);
+  assert.match(html, /Full bounded operational smoke/);
+  assert.match(html, /NVIDIA_STARTUP_INTEL_RUN_PGVECTOR_SMOKE/);
+  assert.match(html, /Expected artifacts/);
+  assert.match(html, /Cleanup/);
+  assert.match(html, /public startup URL or bounded query only/);
+  assert.match(html, /do not commit generated artifacts/);
+});
+
+test("renders passed and failed production smokes with bottleneck diagnostics", () => {
+  const smokeMatrix = productionSmokeMatrix(
+    [
+      smokeStep({
+        integration_id: "playwright_collection",
+        title: "Playwright real collection",
+        status: "passed",
+        bottleneck: "collection",
+        message: "smoke passed",
+        env_flag: "NVIDIA_STARTUP_INTEL_RUN_PLAYWRIGHT_COLLECTION_SMOKE",
+        command:
+          "NVIDIA_STARTUP_INTEL_RUN_PLAYWRIGHT_COLLECTION_SMOKE=1 python -m pytest -q tests/integration/test_playwright_collection_integration_smoke.py -m playwright_collection_integration",
+        prerequisites: ["python -m playwright install chromium"],
+        expected_artifacts: ["playwright_collection_smoke.v1 payload"],
+        env_status: [
+          {
+            name: "NVIDIA_STARTUP_INTEL_RUN_PLAYWRIGHT_COLLECTION_SMOKE",
+            role: "enable_flag",
+            configured: true
+          }
+        ]
+      }),
+      smokeStep({
+        integration_id: "pgvector_retrieval",
+        title: "pgvector retrieval",
+        status: "failed",
+        bottleneck: "pgvector",
+        message: "RuntimeError: pgvector extension is unavailable",
+        env_flag: "NVIDIA_STARTUP_INTEL_RUN_PGVECTOR_SMOKE",
+        command:
+          "NVIDIA_STARTUP_INTEL_RUN_PGVECTOR_SMOKE=1 python -m pytest -q tests/integration/test_pgvector_integration_smoke.py -m pgvector_integration",
+        prerequisites: ["docker compose up -d postgres"],
+        expected_artifacts: ["persisted NVIDIA Knowledge chunks"],
+        cleanup: ["docker compose down"],
+        env_status: [
+          {
+            name: "NVIDIA_STARTUP_INTEL_RUN_PGVECTOR_SMOKE",
+            role: "enable_flag",
+            configured: true
+          }
+        ]
+      })
+    ],
+    "failed"
+  );
+  const html = renderApp(createInitialState({ activeSection: "production-smokes", smokeMatrix }));
+
+  assert.match(html, /passed/);
+  assert.match(html, /failed/);
+  assert.match(html, /collection/);
+  assert.match(html, /pgvector/);
+  assert.match(html, /RuntimeError: pgvector extension is unavailable/);
+  assert.match(html, /Fix the pgvector bottleneck/);
+  assert.match(html, /playwright_collection_smoke\.v1 payload/);
+  assert.match(html, /docker compose down/);
+});
+
+test("renders missing production smoke env vars without requesting values", () => {
+  const smokeMatrix = productionSmokeMatrix(
+    [
+      smokeStep({
+        integration_id: "real_embeddings",
+        title: "Real embedding model",
+        status: "skipped",
+        bottleneck: "embedding",
+        message:
+          "missing env vars: NVIDIA_STARTUP_INTEL_EMBEDDING_MODEL, NVIDIA_STARTUP_INTEL_EMBEDDING_MODEL_VERSION",
+        env_flag: "NVIDIA_STARTUP_INTEL_RUN_REAL_EMBEDDING_SMOKE",
+        command:
+          "NVIDIA_STARTUP_INTEL_RUN_REAL_EMBEDDING_SMOKE=1 NVIDIA_STARTUP_INTEL_EMBEDDING_PROVIDER=sentence-transformers PYTHONPATH=src python -m nvidia_startup_intel.pgvector_smoke",
+        required_env_vars: [
+          "NVIDIA_STARTUP_INTEL_EMBEDDING_PROVIDER",
+          "NVIDIA_STARTUP_INTEL_EMBEDDING_MODEL",
+          "NVIDIA_STARTUP_INTEL_EMBEDDING_MODEL_VERSION"
+        ],
+        env_status: [
+          {
+            name: "NVIDIA_STARTUP_INTEL_RUN_REAL_EMBEDDING_SMOKE",
+            role: "enable_flag",
+            configured: true
+          },
+          {
+            name: "NVIDIA_STARTUP_INTEL_EMBEDDING_PROVIDER",
+            role: "required",
+            configured: true
+          },
+          {
+            name: "NVIDIA_STARTUP_INTEL_EMBEDDING_MODEL",
+            role: "required",
+            configured: false
+          },
+          {
+            name: "NVIDIA_STARTUP_INTEL_EMBEDDING_MODEL_VERSION",
+            role: "required",
+            configured: false
+          }
+        ]
+      })
+    ],
+    "skipped"
+  );
+  const html = renderApp(createInitialState({ activeSection: "production-smokes", smokeMatrix }));
+
+  assert.match(html, /NVIDIA_STARTUP_INTEL_EMBEDDING_PROVIDER/);
+  assert.match(html, /NVIDIA_STARTUP_INTEL_EMBEDDING_MODEL_VERSION/);
+  assert.match(html, /enable flag: configured/);
+  assert.match(html, /required: configured/);
+  assert.match(html, /required: missing/);
+  assert.match(html, /Missing environment variables/);
+  assert.match(html, /without exposing their values here/);
+  assert.doesNotMatch(html, /api[_-]?key=.*secret/i);
+});
+
+test("renders credential hygiene warnings without echoing sensitive payload values", () => {
+  const secret = "secret-token-from-env";
+  const smokeMatrix = productionSmokeMatrix(
+    [
+      smokeStep({
+        integration_id: "groq_litellm_narrative",
+        title: "Groq/LiteLLM briefing narrative",
+        status: "failed",
+        bottleneck: "credential_hygiene",
+        message: "credential leak detected in smoke payload or generated artifact",
+        env_flag: "NVIDIA_STARTUP_INTEL_RUN_LLM_ADAPTER_SMOKE",
+        required_env_vars: [
+          "NVIDIA_STARTUP_INTEL_LLM_PROVIDER",
+          "NVIDIA_STARTUP_INTEL_LLM_MODEL",
+          "NVIDIA_STARTUP_INTEL_LLM_API_KEY_ENV"
+        ],
+        env_status: [
+          {
+            name: "NVIDIA_STARTUP_INTEL_RUN_LLM_ADAPTER_SMOKE",
+            role: "enable_flag",
+            configured: true
+          },
+          {
+            name: "NVIDIA_STARTUP_INTEL_LLM_API_KEY_ENV",
+            role: "required",
+            configured: true
+          }
+        ],
+        payload: {
+          metadata: {
+            api_key: secret,
+            sanitized_api_key: "[REDACTED]",
+            configured_api_key_env_var: "GROQ_API_KEY"
+          }
+        }
+      })
+    ],
+    "failed"
+  );
+  const html = renderApp(createInitialState({ activeSection: "production-smokes", smokeMatrix }));
+
+  assert.match(html, /credential leak detected/);
+  assert.match(html, /Credential hygiene failed/);
+  assert.match(html, /Payload values are not displayed/);
+  assert.match(html, /metadata\.api_key/);
+  assert.match(html, /metadata\.sanitized_api_key/);
+  assert.match(html, /Redacted credential fields/);
+  assert.match(html, /NVIDIA_STARTUP_INTEL_LLM_API_KEY_ENV/);
+  assert.doesNotMatch(html, new RegExp(secret));
+});
+
+function productionSmokeMatrix(steps, overallStatus) {
+  return {
+    schema_version: "frontend_api_production_smoke_matrix.v1",
+    read_only: true,
+    matrix: {
+      schema_version: "production_smoke_matrix.v1",
+      overall_status: overallStatus,
+      steps
+    }
+  };
+}
+
+function smokeStep(overrides = {}) {
+  const envFlag = overrides.env_flag || "NVIDIA_STARTUP_INTEL_RUN_TEST_SMOKE";
+  return {
+    integration_id: "test_smoke",
+    title: "Test smoke",
+    status: "skipped",
+    bottleneck: "test",
+    message: `set ${envFlag}=1 to enable`,
+    env_flag: envFlag,
+    command: `${envFlag}=1 python -m pytest -q tests/integration/test_smoke.py`,
+    prerequisites: [],
+    required_env_vars: [],
+    env_status: [
+      {
+        name: envFlag,
+        role: "enable_flag",
+        configured: false
+      }
+    ],
+    expected_artifacts: [],
+    cleanup: [],
+    payload: {},
+    ...overrides
+  };
+}
+
 function briefingMetadata() {
   return {
     runId: "mock-run-105",

@@ -38,6 +38,16 @@ def test_production_smoke_matrix_reports_skipped_passed_and_failed_integrations(
     assert payload["overall_status"] == "failed"
     assert steps_by_id["playwright_collection"]["status"] == "passed"
     assert steps_by_id["playwright_collection"]["bottleneck"] == "collection"
+    assert steps_by_id["playwright_collection"]["env_flag"] == (
+        "NVIDIA_STARTUP_INTEL_RUN_PLAYWRIGHT_COLLECTION_SMOKE"
+    )
+    assert steps_by_id["playwright_collection"]["env_status"] == (
+        {
+            "name": "NVIDIA_STARTUP_INTEL_RUN_PLAYWRIGHT_COLLECTION_SMOKE",
+            "role": "enable_flag",
+            "configured": True,
+        },
+    )
     assert steps_by_id["playwright_collection"]["payload"] == {"collected_pages": 1}
     assert steps_by_id["pgvector_retrieval"]["status"] == "failed"
     assert steps_by_id["pgvector_retrieval"]["bottleneck"] == "pgvector"
@@ -45,6 +55,13 @@ def test_production_smoke_matrix_reports_skipped_passed_and_failed_integrations(
     assert steps_by_id["postgres_persistence"]["status"] == "skipped"
     assert "NVIDIA_STARTUP_INTEL_RUN_POSTGRES_PERSISTENCE_SMOKE=1" in (
         steps_by_id["postgres_persistence"]["message"]
+    )
+    assert steps_by_id["postgres_persistence"]["env_status"] == (
+        {
+            "name": "NVIDIA_STARTUP_INTEL_RUN_POSTGRES_PERSISTENCE_SMOKE",
+            "role": "enable_flag",
+            "configured": False,
+        },
     )
     json.dumps(payload)
 

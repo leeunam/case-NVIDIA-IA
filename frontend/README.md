@@ -43,6 +43,14 @@ The frontend client maps only these backend routes:
 - `GET /api/runs/{run_id}`
 - `GET /api/production-smoke-matrix`
 
+## Production Smokes Screen
+
+The `Production Smokes` tab is a maintainer/demo-readiness screen over the read-only production smoke matrix. It is not required for normal local validation.
+
+The screen shows the default deterministic validation commands separately from opt-in real integration smokes. For each real smoke it displays status, bottleneck, enable flag, required environment variable names, prerequisites, command, expected artifacts, cleanup, and diagnostic text. It must never request, echo, store, or display credential values; only variable names and configured/missing status from the API contract may be shown.
+
+The full operational smoke guidance is intentionally bounded: use only a public startup URL or bounded query, review generated artifacts for credential hygiene, and do not commit generated smoke artifacts.
+
 ## Contract Boundary
 
 `src/api-contract.js` owns the typed JSDoc contract and runtime schema checks for:

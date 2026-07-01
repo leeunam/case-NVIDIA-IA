@@ -1405,6 +1405,161 @@ dd {
   color: var(--ink-muted);
 }
 
+.smoke-readiness-grid,
+.smoke-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.smoke-readiness-grid {
+  margin-bottom: 14px;
+}
+
+.smoke-guidance,
+.smoke-card,
+.smoke-mini-section,
+.smoke-diagnostic,
+.smoke-payload-hygiene,
+.smoke-full-guidance {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfbfa;
+}
+
+.smoke-guidance {
+  padding: 12px;
+}
+
+.smoke-guidance p,
+.smoke-diagnostic p,
+.smoke-payload-hygiene p,
+.smoke-full-guidance p {
+  margin: 8px 0 0;
+  color: var(--ink-muted);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.warning-guidance,
+.smoke-full-guidance {
+  border-color: rgb(183 121 31 / 28%);
+  background: rgb(183 121 31 / 8%);
+}
+
+.smoke-summary {
+  margin-bottom: 14px;
+}
+
+.smoke-card-list {
+  display: grid;
+  gap: 12px;
+}
+
+.smoke-card {
+  padding: 14px;
+}
+
+.smoke-card.status-failed {
+  border-color: rgb(180 35 24 / 28%);
+}
+
+.smoke-card-header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.smoke-definition-list {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.smoke-definition-list div {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+
+.smoke-definition-list code,
+.code-list code,
+.env-chip code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.smoke-env-status {
+  margin: 0 0 12px;
+}
+
+.smoke-env-status h4,
+.smoke-mini-section h4 {
+  margin-bottom: 8px;
+}
+
+.env-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.env-chip {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  max-width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: var(--ink-muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.env-chip.is-configured {
+  border-color: rgb(67 107 0 / 28%);
+  background: rgb(118 185 0 / 12%);
+  color: var(--green-dark);
+}
+
+.smoke-mini-section,
+.smoke-diagnostic,
+.smoke-payload-hygiene,
+.smoke-full-guidance {
+  padding: 12px;
+}
+
+.smoke-mini-section ul,
+.code-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.smoke-mini-section li {
+  overflow-wrap: anywhere;
+}
+
+.smoke-diagnostic,
+.smoke-payload-hygiene,
+.smoke-full-guidance {
+  margin-top: 12px;
+}
+
+.smoke-diagnostic strong,
+.smoke-payload-hygiene strong,
+.smoke-full-guidance strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
 .smoke-table {
   display: grid;
   border: 1px solid var(--line);
@@ -1472,7 +1627,10 @@ dd {
     grid-template-columns: 1fr;
   }
 
-  .smoke-row {
+  .smoke-row,
+  .smoke-readiness-grid,
+  .smoke-detail-grid,
+  .smoke-definition-list div {
     grid-template-columns: 1fr;
   }
 
