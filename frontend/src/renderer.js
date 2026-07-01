@@ -1,3 +1,5 @@
+import { RUN_LAUNCHER_DEFAULTS, createRunLauncherForm } from "./run-launcher.js";
+
 export const SECTIONS = [
   { id: "runs", label: "Runs" },
   { id: "evidence", label: "Evidence" },
@@ -15,6 +17,7 @@ export const SECTIONS = [
  * @property {string} activeSection
  * @property {"mock" | "real"} apiMode
  * @property {string} apiBaseUrl
+ * @property {import("./run-launcher.js").RunLauncherForm} launcherForm
  * @property {FrontendRunRecord | null} currentRun
  * @property {ProductionSmokeMatrix | null} smokeMatrix
  * @property {boolean} isBusy
@@ -27,16 +30,19 @@ export const SECTIONS = [
  * @returns {WorkbenchState}
  */
 export function createInitialState(overrides = {}) {
+  const launcherForm = createRunLauncherForm(overrides.launcherForm || {});
   return {
     activeSection: "runs",
     apiMode: "mock",
     apiBaseUrl: "http://127.0.0.1:8000",
+    launcherForm,
     currentRun: null,
     smokeMatrix: null,
     isBusy: false,
     notice: "",
     errorMessage: "",
-    ...overrides
+    ...overrides,
+    launcherForm
   };
 }
 
@@ -126,57 +132,13 @@ function renderActiveSection(state) {
 }
 
 function renderRuns(state) {
+  const launcherForm = {
+    ...RUN_LAUNCHER_DEFAULTS,
+    ...(state.launcherForm || {})
+  };
   return `
     <section class="run-grid" aria-label="Run workbench">
-      <form class="panel launch-panel" data-run-form>
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">Launcher</p>
-            <h3>Start intelligence run</h3>
-          </div>
-          <span class="schema-pill">frontend_api_run_create.v1</span>
-        </div>
-        <div class="form-grid">
-          <label>
-            <span>Startup URL</span>
-            <input name="startup_url" type="url" placeholder="https://startup.ai/" />
-          </label>
-          <label>
-            <span>Bounded query</span>
-            <input name="query" type="text" placeholder="Brazilian AI-native startups in health" />
-          </label>
-          <label>
-            <span>Startup name</span>
-            <input name="startup_name" type="text" placeholder="Startup AI" />
-          </label>
-          <label>
-            <span>Max pages</span>
-            <input name="max_pages" type="number" min="1" max="5" value="1" />
-          </label>
-          <label>
-            <span>Max depth</span>
-            <input name="max_depth" type="number" min="0" max="2" value="0" />
-          </label>
-          <label>
-            <span>Persistence</span>
-            <select name="persistence_mode">
-              <option value="json">json</option>
-              <option value="none">none</option>
-              <option value="postgres">postgres</option>
-              <option value="json-postgres">json-postgres</option>
-            </select>
-          </label>
-        </div>
-        <div class="toggle-row">
-          <label><input name="render_js" type="checkbox" /> Render JS</label>
-          <label><input name="enable_search_provider" type="checkbox" /> Search provider</label>
-          <label><input name="enable_reranking" type="checkbox" /> Reranking</label>
-          <label><input name="llm_narrative" type="checkbox" /> LLM narrative</label>
-        </div>
-        <button class="primary-action" type="submit" ${state.isBusy ? "disabled" : ""}>
-          ${state.isBusy ? "Running" : "Start run"}
-        </button>
-      </form>
+      ${renderLauncherForm(state, launcherForm)}
       <section class="panel status-panel" aria-label="Run status">
         <div class="panel-header">
           <div>
@@ -192,6 +154,179 @@ function renderRuns(state) {
     </section>
     ${renderStageStrip(state.currentRun)}
   `;
+}
+
+function renderLauncherForm(state, form) {
+  const startupMode = form.input_mode !== "query";
+  const queryMode = form.input_mode === "query";
+  return `
+    <form class="panel launch-panel" data-run-form>
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Launcher</p>
+          <h3>Start intelligence run</h3>
+        </div>
+        <div class="pill-stack">
+          <span class="schema-pill">frontend_api_run_create.v1</span>
+          <span class="safe-pill">local defaults</span>
+        </div>
+      </div>
+
+      <fieldset class="mode-fieldset">
+        <legend>Input</legend>
+        <div class="segmented-control">
+          <label class="segment${startupMode ? " is-selected" : ""}">
+            <input name="input_mode" value="startup_url" type="radio" data-launcher-autosync ${checked(startupMode)} />
+            <span>Startup URL</span>
+          </label>
+          <label class="segment${queryMode ? " is-selected" : ""}">
+            <input name="input_mode" value="query" type="radio" data-launcher-autosync ${checked(queryMode)} />
+            <span>Bounded query</span>
+          </label>
+        </div>
+      </fieldset>
+
+      <div class="source-fields">
+        <label class="${startupMode ? "" : "is-disabled"}">
+          <span>Startup URL</span>
+          <input name="startup_url" type="url" placeholder="https://startup.ai/" value="${escapeAttr(
+            form.startup_url
+          )}" ${disabled(!startupMode)} />
+        </label>
+        <label class="${queryMode ? "" : "is-disabled"}">
+          <span>Bounded query</span>
+          <input name="query" type="text" placeholder="Brazilian AI-native startups in health" value="${escapeAttr(
+            form.query
+          )}" ${disabled(!queryMode)} />
+        </label>
+      </div>
+
+      <div class="form-grid">
+        <label>
+          <span>Startup name</span>
+          <input name="startup_name" type="text" placeholder="Startup AI" value="${escapeAttr(form.startup_name)}" />
+        </label>
+        <label class="${queryMode ? "" : "is-disabled"}">
+          <span>Candidate limit</span>
+          <input name="limit" type="number" min="1" max="5" step="1" value="${escapeAttr(form.limit)}" ${disabled(
+            !queryMode
+          )} />
+        </label>
+      </div>
+
+      <details class="advanced-options" open>
+        <summary>
+          <span>Advanced options</span>
+          <strong>safe defaults</strong>
+        </summary>
+        <div class="form-grid">
+          <label>
+            <span>Max pages</span>
+            <input name="max_pages" type="number" min="1" max="5" step="1" value="${escapeAttr(form.max_pages)}" />
+          </label>
+          <label>
+            <span>Max depth</span>
+            <input name="max_depth" type="number" min="0" max="2" step="1" value="${escapeAttr(form.max_depth)}" />
+          </label>
+          <label>
+            <span>Timeout seconds</span>
+            <input name="timeout_seconds" type="number" min="5" max="60" step="1" value="${escapeAttr(
+              form.timeout_seconds
+            )}" />
+          </label>
+          <label>
+            <span>Persistence</span>
+            <select name="persistence_mode">
+              <option value="json" ${selected(form.persistence_mode === "json")}>json local</option>
+              <option value="none" ${selected(form.persistence_mode === "none")}>none</option>
+              <option value="postgres" ${selected(form.persistence_mode === "postgres")}>postgres production</option>
+              <option value="json-postgres" ${selected(
+                form.persistence_mode === "json-postgres"
+              )}>json + postgres production</option>
+            </select>
+          </label>
+          <label>
+            <span>Retrieval</span>
+            <select name="retrieval_mode" data-launcher-autosync>
+              <option value="bm25" ${selected(form.retrieval_mode === "bm25")}>BM25 local</option>
+              <option value="pgvector" ${selected(form.retrieval_mode === "pgvector")}>pgvector production</option>
+            </select>
+          </label>
+          <label>
+            <span>Orchestration</span>
+            <select name="orchestration">
+              <option value="local" ${selected(form.orchestration === "local")}>local</option>
+              <option value="langgraph" ${selected(form.orchestration === "langgraph")}>LangGraph production</option>
+            </select>
+          </label>
+          <label>
+            <span>Robots policy</span>
+            <select name="robots_policy">
+              <option value="conservative" ${selected(form.robots_policy === "conservative")}>conservative</option>
+              <option value="permissive-on-error" ${selected(
+                form.robots_policy === "permissive-on-error"
+              )}>permissive on error</option>
+              <option value="off" ${selected(form.robots_policy === "off")}>off production</option>
+            </select>
+          </label>
+          <label>
+            <span>Output dir</span>
+            <input name="output_dir" type="text" value="${escapeAttr(form.output_dir)}" />
+          </label>
+          <label class="wide-field">
+            <span>NVIDIA corpus path</span>
+            <input name="nvidia_corpus_path" type="text" value="${escapeAttr(form.nvidia_corpus_path)}" />
+          </label>
+          <label class="${form.enable_reranking ? "" : "is-disabled"}">
+            <span>Reranker model</span>
+            <input name="reranker_model" type="text" placeholder="cross-encoder model or env default" value="${escapeAttr(
+              form.reranker_model
+            )}" ${disabled(!form.enable_reranking)} />
+          </label>
+        </div>
+        <div class="toggle-row launcher-toggles">
+          ${toggleOption("render_js", form.render_js, "Playwright", "production", true)}
+          ${toggleOption(
+            "enable_search_provider",
+            queryMode && form.enable_search_provider,
+            "Search provider",
+            "production",
+            queryMode
+          )}
+          ${toggleOption("enable_reranking", form.enable_reranking, "Reranking", "pgvector", true, true)}
+          ${toggleOption("llm_narrative", form.llm_narrative, "Groq narrative", "production", true)}
+        </div>
+      </details>
+
+      <button class="primary-action" type="submit" ${state.isBusy ? "disabled aria-busy=\"true\"" : ""}>
+        ${state.isBusy ? "Running" : "Start run"}
+      </button>
+    </form>
+  `;
+}
+
+function toggleOption(name, checkedValue, label, badge, enabled = true, autosync = false) {
+  return `
+    <label class="toggle-option${enabled ? "" : " is-disabled"}">
+      <input name="${escapeAttr(name)}" type="checkbox" ${checked(Boolean(checkedValue))} ${disabled(!enabled)} ${
+        autosync ? "data-launcher-autosync" : ""
+      } />
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(badge)}</strong>
+    </label>
+  `;
+}
+
+function checked(value) {
+  return value ? "checked" : "";
+}
+
+function selected(value) {
+  return value ? "selected" : "";
+}
+
+function disabled(value) {
+  return value ? "disabled" : "";
 }
 
 function renderRunSummary(run) {
