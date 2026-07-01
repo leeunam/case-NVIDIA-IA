@@ -464,17 +464,7 @@ export function buildMockFailedRunRecord(metadata = {}) {
  */
 export function buildMockSmokeMatrix(only = []) {
   const selected = new Set(only.filter(Boolean));
-  const steps = [
-    step("playwright_collection", "Playwright real collection", "collection"),
-    step("postgres_persistence", "Postgres persistence", "postgres"),
-    step("pgvector_retrieval", "pgvector retrieval", "pgvector"),
-    step("real_embeddings", "Real embedding model", "embedding"),
-    step("hybrid_retrieval", "Hybrid BM25 plus pgvector retrieval", "retrieval"),
-    step("reranking", "Real reranking", "reranking"),
-    step("langgraph_checkpoint", "LangGraph Postgres checkpointing", "langgraph"),
-    step("groq_litellm_narrative", "Groq/LiteLLM briefing narrative", "llm"),
-    step("full_operational_smoke", "Full bounded operational smoke", "briefing_quality")
-  ].filter((item) => !selected.size || selected.has(item.integration_id));
+  const steps = smokeDefinitions().filter((item) => !selected.size || selected.has(item.integration_id)).map(step);
   return {
     schema_version: SMOKE_MATRIX_SCHEMA_VERSION,
     read_only: true,
@@ -486,21 +476,153 @@ export function buildMockSmokeMatrix(only = []) {
   };
 }
 
-function step(integrationId, title, bottleneck) {
-  const envFlag = `NVIDIA_STARTUP_INTEL_RUN_${integrationId.toUpperCase()}_SMOKE`;
+function step(definition) {
   return {
-    integration_id: integrationId,
-    title,
+    ...definition,
     status: "skipped",
-    bottleneck,
-    message: `set ${envFlag}=1 to enable`,
-    command: "opt-in smoke command",
-    prerequisites: [],
-    required_env_vars: [],
-    expected_artifacts: [],
-    cleanup: [],
+    message: `set ${definition.env_flag}=1 to enable`,
+    env_status: envStatus(definition.env_flag, definition.required_env_vars),
     payload: {}
   };
+}
+
+function smokeDefinitions() {
+  return [
+    {
+      integration_id: "playwright_collection",
+      title: "Playwright real collection",
+      bottleneck: "collection",
+      env_flag: "NVIDIA_STARTUP_INTEL_RUN_PLAYWRIGHT_COLLECTION_SMOKE",
+      command:
+        "NVIDIA_STARTUP_INTEL_RUN_PLAYWRIGHT_COLLECTION_SMOKE=1 python -m pytest -q tests/integration/test_playwright_collection_integration_smoke.py -m playwright_collection_integration",
+      prerequisites: ["python -m playwright install chromium"],
+      required_env_vars: [],
+      expected_artifacts: ["playwright_collection_smoke.v1 payload"],
+      cleanup: []
+    },
+    {
+      integration_id: "postgres_persistence",
+      title: "Postgres persistence",
+      bottleneck: "postgres",
+      env_flag: "NVIDIA_STARTUP_INTEL_RUN_POSTGRES_PERSISTENCE_SMOKE",
+      command:
+        "NVIDIA_STARTUP_INTEL_RUN_POSTGRES_PERSISTENCE_SMOKE=1 PYTHONPATH=src python -m nvidia_startup_intel.postgres_persistence_smoke",
+      prerequisites: ["docker compose up -d postgres", "python -m pip install -e '.[postgres]'"],
+      required_env_vars: [],
+      expected_artifacts: ["postgres_persistence_smoke.v1 payload", "operational run rows"],
+      cleanup: ["docker compose down"]
+    },
+    {
+      integration_id: "pgvector_retrieval",
+      title: "pgvector retrieval",
+      bottleneck: "pgvector",
+      env_flag: "NVIDIA_STARTUP_INTEL_RUN_PGVECTOR_SMOKE",
+      command:
+        "NVIDIA_STARTUP_INTEL_RUN_PGVECTOR_SMOKE=1 python -m pytest -q tests/integration/test_pgvector_integration_smoke.py -m pgvector_integration",
+      prerequisites: ["docker compose up -d postgres", "python -m pip install -e '.[pgvector]'"],
+      required_env_vars: [],
+      expected_artifacts: ["persisted NVIDIA Knowledge chunks", "persisted chunk embeddings"],
+      cleanup: ["docker compose down"]
+    },
+    {
+      integration_id: "real_embeddings",
+      title: "Real embedding model",
+      bottleneck: "embedding",
+      env_flag: "NVIDIA_STARTUP_INTEL_RUN_REAL_EMBEDDING_SMOKE",
+      command:
+        "NVIDIA_STARTUP_INTEL_RUN_REAL_EMBEDDING_SMOKE=1 NVIDIA_STARTUP_INTEL_EMBEDDING_PROVIDER=sentence-transformers PYTHONPATH=src python -m nvidia_startup_intel.pgvector_smoke",
+      prerequisites: ["python -m pip install -e '.[embeddings,pgvector]'"],
+      required_env_vars: [
+        "NVIDIA_STARTUP_INTEL_EMBEDDING_PROVIDER",
+        "NVIDIA_STARTUP_INTEL_EMBEDDING_MODEL",
+        "NVIDIA_STARTUP_INTEL_EMBEDDING_MODEL_VERSION"
+      ],
+      expected_artifacts: ["embedding metadata with provider/model/version"],
+      cleanup: []
+    },
+    {
+      integration_id: "hybrid_retrieval",
+      title: "Hybrid BM25 plus pgvector retrieval",
+      bottleneck: "retrieval",
+      env_flag: "NVIDIA_STARTUP_INTEL_RUN_HYBRID_RETRIEVAL_SMOKE",
+      command:
+        "NVIDIA_STARTUP_INTEL_RUN_HYBRID_RETRIEVAL_SMOKE=1 PYTHONPATH=src python -m nvidia_startup_intel.production_smoke_matrix --only hybrid_retrieval",
+      prerequisites: ["pgvector corpus smoke has persisted the fixture corpus"],
+      required_env_vars: [],
+      expected_artifacts: ["nvidia_knowledge.v1 retrieval with hybrid ranking"],
+      cleanup: []
+    },
+    {
+      integration_id: "reranking",
+      title: "Real reranking",
+      bottleneck: "reranking",
+      env_flag: "NVIDIA_STARTUP_INTEL_RUN_REAL_RERANKING_SMOKE",
+      command:
+        "NVIDIA_STARTUP_INTEL_RUN_REAL_RERANKING_SMOKE=1 NVIDIA_STARTUP_INTEL_RERANKER_MODEL=<model> PYTHONPATH=src python -m nvidia_startup_intel.production_smoke_matrix --only reranking",
+      prerequisites: ["python -m pip install -e '.[reranking]'"],
+      required_env_vars: ["NVIDIA_STARTUP_INTEL_RERANKER_MODEL"],
+      expected_artifacts: ["nvidia_rerank.v1 payload"],
+      cleanup: []
+    },
+    {
+      integration_id: "langgraph_checkpoint",
+      title: "LangGraph Postgres checkpointing",
+      bottleneck: "langgraph",
+      env_flag: "NVIDIA_STARTUP_INTEL_RUN_LANGGRAPH_CHECKPOINT_SMOKE",
+      command:
+        "NVIDIA_STARTUP_INTEL_RUN_LANGGRAPH_CHECKPOINT_SMOKE=1 python -m pytest -q tests/integration/test_intelligence_workflow_langgraph_checkpoint_smoke.py -m langgraph_checkpoint_integration",
+      prerequisites: ["docker compose up -d postgres", "python -m pip install -e '.[workflow]'"],
+      required_env_vars: [],
+      expected_artifacts: ["LangGraph checkpoint rows", "resumed workflow state"],
+      cleanup: ["docker compose down"]
+    },
+    {
+      integration_id: "groq_litellm_narrative",
+      title: "Groq/LiteLLM briefing narrative",
+      bottleneck: "llm",
+      env_flag: "NVIDIA_STARTUP_INTEL_RUN_LLM_ADAPTER_SMOKE",
+      command:
+        "NVIDIA_STARTUP_INTEL_RUN_LLM_ADAPTER_SMOKE=1 NVIDIA_STARTUP_INTEL_LLM_PROVIDER=litellm python -m pytest -q tests/integration/test_llm_adapter_integration_smoke.py -m llm_adapter_integration",
+      prerequisites: ["python -m pip install -e '.[llm]'"],
+      required_env_vars: [
+        "NVIDIA_STARTUP_INTEL_LLM_PROVIDER",
+        "NVIDIA_STARTUP_INTEL_LLM_MODEL",
+        "NVIDIA_STARTUP_INTEL_LLM_API_KEY_ENV"
+      ],
+      expected_artifacts: ["llm_generation_response.v1 payload", "briefing_narrative.v1 artifact"],
+      cleanup: []
+    },
+    {
+      integration_id: "full_operational_smoke",
+      title: "Full bounded operational smoke",
+      bottleneck: "briefing_quality",
+      env_flag: "NVIDIA_STARTUP_INTEL_RUN_FULL_PRODUCTION_SMOKE",
+      command:
+        "NVIDIA_STARTUP_INTEL_RUN_FULL_PRODUCTION_SMOKE=1 PYTHONPATH=src python -m nvidia_startup_intel.production_smoke_matrix --only full_operational_smoke",
+      prerequisites: [
+        "All required optional services for selected modes are configured",
+        "Use a public startup URL or bounded query only"
+      ],
+      required_env_vars: [],
+      expected_artifacts: ["persisted run artifacts", "final briefing or Human Review Briefing"],
+      cleanup: ["rm -rf runs/production-smoke/<run_id>"]
+    }
+  ];
+}
+
+function envStatus(envFlag, requiredEnvVars) {
+  return [
+    {
+      name: envFlag,
+      role: "enable_flag",
+      configured: false
+    },
+    ...requiredEnvVars.map((name) => ({
+      name,
+      role: "required",
+      configured: false
+    }))
+  ];
 }
 
 function mockExecutiveBriefing(runId, startupIdentifier) {

@@ -44,9 +44,11 @@ class ProductionSmokeStepResult:
     status: str
     bottleneck: str
     message: str
+    env_flag: str
     command: str
     prerequisites: tuple[str, ...]
     required_env_vars: tuple[str, ...]
+    env_status: tuple[dict[str, object], ...]
     expected_artifacts: tuple[str, ...]
     cleanup: tuple[str, ...]
     payload: dict[str, object] = field(default_factory=dict)
@@ -227,12 +229,24 @@ def run_production_smoke_matrix(
         if selected_ids and definition.integration_id not in selected_ids:
             continue
         if source.get(definition.env_flag) != "1":
-            steps.append(_skipped_step(definition, f"set {definition.env_flag}=1 to enable"))
+            steps.append(
+                _skipped_step(
+                    definition,
+                    f"set {definition.env_flag}=1 to enable",
+                    env=source,
+                )
+            )
             continue
 
         missing_env = tuple(name for name in definition.required_env_vars if not source.get(name, "").strip())
         if missing_env:
-            steps.append(_skipped_step(definition, "missing env vars: " + ", ".join(missing_env)))
+            steps.append(
+                _skipped_step(
+                    definition,
+                    "missing env vars: " + ", ".join(missing_env),
+                    env=source,
+                )
+            )
             continue
 
         runner = runners.get(definition.integration_id, _default_runner(definition.integration_id))
@@ -250,6 +264,7 @@ def run_production_smoke_matrix(
                     definition,
                     status="failed",
                     message=_sanitize_text(f"{type(exc).__name__}: {exc}", credential_values),
+                    env=source,
                     payload={},
                 )
             )
@@ -266,6 +281,7 @@ def run_production_smoke_matrix(
                     status="failed",
                     bottleneck="credential_hygiene",
                     message="credential leak detected in smoke payload or generated artifact",
+                    env=source,
                     payload=payload,
                 )
             )
@@ -276,6 +292,7 @@ def run_production_smoke_matrix(
                 definition,
                 status="passed",
                 message="smoke passed",
+                env=source,
                 payload=payload,
             )
         )
@@ -310,8 +327,13 @@ def main(argv: tuple[str, ...] | None = None, *, stdout: TextIO | None = None) -
     return 1 if result.overall_status == "failed" else 0
 
 
-def _skipped_step(definition: ProductionSmokeIntegration, message: str) -> ProductionSmokeStepResult:
-    return _step(definition, status="skipped", message=message, payload={})
+def _skipped_step(
+    definition: ProductionSmokeIntegration,
+    message: str,
+    *,
+    env: Mapping[str, str],
+) -> ProductionSmokeStepResult:
+    return _step(definition, status="skipped", message=message, env=env, payload={})
 
 
 def _step(
@@ -319,6 +341,7 @@ def _step(
     *,
     status: str,
     message: str,
+    env: Mapping[str, str],
     payload: dict[str, object],
     bottleneck: str | None = None,
 ) -> ProductionSmokeStepResult:
@@ -328,13 +351,37 @@ def _step(
         status=status,
         bottleneck=bottleneck or definition.bottleneck,
         message=message,
+        env_flag=definition.env_flag,
         command=definition.command,
         prerequisites=definition.prerequisites,
         required_env_vars=definition.required_env_vars,
+        env_status=_env_status(definition, env),
         expected_artifacts=definition.expected_artifacts,
         cleanup=definition.cleanup,
         payload=payload,
     )
+
+
+def _env_status(
+    definition: ProductionSmokeIntegration,
+    env: Mapping[str, str],
+) -> tuple[dict[str, object], ...]:
+    statuses = [
+        {
+            "name": definition.env_flag,
+            "role": "enable_flag",
+            "configured": env.get(definition.env_flag) == "1",
+        }
+    ]
+    statuses.extend(
+        {
+            "name": name,
+            "role": "required",
+            "configured": bool(env.get(name, "").strip()),
+        }
+        for name in definition.required_env_vars
+    )
+    return tuple(statuses)
 
 
 def _payload(value: object) -> dict[str, object]:
