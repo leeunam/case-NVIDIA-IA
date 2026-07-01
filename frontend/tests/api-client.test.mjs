@@ -62,6 +62,7 @@ test("real API client sends the #98 run contract", async () => {
         next_action: "prepare_technical_outreach",
         briefing_reference: null,
         human_review_reasons: [],
+        branch_decisions: [],
         artifact_references: { artifact_locations: {}, persistence_references: [] },
         errors: [],
         options: {},

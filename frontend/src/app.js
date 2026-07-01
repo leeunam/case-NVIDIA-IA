@@ -2,20 +2,25 @@ import { createFrontendApiClient } from "./api-contract.js";
 import { createMockFrontendApiClient } from "./mock-data.js";
 import { createInitialState, renderApp } from "./renderer.js";
 import { runLauncherFormFromFormData, submitRunLauncher } from "./run-launcher.js";
+import { loadRunWorkspace, runIdFromSearch, updateRunRoute } from "./run-workspace.js";
 
 const root = document.querySelector("#app");
 const params = new URLSearchParams(window.location.search);
 const apiMode = params.get("api") === "real" ? "real" : "mock";
 const apiBaseUrl = params.get("baseUrl") || "http://127.0.0.1:8000";
+const initialRouteRunId = runIdFromSearch(window.location.search);
 const apiClient =
   apiMode === "real"
     ? createFrontendApiClient({ baseUrl: apiBaseUrl })
     : createMockFrontendApiClient({ delayMs: 120 });
 
-let state = createInitialState({ apiMode, apiBaseUrl });
+let state = createInitialState({ apiMode, apiBaseUrl, routeRunId: initialRouteRunId });
 
 render();
 void loadSmokeMatrix({ quiet: true });
+if (initialRouteRunId) {
+  void loadRunFromRoute(initialRouteRunId);
+}
 
 function render() {
   root.innerHTML = renderApp(state);
@@ -49,6 +54,11 @@ function bindEvents() {
         formData: new FormData(form),
         apiClient,
         commit
+      }).then((currentRun) => {
+        if (currentRun) {
+          updateRunRoute({ runId: currentRun.run_id, location: window.location, history: window.history });
+          commit({ routeRunId: currentRun.run_id, runLoadState: "loaded" });
+        }
       });
     });
 
@@ -65,7 +75,7 @@ function bindEvents() {
 
   for (const button of root.querySelectorAll("[data-refresh-run]")) {
     button.addEventListener("click", () => {
-      void refreshRun(button.getAttribute("data-refresh-run") || "");
+      void loadRunFromRoute(button.getAttribute("data-refresh-run") || "");
     });
   }
 
@@ -76,25 +86,10 @@ function bindEvents() {
   }
 }
 
-async function refreshRun(runId) {
-  if (!runId) {
-    return;
-  }
-  commit({ isBusy: true, notice: "Refreshing run.", errorMessage: "" });
-  try {
-    const currentRun = await apiClient.getRun(runId);
-    commit({
-      currentRun,
-      isBusy: false,
-      notice: `Run ${runId} refreshed.`,
-      errorMessage: ""
-    });
-  } catch (error) {
-    commit({
-      isBusy: false,
-      notice: "",
-      errorMessage: error instanceof Error ? error.message : "run_refresh_failed"
-    });
+async function loadRunFromRoute(runId) {
+  const currentRun = await loadRunWorkspace({ runId, apiClient, commit });
+  if (currentRun) {
+    updateRunRoute({ runId: currentRun.run_id, location: window.location, history: window.history });
   }
 }
 
