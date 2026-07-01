@@ -48,8 +48,9 @@ const LOW_TEXT_THRESHOLD = 80;
  */
 export function createInitialState(overrides = {}) {
   const launcherForm = createRunLauncherForm(overrides.launcherForm || {});
+  const activeSection = sectionIdFromValue(overrides.activeSection);
   return {
-    activeSection: "runs",
+    activeSection,
     apiMode: "mock",
     apiBaseUrl: "http://127.0.0.1:8000",
     launcherForm,
@@ -61,8 +62,14 @@ export function createInitialState(overrides = {}) {
     notice: "",
     errorMessage: "",
     ...overrides,
+    activeSection,
     launcherForm
   };
+}
+
+export function sectionIdFromValue(value, fallback = "runs") {
+  const candidate = String(value || "").trim();
+  return SECTIONS.some((section) => section.id === candidate) ? candidate : fallback;
 }
 
 /**
@@ -71,7 +78,7 @@ export function createInitialState(overrides = {}) {
 export function renderApp(state) {
   return `
     <div class="app-shell">
-      <aside class="sidebar" aria-label="Primary">
+      <aside class="sidebar" aria-label="Primary navigation">
         <div class="brand-block">
           <span class="brand-mark" aria-hidden="true"></span>
           <div>
@@ -79,7 +86,7 @@ export function renderApp(state) {
             <h1>Operational Workbench</h1>
           </div>
         </div>
-        <nav class="section-nav">
+        <nav class="section-nav" aria-label="Workbench sections">
           ${SECTIONS.map((section) => renderNavItem(section, state.activeSection)).join("")}
         </nav>
         <div class="api-panel">
@@ -1581,14 +1588,16 @@ function renderNvidiaMatch(state) {
 function renderNvidiaMatchOverview(match, retrievals, rerankResults, run) {
   const quality = objectRecord(match.quality) || {};
   const metrics = objectRecord(quality.metrics) || {};
-  const supported = numericValue(metrics.supported_recommendation_count, records(match.technical_recommendations).length);
+  const supportedFallback = nvidiaSupportedRecommendations(match).length;
+  const supported = numericValue(metrics.supported_recommendation_count, supportedFallback);
   const hypotheses = numericValue(metrics.hypothesis_recommendation_count, records(match.hypotheses).length);
   const blocked = numericValue(metrics.blocked_recommendation_count, records(match.blocked_recommendations).length);
+  const readyForBriefing = readyForNvidiaBriefing(match, run, supported);
   return `
     <div class="metric-row match-metrics">
       ${metric("Priority", String(match.final_nvidia_opportunity_priority || match.priority || "unknown"))}
       ${metric("Next action", String(match.next_action || run?.next_action || "unknown"))}
-      ${metric("Ready for briefing", String(Boolean(quality.ready_for_briefing)))}
+      ${metric("Ready for briefing", String(readyForBriefing))}
     </div>
     <div class="metric-row match-metrics">
       ${metric("Supported", String(supported))}
@@ -1611,6 +1620,7 @@ function renderNvidiaQualityMetrics(match, metricsReport, run) {
     objectRecord(match.recommendation_metrics) ||
     objectRecord(match.metrics);
   const quality = objectRecord(match.quality) || {};
+  const readyForBriefing = readyForNvidiaBriefing(match, run, nvidiaSupportedRecommendations(match).length);
   if (!retrievalMetrics && !recommendationMetrics && !objectEntries(quality).length && !arrayValues(run?.human_review_reasons).length) {
     return "";
   }
@@ -1662,7 +1672,7 @@ function renderNvidiaQualityMetrics(match, metricsReport, run) {
         ${renderHumanReviewReasonCounts(recommendationMetrics?.human_review_reason_counts, run)}
       </div>
       <dl class="evidence-definition-list compact">
-        <div><dt>Ready for briefing</dt><dd>${escapeHtml(String(Boolean(quality.ready_for_briefing)))}</dd></div>
+        <div><dt>Ready for briefing</dt><dd>${escapeHtml(String(readyForBriefing))}</dd></div>
         <div><dt>Human review requested</dt><dd>${escapeHtml(String(Boolean(quality.human_review_requested)))}</dd></div>
         <div><dt>Quality reasons</dt><dd>${renderInlineList(quality.reasons)}</dd></div>
       </dl>
@@ -1939,11 +1949,7 @@ function renderNvidiaCitationReference(citation) {
 }
 
 function nvidiaRecommendationGroups(match) {
-  const supported = uniqueRecommendations([
-    ...records(match.technical_recommendations),
-    ...records(match.program_recommendations),
-    ...records(match.supported_recommendations)
-  ]);
+  const supported = nvidiaSupportedRecommendations(match);
   const top = uniqueRecommendations(records(match.top_recommendations_by_gap));
   return {
     top,
@@ -1952,6 +1958,25 @@ function nvidiaRecommendationGroups(match) {
     hypotheses: uniqueRecommendations(records(match.hypotheses)),
     blocked: uniqueRecommendations(records(match.blocked_recommendations))
   };
+}
+
+function nvidiaSupportedRecommendations(match) {
+  return uniqueRecommendations([
+    ...records(match.technical_recommendations),
+    ...records(match.program_recommendations),
+    ...records(match.supported_recommendations)
+  ]);
+}
+
+function readyForNvidiaBriefing(match, run, supportedCount) {
+  const quality = objectRecord(match.quality) || {};
+  if (typeof quality.ready_for_briefing === "boolean") {
+    return quality.ready_for_briefing;
+  }
+  if (typeof match.ready_for_briefing === "boolean") {
+    return match.ready_for_briefing;
+  }
+  return supportedCount > 0 && Boolean(run?.briefing_reference);
 }
 
 function uniqueRecommendations(items) {

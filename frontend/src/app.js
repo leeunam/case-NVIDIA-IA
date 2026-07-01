@@ -1,6 +1,6 @@
 import { createFrontendApiClient } from "./api-contract.js";
 import { createMockFrontendApiClient } from "./mock-data.js";
-import { briefingExportText, createInitialState, renderApp } from "./renderer.js";
+import { briefingExportText, createInitialState, renderApp, sectionIdFromValue } from "./renderer.js";
 import { runLauncherFormFromFormData, submitRunLauncher } from "./run-launcher.js";
 import { loadRunWorkspace, runIdFromSearch, updateRunRoute } from "./run-workspace.js";
 
@@ -9,17 +9,18 @@ const params = new URLSearchParams(window.location.search);
 const apiMode = params.get("api") === "real" ? "real" : "mock";
 const apiBaseUrl = params.get("baseUrl") || "http://127.0.0.1:8000";
 const initialRouteRunId = runIdFromSearch(window.location.search);
+const initialSection = sectionIdFromValue(params.get("section"));
 const apiClient =
   apiMode === "real"
     ? createFrontendApiClient({ baseUrl: apiBaseUrl })
     : createMockFrontendApiClient({ delayMs: 120 });
 
-let state = createInitialState({ apiMode, apiBaseUrl, routeRunId: initialRouteRunId });
+let state = createInitialState({ activeSection: initialSection, apiMode, apiBaseUrl, routeRunId: initialRouteRunId });
 
 render();
 void loadSmokeMatrix({ quiet: true });
 if (initialRouteRunId) {
-  void loadRunFromRoute(initialRouteRunId);
+  void loadRunFromRoute(initialRouteRunId, initialSection);
 }
 
 function render() {
@@ -38,8 +39,15 @@ function commit(updates) {
 function bindEvents() {
   for (const button of root.querySelectorAll("[data-section]")) {
     button.addEventListener("click", () => {
+      const activeSection = sectionIdFromValue(button.getAttribute("data-section"));
+      updateRunRoute({
+        runId: state.currentRun?.run_id || state.routeRunId,
+        activeSection,
+        location: window.location,
+        history: window.history
+      });
       commit({
-        activeSection: button.getAttribute("data-section") || "runs",
+        activeSection,
         notice: "",
         errorMessage: ""
       });
@@ -56,7 +64,12 @@ function bindEvents() {
         commit
       }).then((currentRun) => {
         if (currentRun) {
-          updateRunRoute({ runId: currentRun.run_id, location: window.location, history: window.history });
+          updateRunRoute({
+            runId: currentRun.run_id,
+            activeSection: "runs",
+            location: window.location,
+            history: window.history
+          });
           commit({ routeRunId: currentRun.run_id, runLoadState: "loaded" });
         }
       });
@@ -104,10 +117,10 @@ function bindEvents() {
   }
 }
 
-async function loadRunFromRoute(runId) {
-  const currentRun = await loadRunWorkspace({ runId, apiClient, commit });
+async function loadRunFromRoute(runId, activeSection = state.activeSection) {
+  const currentRun = await loadRunWorkspace({ runId, activeSection, apiClient, commit });
   if (currentRun) {
-    updateRunRoute({ runId: currentRun.run_id, location: window.location, history: window.history });
+    updateRunRoute({ runId: currentRun.run_id, activeSection, location: window.location, history: window.history });
   }
 }
 
