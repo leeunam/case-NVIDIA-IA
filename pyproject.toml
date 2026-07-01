@@ -45,9 +45,14 @@ llm = [
     "litellm",
     "langchain",
 ]
+api = [
+    "fastapi",
+    "uvicorn",
+]
 
 [project.scripts]
 nvidia-startup-intel = "nvidia_startup_intel.cli:main"
+nvidia-startup-intel-api = "nvidia_startup_intel.frontend_api:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
