@@ -131,6 +131,10 @@ export function buildMockRunRecord(request, metadata) {
       unknown_field_rate: 0.17,
       conflict_count: 0
     },
+    ...buildMockEvidenceArtifacts({
+      startupIdentifier,
+      createdAt: metadata.createdAt
+    }),
     ai_native_assessment: {
       schema_version: "ai_native_assessment.v1",
       classification: "ai_native",
@@ -182,6 +186,64 @@ export function buildMockRunRecord(request, metadata) {
     errors: [],
     options: finalPayload.options,
     final_payload: finalPayload
+  });
+}
+
+export function buildMockConflictingEvidenceRunRecord(metadata = {}) {
+  const record = buildMockRunRecord(
+    {
+      startup_url: "https://conflict-startup.ai/",
+      startup_name: "Conflict Startup"
+    },
+    {
+      runId: metadata.runId || "mock-conflicting-evidence-run",
+      createdAt: metadata.createdAt || "2026-06-30T12:45:00.000Z"
+    }
+  );
+  const artifacts = buildMockEvidenceArtifacts({
+    startupIdentifier: "Conflict Startup",
+    createdAt: record.created_at,
+    conflict: true
+  });
+  return assertRunRecord({
+    ...record,
+    human_review_reasons: ["conflicting_startup_evidence", "unknown_funding"],
+    final_payload: {
+      ...record.final_payload,
+      ...artifacts,
+      human_review_reasons: ["conflicting_startup_evidence", "unknown_funding"]
+    }
+  });
+}
+
+export function buildMockCollectionFailureEvidenceRunRecord(metadata = {}) {
+  const record = buildMockRunRecord(
+    {
+      startup_url: "https://blocked-startup.ai/",
+      startup_name: "Blocked Startup"
+    },
+    {
+      runId: metadata.runId || "mock-collection-failure-evidence-run",
+      createdAt: metadata.createdAt || "2026-06-30T13:00:00.000Z"
+    }
+  );
+  const artifacts = buildMockEvidenceArtifacts({
+    startupIdentifier: "Blocked Startup",
+    createdAt: record.created_at,
+    collectionFailure: true
+  });
+  return assertRunRecord({
+    ...record,
+    workflow_outcome: "needs_more_collection_or_human_review",
+    next_action: "resolve_blocking_evidence",
+    human_review_reasons: ["robots_blocked_collection", "average_evidence_below_threshold"],
+    final_payload: {
+      ...record.final_payload,
+      ...artifacts,
+      workflow_outcome: "needs_more_collection_or_human_review",
+      next_action: "resolve_blocking_evidence",
+      human_review_reasons: ["robots_blocked_collection", "average_evidence_below_threshold"]
+    }
   });
 }
 
@@ -351,6 +413,198 @@ function step(integrationId, title, bottleneck) {
     expected_artifacts: [],
     cleanup: [],
     payload: {}
+  };
+}
+
+function buildMockEvidenceArtifacts({ startupIdentifier, createdAt, conflict = false, collectionFailure = false }) {
+  const baseUrl = collectionFailure ? "https://blocked-startup.ai/" : "https://neuralmind.ai/";
+  const productUrl = collectionFailure ? "https://blocked-startup.ai/product" : "https://neuralmind.ai/product";
+  const collectedAt = createdAt || "2026-06-30T12:00:00.000Z";
+  const homeEvidence = evidenceRecord({
+    url: baseUrl,
+    title: startupIdentifier,
+    snippet:
+      "Resumo: Plataforma AI-native para documentos. Setor: dados. Sinais de IA: modelos proprietarios e inferencia em producao.",
+    collectedAt
+  });
+  const productEvidence = evidenceRecord({
+    url: productUrl,
+    title: `${startupIdentifier} Product`,
+    snippet:
+      "Produto: Copiloto documental com IA generativa. Tecnologias: MLOps, dados proprietarios, feedback loop e model serving.",
+    collectedAt
+  });
+  const conflictEvidence = evidenceRecord({
+    url: "https://directory.example/conflict-startup",
+    title: "Directory profile",
+    snippet: "Setor: fintech. Diretorio publico com classificacao divergente para a startup.",
+    collectedAt,
+    sourceType: "directory_profile"
+  });
+  const profile = {
+    schema_version: "startup_profile.v1",
+    company_name: profileField(startupIdentifier, "observed", [homeEvidence]),
+    official_site: profileField(baseUrl.replace(/\/$/, ""), "observed", [homeEvidence]),
+    company_summary: profileField("Plataforma AI-native para documentos", "observed", [homeEvidence]),
+    sector: profileField(conflict ? "healthtech" : "dados", conflict ? "inferred" : "observed", [homeEvidence]),
+    product: profileField("Copiloto documental com IA generativa", "observed", [productEvidence]),
+    customers: profileField("bancos", "observed", [homeEvidence]),
+    funding: profileField("unknown", "unknown", []),
+    founders: profileField("Ana Silva", "observed", [homeEvidence]),
+    technologies_used: profileField("MLOps, dados proprietarios, feedback loop e model serving", "observed", [
+      productEvidence
+    ]),
+    ai_signals: profileField("modelos proprietarios, inferencia em producao", "inferred", [
+      homeEvidence,
+      productEvidence
+    ]),
+    location: profileField("Campinas, SP", "observed", [homeEvidence])
+  };
+  const evidenceGroups = [
+    fieldEvidenceGroup("ai_signals", profile.ai_signals.value, [homeEvidence, productEvidence]),
+    fieldEvidenceGroup("company_summary", profile.company_summary.value, [homeEvidence]),
+    fieldEvidenceGroup("product", profile.product.value, [productEvidence]),
+    fieldEvidenceGroup("sector", profile.sector.value, conflict ? [homeEvidence, conflictEvidence] : [homeEvidence], {
+      hasConflict: conflict,
+      conflictingValues: conflict ? ["healthtech", "fintech"] : []
+    }),
+    fieldEvidenceGroup("technologies_used", profile.technologies_used.value, [productEvidence])
+  ];
+  const collectedPages = collectionFailure
+    ? {
+        "url:https://blocked-startup.ai": {
+          pages: [],
+          errors: [
+            {
+              url: "https://blocked-startup.ai/",
+              error_type: "RobotsPolicyDisallowed",
+              message: "robots.txt disallowed collection for this path",
+              collected_at: collectedAt,
+              status_code: null,
+              error_category: "robots_disallowed"
+            },
+            {
+              url: "https://blocked-startup.ai/product",
+              error_type: "TimeoutError",
+              message: "browser render timed out before readable text was extracted",
+              collected_at: collectedAt,
+              status_code: 504,
+              error_category: "browser_render_failed"
+            }
+          ]
+        }
+      }
+    : {
+        "url:https://neuralmind.ai": {
+          pages: [
+            {
+              url: baseUrl,
+              title: startupIdentifier,
+              main_text:
+                "Resumo: Plataforma AI-native para documentos. Setor: dados. Clientes: bancos. Founders: Ana Silva. Localizacao: Campinas, SP.",
+              collected_at: collectedAt,
+              status_code: 200,
+              extraction_strategy: "trafilatura+beautifulsoup+playwright",
+              needs_js_rendering: true
+            },
+            {
+              url: productUrl,
+              title: `${startupIdentifier} Product`,
+              main_text:
+                "Produto: Copiloto documental com IA generativa. Tecnologias: MLOps, dados proprietarios, feedback loop e model serving.",
+              collected_at: collectedAt,
+              status_code: 200,
+              extraction_strategy: "trafilatura+beautifulsoup",
+              needs_js_rendering: false
+            }
+          ],
+          errors: []
+        }
+      };
+  const qualitySummary = collectionFailure
+    ? {
+        candidate_count: 1,
+        official_site_found_count: 1,
+        official_site_found_rate: 1,
+        minimum_profile_complete_count: 0,
+        minimum_profile_complete_rate: 0,
+        average_evidences_per_startup: 0,
+        unknown_fields: [
+          ["company_summary", 1],
+          ["product", 1],
+          ["ai_signals", 1]
+        ],
+        source_success_rates: [
+          {
+            source_name: "url:https://blocked-startup.ai",
+            attempts: 2,
+            successes: 0,
+            failures: 2,
+            success_rate: 0
+          }
+        ],
+        ready_for_evaluation: false,
+        readiness_reasons: ["minimum_profile_coverage_below_threshold", "average_evidence_below_threshold"]
+      }
+    : {
+        candidate_count: 1,
+        official_site_found_count: 1,
+        official_site_found_rate: 1,
+        minimum_profile_complete_count: 1,
+        minimum_profile_complete_rate: 1,
+        average_evidences_per_startup: 8,
+        unknown_fields: [["funding", 1]],
+        source_success_rates: [
+          {
+            source_name: "url:https://neuralmind.ai",
+            attempts: 2,
+            successes: 2,
+            failures: 0,
+            success_rate: 1
+          }
+        ],
+        ready_for_evaluation: !conflict,
+        readiness_reasons: conflict ? ["conflicting_startup_evidence"] : ["ready_for_ai_native_evaluation"]
+      };
+  const profileKey = `url:${baseUrl.replace(/\/$/, "")}`;
+  return {
+    collected_pages_by_candidate: collectedPages,
+    profiles: collectionFailure ? [] : [profile],
+    evidence_groups_by_profile: collectionFailure ? {} : { [profileKey]: evidenceGroups },
+    quality_summary: qualitySummary
+  };
+}
+
+function evidenceRecord({ url, title, snippet, collectedAt, sourceType = "collected_page" }) {
+  return {
+    url,
+    title,
+    snippet,
+    collected_at: collectedAt,
+    source_type: sourceType
+  };
+}
+
+function profileField(value, claimSource, evidences) {
+  return {
+    value,
+    claim_source: claimSource,
+    evidences
+  };
+}
+
+function fieldEvidenceGroup(
+  fieldName,
+  value,
+  evidences,
+  { hasConflict = false, conflictingValues = [] } = {}
+) {
+  return {
+    field_name: fieldName,
+    value,
+    evidences,
+    has_conflict: hasConflict,
+    conflicting_values: conflictingValues
   };
 }
 

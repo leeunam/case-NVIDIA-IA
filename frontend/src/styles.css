@@ -733,6 +733,236 @@ dd {
   overflow-wrap: anywhere;
 }
 
+.evidence-term-note,
+.evidence-section {
+  margin-bottom: 16px;
+}
+
+.evidence-term-note {
+  padding: 14px;
+  border: 1px solid rgb(67 107 0 / 24%);
+  border-radius: 8px;
+  background: rgb(118 185 0 / 9%);
+}
+
+.evidence-term-note h3,
+.evidence-term-note p {
+  margin-bottom: 0;
+}
+
+.evidence-term-note p:last-child {
+  margin-top: 5px;
+  color: var(--ink-muted);
+  line-height: 1.45;
+}
+
+.section-heading,
+.profile-card-header,
+.field-title-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.section-heading {
+  margin-bottom: 12px;
+}
+
+.section-heading.compact {
+  margin-top: 16px;
+  margin-bottom: 8px;
+}
+
+.section-heading h4,
+.profile-card-header h3,
+.field-title-row h4 {
+  margin-bottom: 0;
+}
+
+.profile-evidence-list,
+.collected-page-list,
+.source-quality-list {
+  display: grid;
+  gap: 12px;
+}
+
+.profile-evidence-card {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfbfa;
+}
+
+.profile-card-header {
+  margin-bottom: 12px;
+}
+
+.profile-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.profile-field-item,
+.field-evidence-group,
+.collected-page-item,
+.source-quality-item,
+.snippet-item {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.profile-field-item,
+.field-evidence-group,
+.collected-page-item,
+.source-quality-item {
+  padding: 12px;
+}
+
+.profile-field-item.is-unknown {
+  border-color: rgb(183 121 31 / 28%);
+  background: rgb(183 121 31 / 7%);
+}
+
+.field-evidence-group.has-conflict {
+  border-color: rgb(180 35 24 / 28%);
+  background: rgb(180 35 24 / 6%);
+}
+
+.field-value {
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+  font-weight: 800;
+  line-height: 1.38;
+}
+
+.evidence-source-observed {
+  border-color: rgb(67 107 0 / 28%);
+  background: rgb(118 185 0 / 13%);
+  color: var(--green-dark);
+}
+
+.evidence-source-inferred {
+  border-color: rgb(183 121 31 / 28%);
+  background: rgb(183 121 31 / 12%);
+  color: #7a4d0b;
+}
+
+.evidence-source-unknown {
+  color: var(--ink-muted);
+}
+
+.snippet-stack {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.snippet-title {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.snippet-item {
+  padding: 10px;
+  background: #fbfbfa;
+}
+
+.snippet-item p {
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  line-height: 1.45;
+}
+
+.source-link {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--green-dark);
+  font-weight: 800;
+}
+
+.evidence-definition-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.evidence-definition-list div {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.evidence-definition-list.compact {
+  margin-top: 10px;
+}
+
+.evidence-definition-list dd {
+  overflow-wrap: anywhere;
+}
+
+.evidence-quality-grid {
+  margin-bottom: 12px;
+}
+
+.unknown-field-strip {
+  margin-top: 12px;
+}
+
+.unknown-field-strip h4,
+.source-quality-list h4 {
+  margin-bottom: 8px;
+}
+
+.chip-list,
+.inline-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.unknown-chip,
+.inline-list span {
+  display: inline-flex;
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  color: var(--ink-muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.reason-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ink-muted);
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.insufficient-line {
+  margin: 10px 0 0;
+  color: #7a4d0b;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
 .object-list {
   margin-top: 16px;
 }
@@ -849,7 +1079,8 @@ dd {
   .run-grid,
   .stage-strip,
   .compact-metrics,
-  .metric-row {
+  .metric-row,
+  .profile-field-grid {
     grid-template-columns: 1fr;
   }
 
@@ -883,10 +1114,17 @@ dd {
 
   .form-grid,
   .source-fields,
-    .segmented-control,
-    .summary-list div,
-    .audit-grid div,
-    .key-list li {
+  .segmented-control,
+  .summary-list div,
+  .audit-grid div,
+  .evidence-definition-list div,
+  .key-list li {
     grid-template-columns: 1fr;
+  }
+
+  .section-heading,
+  .profile-card-header,
+  .field-title-row {
+    display: grid;
   }
 }
