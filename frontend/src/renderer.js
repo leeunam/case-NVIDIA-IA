@@ -19,6 +19,8 @@ export const SECTIONS = [
  * @property {string} apiBaseUrl
  * @property {import("./run-launcher.js").RunLauncherForm} launcherForm
  * @property {FrontendRunRecord | null} currentRun
+ * @property {string} routeRunId
+ * @property {"idle" | "loading" | "loaded" | "not_found" | "failed"} runLoadState
  * @property {ProductionSmokeMatrix | null} smokeMatrix
  * @property {boolean} isBusy
  * @property {string} notice
@@ -37,6 +39,8 @@ export function createInitialState(overrides = {}) {
     apiBaseUrl: "http://127.0.0.1:8000",
     launcherForm,
     currentRun: null,
+    routeRunId: "",
+    runLoadState: "idle",
     smokeMatrix: null,
     isBusy: false,
     notice: "",
@@ -83,6 +87,7 @@ export function renderApp(state) {
           </div>
         </header>
         ${renderMessages(state)}
+        ${renderWorkspaceTabs(state)}
         ${renderActiveSection(state)}
       </main>
     </div>
@@ -98,6 +103,23 @@ function renderNavItem(section, activeSection) {
       <span class="nav-glyph" aria-hidden="true"></span>
       <span>${escapeHtml(section.label)}</span>
     </button>
+  `;
+}
+
+function renderWorkspaceTabs(state) {
+  return `
+    <div class="workspace-tabs" role="tablist" aria-label="Run workspace sections">
+      ${SECTIONS.map((section) => {
+        const active = section.id === state.activeSection;
+        return `
+          <button class="workspace-tab${active ? " is-active" : ""}" type="button" role="tab" data-section="${escapeAttr(
+            section.id
+          )}" aria-selected="${active ? "true" : "false"}">
+            ${escapeHtml(section.label)}
+          </button>
+        `;
+      }).join("")}
+    </div>
   `;
 }
 
@@ -143,13 +165,13 @@ function renderRuns(state) {
         <div class="panel-header">
           <div>
             <p class="eyebrow">Status</p>
-            <h3>${state.currentRun ? escapeHtml(state.currentRun.startup_identifier) : "No active run"}</h3>
+            <h3>${escapeHtml(runStatusTitle(state))}</h3>
           </div>
-          <span class="status-badge ${state.currentRun ? statusClass(state.currentRun.status) : "status-idle"}">
-            ${state.currentRun ? escapeHtml(state.currentRun.workflow_outcome) : "waiting"}
+          <span class="status-badge ${state.currentRun ? statusClass(state.currentRun.status) : statusClass(state.runLoadState)}">
+            ${escapeHtml(runStatusBadge(state))}
           </span>
         </div>
-        ${state.currentRun ? renderRunSummary(state.currentRun) : renderEmptyState("Run launcher is ready.", "Submit a URL or bounded query to populate the workbench.")}
+        ${state.currentRun ? renderRunSummary(state.currentRun) : renderRunPlaceholder(state)}
       </section>
     </section>
     ${renderStageStrip(state.currentRun)}
@@ -331,15 +353,171 @@ function disabled(value) {
 
 function renderRunSummary(run) {
   return `
+    <div class="metric-row compact-metrics">
+      ${metric("Workflow outcome", run.workflow_outcome)}
+      ${metric("Result", resultType(run))}
+      ${metric("Next action", run.next_action)}
+    </div>
     <dl class="summary-list">
+      <div><dt>Startup</dt><dd>${escapeHtml(run.startup_identifier)}</dd></div>
       <div><dt>Run ID</dt><dd>${escapeHtml(run.run_id)}</dd></div>
+      <div><dt>Status</dt><dd>${escapeHtml(run.status)}</dd></div>
       <div><dt>Next action</dt><dd>${escapeHtml(run.next_action)}</dd></div>
       <div><dt>Created</dt><dd>${escapeHtml(run.created_at || "unknown")}</dd></div>
       <div><dt>Human review reasons</dt><dd>${renderReasonCount(run.human_review_reasons)}</dd></div>
       <div><dt>Errors</dt><dd>${String(run.errors.length)}</dd></div>
     </dl>
+    ${renderBranchDecisionList(run.branch_decisions)}
+    ${renderPersistenceReferences(run.artifact_references.persistence_references || [])}
+    ${renderAuditableErrors(run.errors)}
     <div class="status-actions">
       <button type="button" class="secondary-action" data-refresh-run="${escapeAttr(run.run_id)}">Refresh</button>
+    </div>
+  `;
+}
+
+function renderRunPlaceholder(state) {
+  if (state.runLoadState === "loading") {
+    return renderEmptyState(
+      "Loading run context.",
+      `Fetching ${state.routeRunId || "the selected run"} from the API without starting a new run.`
+    );
+  }
+  if (state.runLoadState === "not_found") {
+    return renderEmptyState(
+      "Run not found.",
+      `${state.routeRunId || "The requested run"} is not available from the configured API.`
+    );
+  }
+  if (state.runLoadState === "failed") {
+    return renderEmptyState(
+      "Run status could not be loaded.",
+      "Check the API mode, base URL, and run identifier, then refresh the workspace."
+    );
+  }
+  return renderEmptyState("Run launcher is ready.", "Submit a URL or bounded query to populate the workbench.");
+}
+
+function runStatusTitle(state) {
+  if (state.currentRun) {
+    return state.currentRun.startup_identifier;
+  }
+  if (state.routeRunId) {
+    return `Run ${state.routeRunId}`;
+  }
+  return "No active run";
+}
+
+function runStatusBadge(state) {
+  if (state.currentRun) {
+    return state.currentRun.workflow_outcome;
+  }
+  if (state.runLoadState === "loading") {
+    return "loading";
+  }
+  if (state.runLoadState === "not_found") {
+    return "not found";
+  }
+  if (state.runLoadState === "failed") {
+    return "load failed";
+  }
+  return "waiting";
+}
+
+function resultType(run) {
+  if (String(run.status).toLowerCase().includes("fail") || run.workflow_outcome === "failed_with_auditable_error") {
+    return "failed_with_auditable_error";
+  }
+  const reference =
+    run.briefing_reference && typeof run.briefing_reference === "object"
+      ? /** @type {Record<string, unknown>} */ (run.briefing_reference)
+      : {};
+  const briefingType = String(reference.briefing_type || "");
+  if (briefingType === "executive") {
+    return "executive briefing";
+  }
+  if (briefingType === "human_review" || run.workflow_outcome === "human_review_requested") {
+    return "human review";
+  }
+  return "unknown";
+}
+
+function renderBranchDecisionList(items) {
+  const decisions = records(items);
+  return `
+    <div class="audit-section">
+      <h4>Branch decisions</h4>
+      ${
+        decisions.length
+          ? decisions
+              .map(
+                (decision) => `
+                  <article class="audit-item">
+                    <strong>${escapeHtml(String(decision.branch_name || "unknown_branch"))}</strong>
+                    <dl class="audit-grid">
+                      <div><dt>Next action</dt><dd>${escapeHtml(String(decision.next_action || "unknown"))}</dd></div>
+                      <div><dt>Reason</dt><dd>${escapeHtml(String(decision.audit_reason || "unknown"))}</dd></div>
+                    </dl>
+                  </article>
+                `
+              )
+              .join("")
+          : `<p class="muted-line">No branch decisions were included in this run record.</p>`
+      }
+    </div>
+  `;
+}
+
+function renderPersistenceReferences(items) {
+  const references = records(items);
+  return `
+    <div class="audit-section">
+      <h4>Persistence references</h4>
+      ${
+        references.length
+          ? references
+              .map(
+                (reference) => `
+                  <article class="audit-item">
+                    <strong>${escapeHtml(String(reference.artifact_kind || "artifact"))}</strong>
+                    <dl class="audit-grid">
+                      <div><dt>Storage</dt><dd>${escapeHtml(String(reference.storage || "unknown"))}</dd></div>
+                      <div><dt>Reference</dt><dd>${escapeHtml(String(reference.reference || "unknown"))}</dd></div>
+                      <div><dt>Startup</dt><dd>${escapeHtml(String(reference.startup_identifier || "unknown"))}</dd></div>
+                    </dl>
+                  </article>
+                `
+              )
+              .join("")
+          : `<p class="muted-line">No persistence references were included in this run record.</p>`
+      }
+    </div>
+  `;
+}
+
+function renderAuditableErrors(items) {
+  const errors = records(items);
+  return `
+    <div class="audit-section">
+      <h4>Auditable errors</h4>
+      ${
+        errors.length
+          ? errors
+              .map(
+                (error) => `
+                  <article class="audit-item error-item">
+                    <strong>${escapeHtml(String(error.step || "unknown_step"))}</strong>
+                    <dl class="audit-grid">
+                      <div><dt>Type</dt><dd>${escapeHtml(String(error.error_type || error.type || "unknown"))}</dd></div>
+                      <div><dt>Message</dt><dd>${escapeHtml(String(error.message || "unknown"))}</dd></div>
+                      <div><dt>Reason</dt><dd>${escapeHtml(String(error.audit_reason || error.reason || "unknown"))}</dd></div>
+                    </dl>
+                  </article>
+                `
+              )
+              .join("")
+          : `<p class="muted-line">No auditable errors were recorded.</p>`
+      }
     </div>
   `;
 }
@@ -394,6 +572,8 @@ function renderEvidence(state) {
               .join("")}</ul>`
           : renderEmptyState("No artifact references in this run.", "The API record did not include artifact locations.")
       }
+      ${renderPersistenceReferences(persistence)}
+      ${renderAuditableErrors(run.errors)}
     `
   );
 }
@@ -590,7 +770,7 @@ function sectionTitle(activeSection) {
 
 function statusClass(status) {
   const normalized = String(status || "").toLowerCase();
-  if (normalized.includes("fail") || normalized.includes("blocked")) {
+  if (normalized.includes("fail") || normalized.includes("blocked") || normalized.includes("not_found")) {
     return "status-failed";
   }
   if (normalized.includes("complete") || normalized.includes("generated") || normalized.includes("ready")) {
@@ -615,6 +795,15 @@ function objectEntries(value) {
     return [];
   }
   return Object.entries(value);
+}
+
+function records(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((item) => item && typeof item === "object" && !Array.isArray(item))
+    .map((item) => /** @type {Record<string, unknown>} */ (item));
 }
 
 function escapeHtml(value) {

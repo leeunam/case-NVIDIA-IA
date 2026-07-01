@@ -369,6 +369,7 @@ def _final_payload(
         "next_action": str(state.get("next_action", "review_workflow_output")),
         "briefing_reference": _briefing_reference(state, startup_identifier=startup_identifier, json_store=json_store),
         "human_review_reasons": _human_review_reasons(state),
+        "branch_decisions": _plain_data(state.get("branch_decisions", ())),
         "artifact_locations": _artifact_locations(json_store),
         "persistence_references": _plain_data(state.get("persistence_references", ())),
         "errors": _plain_data(state.get("errors", ())),

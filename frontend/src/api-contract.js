@@ -40,6 +40,7 @@ export const SMOKE_MATRIX_SCHEMA_VERSION = "frontend_api_production_smoke_matrix
  * @property {string} next_action
  * @property {unknown} briefing_reference
  * @property {unknown[]} human_review_reasons
+ * @property {unknown[]} branch_decisions
  * @property {{artifact_locations?: Record<string, unknown>, persistence_references?: unknown[]}} artifact_references
  * @property {unknown[]} errors
  * @property {Record<string, unknown>} options
@@ -141,6 +142,7 @@ export function assertRunRecord(payload) {
   requireString(record, "next_action", "run_record");
   requireObject(record, "artifact_references", "run_record");
   requireArray(record, "human_review_reasons", "run_record");
+  requireArray(record, "branch_decisions", "run_record");
   requireArray(record, "errors", "run_record");
   requireObject(record, "final_payload", "run_record");
   return /** @type {FrontendRunRecord} */ (record);
