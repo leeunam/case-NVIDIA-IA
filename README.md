@@ -295,6 +295,53 @@ Defaults seguros:
 
 O payload final representa erros como dados estruturados. Quando uma etapa falha depois de criar o run, os artefatos parciais já gravados continuam no diretório de execução ou no Postgres configurado para auditoria e reprocessamento.
 
+## Frontend API Opcional
+
+A API de frontend é um backend-for-frontend fino sobre o mesmo contrato usado por `run-intelligence`. Ela não contém regras de domínio novas: parsing, coleta, assessment, retrieval, recomendação, briefing, human review e persistência continuam nos módulos existentes. A API apenas recebe JSON, chama `run_operational_intelligence` e devolve payloads versionados para a futura UI.
+
+FastAPI e Uvicorn ficam fora da instalação padrão. Para habilitar a API:
+
+```bash
+python -m pip install -e ".[api]"
+```
+
+Execute o servidor local:
+
+```bash
+nvidia-startup-intel-api --host 127.0.0.1 --port 8000
+```
+
+Também é possível usar o factory ASGI diretamente:
+
+```bash
+uvicorn "nvidia_startup_intel.frontend_api:create_app" --factory --host 127.0.0.1 --port 8000
+```
+
+Endpoints expostos:
+
+- `POST /api/runs`: inicia uma execução operacional determinística local por `startup_url` ou `query` limitada. Aceita opções equivalentes ao `run-intelligence` quando aplicáveis, como `startup_name`, `limit`, `max_pages`, `max_depth`, `output_dir`, `persistence_mode`, `nvidia_corpus_path`, `render_js`, `robots_policy`, `retrieval_mode`, `orchestration`, `enable_search_provider`, `enable_reranking`, `reranker_model` e `llm_narrative`.
+- `GET /api/runs/{run_id}`: retorna o status do run, payload final, referências de artefatos, erros, `next_action`, referência de briefing e motivos de revisão humana.
+- `GET /api/production-smoke-matrix`: retorna uma visão read-only da matriz opt-in de smokes de produção para a UI exibir prontidão de integrações. Use `?only=postgres_persistence,pgvector_retrieval` para limitar integrações.
+- `GET /health`: healthcheck simples do transporte.
+
+Exemplo seguro por URL, sem browser real, Postgres real, rede externa, LLM real ou embedding real:
+
+```bash
+curl -s http://127.0.0.1:8000/api/runs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "startup_url": "https://startup.ai/",
+    "startup_name": "Startup AI",
+    "max_pages": 1,
+    "max_depth": 0,
+    "output_dir": "runs",
+    "persistence_mode": "json",
+    "nvidia_corpus_path": "tests/fixtures/nvidia_knowledge_official_fixture.json"
+  }'
+```
+
+O response usa `frontend_api_run.v1` e inclui `status`, `workflow_outcome`, `run_id`, `startup_identifier`, `next_action`, `briefing_reference`, `human_review_reasons`, `artifact_references`, `errors`, `options` e o `final_payload` operacional original. Erros auditáveis do workflow são retornados como dados estruturados, não como objetos de framework ou SDK de provider.
+
 Para validar o caminho operacional completo de persistência Postgres com fixture local, rode o smoke opt-in. Ele aplica o schema via repositório, persiste coleta, perfil, evidências, qualidade, AI-Native Assessment, retrievals NVIDIA, Recommendation Set, briefing e métricas downstream, e valida que os artifacts podem ser recarregados para reprocessamento quando o `corpus_version` bate.
 
 ```bash
