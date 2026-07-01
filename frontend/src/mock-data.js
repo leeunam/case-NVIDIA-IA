@@ -172,7 +172,9 @@ export function buildMockRunRecord(request, metadata) {
         }
       ],
       blocked_recommendations: []
-    }
+    },
+    executive_briefing: mockExecutiveBriefing(metadata.runId, startupIdentifier),
+    briefing_narrative: mockBriefingNarrative(metadata.runId, startupIdentifier)
   };
   return assertRunRecord({
     schema_version: RUN_RECORD_SCHEMA_VERSION,
@@ -498,6 +500,131 @@ function step(integrationId, title, bottleneck) {
     expected_artifacts: [],
     cleanup: [],
     payload: {}
+  };
+}
+
+function mockExecutiveBriefing(runId, startupIdentifier) {
+  const evidence = [mockEvidence("https://neuralmind.ai/product")];
+  const citation = [mockCitation()];
+  return {
+    schema_version: "executive_briefing.v1",
+    run_id: runId,
+    startup_identifier: startupIdentifier,
+    status: "ready_for_use",
+    executive_summary: `${startupIdentifier} is classified as ai_native and has a supported NVIDIA recommendation for model serving.`,
+    diagnosis: `AI-native assessment classified ${startupIdentifier} as ai_native with confidence 0.84.`,
+    opportunity: "high",
+    risks: ["external_api_only: mock evidence includes proprietary data and production inference signals."],
+    recommendations: ["Recommend NVIDIA NIM Microservices for model_serving."],
+    pending_questions: [
+      {
+        field_name: "funding",
+        question: "What is the startup's current funding stage or financing context?",
+        priority: "complementary",
+        reason: "missing_startup_profile_field"
+      }
+    ],
+    claims: [
+      {
+        text: `company_name: ${startupIdentifier}`,
+        claim_type: "observed",
+        section: "profile",
+        confidence: 1,
+        evidence_references: evidence,
+        citation_references: []
+      },
+      {
+        text: `AI-native assessment classified ${startupIdentifier} as ai_native with confidence 0.84.`,
+        claim_type: "inferred",
+        section: "diagnosis",
+        confidence: 0.84,
+        evidence_references: evidence,
+        citation_references: []
+      },
+      {
+        text: "Recommend NVIDIA NIM Microservices for model_serving.",
+        claim_type: "recommended",
+        section: "recommendations",
+        confidence: 0.8,
+        evidence_references: evidence,
+        citation_references: citation,
+        reason: "supported_technical_recommendation"
+      },
+      {
+        text: "funding is unknown from collected public evidence.",
+        claim_type: "unknown",
+        section: "unknowns",
+        confidence: 0,
+        evidence_references: [],
+        citation_references: [],
+        reason: "missing_startup_profile_field"
+      }
+    ],
+    evidence_references: evidence,
+    citation_references: citation,
+    next_action: "prepare_technical_outreach",
+    audit_reasons: ["collection_quality_ready"]
+  };
+}
+
+function mockBriefingNarrative(runId, startupIdentifier) {
+  return {
+    schema_version: "briefing_narrative.v1",
+    run_id: runId,
+    startup_identifier: startupIdentifier,
+    source_briefing_schema_version: "executive_briefing.v1",
+    source_briefing_status: "ready_for_use",
+    technical_gap_narrative:
+      "Use the supported model_serving gap and cited NVIDIA NIM Microservices reference as the technical anchor.",
+    commercial_approach_narrative:
+      "Prepare technical outreach while keeping funding as an explicit pending question.",
+    narrative_text:
+      "technical_gap_narrative: Use model_serving. commercial_approach_narrative: Prepare technical outreach.",
+    claims: mockExecutiveBriefing(runId, startupIdentifier).claims,
+    unknowns: ["funding is unknown from collected public evidence."],
+    risks: ["external_api_only: mock evidence includes proprietary data and production inference signals."],
+    review_reasons: [],
+    pending_questions: mockExecutiveBriefing(runId, startupIdentifier).pending_questions,
+    evidence_references: mockExecutiveBriefing(runId, startupIdentifier).evidence_references,
+    citation_references: mockExecutiveBriefing(runId, startupIdentifier).citation_references,
+    next_action: "prepare_technical_outreach",
+    llm_request: {
+      purpose: "briefing_narrative",
+      structured_output_schema: "briefing_narrative.v1",
+      metadata: {
+        run_id: runId,
+        source_briefing_schema_version: "executive_briefing.v1"
+      }
+    },
+    llm_response: {
+      provider: "local_fake",
+      model: "deterministic-briefing-fixture",
+      model_version: "mock",
+      finish_reason: "stop",
+      usage: {},
+      metadata: {
+        adapter: "fixture",
+        configured_api_key_env_var: ""
+      }
+    },
+    audit_reasons: ["llm_narrative_generated_from_validated_briefing", "llm_narrative_accepted"]
+  };
+}
+
+function mockEvidence(url) {
+  return {
+    url,
+    source_type: "public_page",
+    snippet: "Mock public evidence mentions model serving, latency, and proprietary AI signals."
+  };
+}
+
+function mockCitation() {
+  return {
+    document_id: "nvidia-nim-developers",
+    chunk_id: "nvidia-nim-developers:0",
+    document_title: "NVIDIA NIM for Developers",
+    source_url: "https://developer.nvidia.com/nim"
   };
 }
 
