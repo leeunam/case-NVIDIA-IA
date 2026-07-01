@@ -94,6 +94,124 @@ test("renders run-driven status, evidence, assessment, NVIDIA match, and briefin
   assert.match(briefingHtml, /executive/);
 });
 
+test("renders ai-native assessment reasoning with evidence links", () => {
+  const currentRun = withAssessmentPayload(buildMockRunRecord(defaultRequest(), defaultMetadata()), aiNativeAssessment(), {
+    gap_space_assessment: gapSpaceAssessment()
+  });
+
+  const html = renderApp(createInitialState({ activeSection: "assessment", currentRun }));
+
+  assert.match(html, /ai_native/);
+  assert.match(html, /84%/);
+  assert.match(html, /urgent/);
+  assert.match(html, /ready_for_recommendation/);
+  assert.match(html, /Criteria results/);
+  assert.match(html, /ai_architecture_depth/);
+  assert.match(html, /Passed/);
+  assert.match(html, /Positive signals/);
+  assert.match(html, /Technical gaps/);
+  assert.match(html, /model_serving/);
+  assert.match(html, /Commercial opportunities/);
+  assert.match(html, /inception_program_fit/);
+  assert.match(html, /data-section="evidence"/);
+  assert.match(html, /source URL/);
+});
+
+test("renders ai-enabled assessment without overstating readiness", () => {
+  const currentRun = withAssessmentPayload(buildMockRunRecord(defaultRequest(), defaultMetadata()), aiEnabledAssessment());
+
+  const html = renderApp(createInitialState({ activeSection: "assessment", currentRun }));
+
+  assert.match(html, /ai_enabled/);
+  assert.match(html, /64%/);
+  assert.match(html, /not_ready_for_recommendation/);
+  assert.match(html, /ai_architecture_depth/);
+  assert.match(html, /Failed/);
+  assert.match(html, /classification_confidence_below_threshold/);
+  assert.match(html, /Insufficient evidence fields/);
+});
+
+test("renders insufficient-evidence assessment review reasons and validation questions", () => {
+  const currentRun = withAssessmentPayload(
+    buildMockRunRecord(defaultRequest(), defaultMetadata()),
+    insufficientEvidenceAssessment(),
+    {
+      human_review_briefing: humanReviewBriefing({
+        reviewReasons: ["collection_quality_not_ready", "unknown_assessment_criteria"],
+        pendingQuestions: [
+          {
+            field_name: "collection_quality",
+            question: "Which public sources should be collected before recommendation can be trusted?",
+            priority: "critical",
+            reason: "collection_quality_requires_validation"
+          }
+        ]
+      })
+    }
+  );
+
+  const html = renderApp(createInitialState({ activeSection: "assessment", currentRun }));
+
+  assert.match(html, /insufficient_evidence/);
+  assert.match(html, /unknown_assessment_criteria/);
+  assert.match(html, /collection_quality_not_ready/);
+  assert.match(html, /Pending validation questions/);
+  assert.match(html, /Which public sources should be collected/);
+  assert.match(html, /collection_quality_requires_validation/);
+});
+
+test("renders high wrapper risk as a validation signal", () => {
+  const currentRun = withAssessmentPayload(
+    buildMockRunRecord(defaultRequest(), defaultMetadata()),
+    highWrapperRiskAssessment(),
+    {
+      human_review_briefing: humanReviewBriefing({
+        reviewReasons: ["high_wrapper_dependency_risk"],
+        pendingQuestions: [
+          {
+            field_name: "external_api_only",
+            question: "Validate dependency on external APIs, proprietary data, and production inference before prioritizing NVIDIA outreach.",
+            priority: "critical",
+            reason: "wrapper_risk_requires_validation"
+          }
+        ]
+      })
+    }
+  );
+
+  const html = renderApp(createInitialState({ activeSection: "assessment", currentRun }));
+
+  assert.match(html, /external_api_only/);
+  assert.match(html, /high/);
+  assert.match(html, /Wrapper\/API-dependency signals/);
+  assert.match(html, /Review signal/);
+  assert.match(html, /validate before treating this as dependency risk/);
+  assert.match(html, /wrapper_risk_requires_validation/);
+});
+
+test("renders assessment conflict reasons with evidence context", () => {
+  const currentRun = withAssessmentPayload(buildMockConflictingEvidenceRunRecord(), conflictAssessment(), {
+    human_review_briefing: humanReviewBriefing({
+      reviewReasons: ["conflicting_startup_evidence"],
+      pendingQuestions: [
+        {
+          field_name: "technologies_used",
+          question: "Resolve conflicting public evidence for technologies_used.",
+          priority: "critical",
+          reason: "conflicting_evidence_requires_validation"
+        }
+      ]
+    })
+  });
+
+  const html = renderApp(createInitialState({ activeSection: "assessment", currentRun }));
+
+  assert.match(html, /Conflict/);
+  assert.match(html, /conflicting_startup_evidence/);
+  assert.match(html, /Resolve conflicting public evidence for technologies_used/);
+  assert.match(html, /data-section="evidence"/);
+});
+
 test("renders human review run payload with branch decision and review action", () => {
   const currentRun = buildMockHumanReviewRunRecord();
   const html = renderApp(createInitialState({ currentRun }));
@@ -174,3 +292,293 @@ test("renders production smoke matrix from API contract", () => {
   assert.match(html, /skipped/);
   assert.match(html, /postgres/);
 });
+
+function defaultRequest() {
+  return {
+    startup_url: "https://neuralmind.ai/",
+    startup_name: "NeuralMind"
+  };
+}
+
+function defaultMetadata() {
+  return {
+    runId: "mock-run-assessment",
+    createdAt: "2026-06-30T15:00:00.000Z"
+  };
+}
+
+function withAssessmentPayload(record, assessment, extraPayload = {}) {
+  const reviewReasons = reviewReasonsFromPayload(assessment, extraPayload);
+  return {
+    ...record,
+    workflow_outcome: reviewReasons.length ? "human_review_requested" : record.workflow_outcome,
+    next_action: reviewReasons.length ? "validate_assessment_with_human" : record.next_action,
+    human_review_reasons: reviewReasons,
+    final_payload: {
+      ...record.final_payload,
+      workflow_outcome: reviewReasons.length ? "human_review_requested" : record.final_payload.workflow_outcome,
+      next_action: reviewReasons.length ? "validate_assessment_with_human" : record.final_payload.next_action,
+      human_review_reasons: reviewReasons,
+      ai_native_assessment: assessment,
+      ...extraPayload
+    }
+  };
+}
+
+function reviewReasonsFromPayload(assessment, extraPayload) {
+  return Array.from(
+    new Set([
+      ...arrayValues(assessment?.diagnostic_quality?.reasons),
+      ...arrayValues(extraPayload?.human_review_briefing?.review_reasons)
+    ])
+  ).filter((reason) => reason && reason !== "ready_for_recommendation");
+}
+
+function aiNativeAssessment() {
+  const evidences = [assessmentEvidence("https://neuralmind.ai/"), assessmentEvidence("https://neuralmind.ai/product")];
+  return {
+    schema_version: "ai_native_assessment.v1",
+    run_id: "mock-run-assessment",
+    company_name: "NeuralMind",
+    classification: "ai_native",
+    confidence: 0.84,
+    nvidia_opportunity_urgency: "urgent",
+    criteria_results: [
+      criterion("ai_product_centrality", "positive", evidences),
+      criterion("ai_architecture_depth", "positive", evidences),
+      criterion("proprietary_data_loop", "positive", evidences),
+      criterion("production_readiness", "positive", evidences),
+      criterion("scale_governance_need", "negative", [])
+    ],
+    positive_signals: [
+      {
+        signal_type: "ai_architecture_depth",
+        description: "Evidence mentions proprietary models, MLOps, and inference architecture.",
+        confidence: 0.8,
+        evidences
+      }
+    ],
+    technical_gaps: [
+      {
+        gap_type: "model_serving",
+        description: "Potential need around model serving, latency, cost, or production inference.",
+        severity: "high",
+        confidence: 0.72,
+        evidences,
+        is_hypothesis: false
+      }
+    ],
+    wrapper_dependency_risks: [
+      {
+        risk_type: "external_api_only",
+        severity: "low",
+        confidence: 0.62,
+        rationale: "No evidence that external APIs are the only AI dependency.",
+        evidences: [],
+        is_hypothesis: true
+      }
+    ],
+    insufficient_evidence_fields: [],
+    evidences,
+    diagnostic_quality: {
+      ready_for_recommendation: true,
+      requires_human_review: false,
+      reasons: ["ready_for_recommendation"]
+    },
+    ready_for_recommendation: true
+  };
+}
+
+function aiEnabledAssessment() {
+  const evidences = [assessmentEvidence("https://enabled.ai/")];
+  return {
+    ...aiNativeAssessment(),
+    classification: "ai_enabled",
+    confidence: 0.64,
+    nvidia_opportunity_urgency: "medium",
+    criteria_results: [
+      criterion("ai_product_centrality", "positive", evidences),
+      criterion("ai_architecture_depth", "negative", []),
+      criterion("proprietary_data_loop", "negative", []),
+      criterion("production_readiness", "unknown", [])
+    ],
+    positive_signals: [
+      {
+        signal_type: "ai_product_centrality",
+        description: "AI appears central to product positioning.",
+        confidence: 0.8,
+        evidences
+      }
+    ],
+    technical_gaps: [
+      {
+        gap_type: "llm_customization",
+        description: "Potential need around LLM customization, tuning, evaluation, or domain adaptation.",
+        severity: "medium",
+        confidence: 0.62,
+        evidences,
+        is_hypothesis: true
+      }
+    ],
+    insufficient_evidence_fields: ["technologies_used"],
+    diagnostic_quality: {
+      ready_for_recommendation: false,
+      requires_human_review: false,
+      reasons: ["classification_confidence_below_threshold", "unknown_assessment_criteria"]
+    },
+    ready_for_recommendation: false
+  };
+}
+
+function insufficientEvidenceAssessment() {
+  return {
+    ...aiNativeAssessment(),
+    classification: "insufficient_evidence",
+    confidence: 0,
+    nvidia_opportunity_urgency: "human_review",
+    criteria_results: [
+      {
+        criterion: "evidence_quality",
+        status: "unknown",
+        confidence: 0,
+        rationale: "Collection quality is not ready for AI-native evaluation.",
+        evidences: []
+      }
+    ],
+    positive_signals: [],
+    technical_gaps: [
+      {
+        gap_type: "unknown",
+        description: "No specific technical gap can be supported by current evidence.",
+        severity: "unknown",
+        confidence: 0,
+        evidences: [],
+        is_hypothesis: true
+      }
+    ],
+    wrapper_dependency_risks: [
+      {
+        risk_type: "unknown",
+        severity: "unknown",
+        confidence: 0,
+        rationale: "No AI dependency risk can be assessed from current evidence.",
+        evidences: [],
+        is_hypothesis: true
+      }
+    ],
+    insufficient_evidence_fields: ["collection_quality", "ai_signals"],
+    evidences: [],
+    diagnostic_quality: {
+      ready_for_recommendation: false,
+      requires_human_review: true,
+      reasons: ["collection_quality_not_ready", "unknown_assessment_criteria"]
+    },
+    ready_for_recommendation: false
+  };
+}
+
+function highWrapperRiskAssessment() {
+  const evidences = [
+    assessmentEvidence("https://api-wrapper.ai/", "Produto usa OpenAI API e ChatGPT sem dados proprietarios observados.")
+  ];
+  return {
+    ...aiEnabledAssessment(),
+    classification: "ai_enabled",
+    confidence: 0.58,
+    nvidia_opportunity_urgency: "human_review",
+    wrapper_dependency_risks: [
+      {
+        risk_type: "external_api_only",
+        severity: "high",
+        confidence: 0.82,
+        rationale: "Evidence points to external LLM/API dependency without deeper stack signals.",
+        evidences,
+        is_hypothesis: false
+      }
+    ],
+    diagnostic_quality: {
+      ready_for_recommendation: false,
+      requires_human_review: true,
+      reasons: ["classification_confidence_below_threshold", "high_wrapper_dependency_risk"]
+    },
+    ready_for_recommendation: false
+  };
+}
+
+function conflictAssessment() {
+  const evidences = [
+    assessmentEvidence("https://conflict-startup.ai/product", "Tecnologias: MLOps e model serving."),
+    assessmentEvidence("https://directory.example/conflict-startup", "Diretorio indica somente chatbot generico.")
+  ];
+  return {
+    ...aiNativeAssessment(),
+    classification: "ai_enabled",
+    confidence: 0.52,
+    nvidia_opportunity_urgency: "human_review",
+    criteria_results: [
+      criterion("ai_product_centrality", "positive", evidences),
+      criterion("ai_architecture_depth", "conflict", evidences)
+    ],
+    insufficient_evidence_fields: ["conflicting_technologies_used"],
+    diagnostic_quality: {
+      ready_for_recommendation: false,
+      requires_human_review: true,
+      reasons: ["conflicting_startup_evidence", "classification_confidence_below_threshold"]
+    },
+    ready_for_recommendation: false
+  };
+}
+
+function gapSpaceAssessment() {
+  const evidences = [assessmentEvidence("https://neuralmind.ai/product")];
+  return {
+    schema_version: "gap_space_assessment.v1",
+    commercial_opportunities: [
+      {
+        opportunity_type: "inception_program_fit",
+        description: "Potential startup program support, technical enablement, or go-to-market opportunity.",
+        confidence: 0.78,
+        evidences,
+        is_hypothesis: false
+      }
+    ],
+    quality: {
+      ready_for_recommendation: true,
+      requires_human_review: false,
+      reasons: ["gap_space_ready_for_recommendation"],
+      human_review_reasons: []
+    }
+  };
+}
+
+function humanReviewBriefing({ reviewReasons, pendingQuestions }) {
+  return {
+    schema_version: "human_review_briefing.v1",
+    review_reasons: reviewReasons,
+    pending_questions: pendingQuestions
+  };
+}
+
+function criterion(name, status, evidences) {
+  return {
+    criterion: name,
+    status,
+    confidence: status === "positive" ? 0.8 : status === "conflict" ? 0.4 : 0.55,
+    rationale: `${name} ${status}`,
+    evidences
+  };
+}
+
+function assessmentEvidence(url, snippet = "Tecnologias: MLOps, dados proprietarios, feedback loop e model serving.") {
+  return {
+    url,
+    title: "Assessment source",
+    snippet,
+    source_type: "collected_page",
+    collected_at: "2026-06-30T15:00:00.000Z"
+  };
+}
+
+function arrayValues(value) {
+  return Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : [];
+}

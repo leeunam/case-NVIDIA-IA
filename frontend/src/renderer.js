@@ -1023,25 +1023,525 @@ function renderSourceUrl(url) {
 }
 
 function renderAssessment(state) {
-  const assessment = state.currentRun?.final_payload?.ai_native_assessment;
+  const run = state.currentRun;
+  const payload = objectRecord(run?.final_payload) || {};
+  const assessment = objectRecord(payload.ai_native_assessment);
   if (!assessment || typeof assessment !== "object") {
     return renderSectionPanel("Assessment", renderEmptyState("No assessment payload yet.", "The API record has no AI-Native Assessment details."));
   }
-  const record = /** @type {Record<string, unknown>} */ (assessment);
-  const gaps = Array.isArray(record.technical_gaps) ? record.technical_gaps : [];
-  const risks = Array.isArray(record.wrapper_dependency_risks) ? record.wrapper_dependency_risks : [];
+  const gapSpace = objectRecord(payload.gap_space_assessment);
+  const humanReview = firstRecord(
+    payload.human_review_briefing,
+    payload.briefing_narrative,
+    payload.executive_briefing
+  );
+  const criteria = records(assessment.criteria_results);
+  const signals = records(assessment.positive_signals);
+  const gaps = records(assessment.technical_gaps);
+  const risks = records(assessment.wrapper_dependency_risks);
+  const commercialOpportunities = commercialOpportunitiesFromPayload(payload, gapSpace, humanReview);
+  const reviewReasons = assessmentReviewReasons(run, assessment, gapSpace, humanReview, payload);
+  const pendingQuestions = assessmentPendingQuestions(assessment, payload, humanReview);
   return renderSectionPanel(
     "Assessment",
     `
-      <div class="metric-row">
-        ${metric("Classification", String(record.classification || "unknown"))}
-        ${metric("Opportunity signal", String(record.opportunity_signal || "unknown"))}
-        ${metric("Wrapper risks", String(risks.length))}
-      </div>
-      ${renderObjectList("Technical gaps", gaps)}
-      ${renderObjectList("Wrapper dependency risks", risks)}
+      ${renderAssessmentOverview(assessment, criteria, gaps, risks)}
+      ${renderAssessmentEvidenceContext(assessment, reviewReasons)}
+      ${renderAssessmentCriteria(criteria)}
+      ${renderPositiveSignals(signals)}
+      ${renderAssessmentGaps(gaps)}
+      ${renderWrapperRisks(risks)}
+      ${renderCommercialOpportunities(commercialOpportunities)}
+      ${renderAssessmentHumanReview(assessment, reviewReasons, pendingQuestions)}
     `
   );
+}
+
+function renderAssessmentOverview(assessment, criteria, gaps, risks) {
+  const readiness = assessmentReadiness(assessment);
+  const opportunitySignal = String(assessment.nvidia_opportunity_urgency || assessment.opportunity_signal || "unknown");
+  return `
+    <div class="metric-row assessment-metrics">
+      ${metric("Classification", String(assessment.classification || "unknown"))}
+      ${metric("Confidence", formatConfidence(assessment.confidence))}
+      ${metric("Opportunity signal", opportunitySignal)}
+    </div>
+    <div class="metric-row assessment-metrics">
+      ${metric("Readiness", readiness)}
+      ${metric("Criteria", String(criteria.length))}
+      ${metric("Wrapper/API signals", String(risks.length))}
+    </div>
+    <div class="metric-row assessment-metrics">
+      ${metric("Technical gaps", String(gaps.length))}
+      ${metric("Evidence references", String(assessmentEvidenceCount(assessment)))}
+      ${metric("Schema", String(assessment.schema_version || "unknown"))}
+    </div>
+  `;
+}
+
+function renderAssessmentEvidenceContext(assessment, reviewReasons) {
+  const diagnostic = objectRecord(assessment.diagnostic_quality) || {};
+  const insufficientFields = arrayValues(assessment.insufficient_evidence_fields);
+  return `
+    <section class="assessment-section" aria-label="Assessment evidence context">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Evidence context</p>
+          <h4>Diagnostic inputs and support</h4>
+        </div>
+        ${renderEvidenceContextButton("assessment-overview")}
+      </div>
+      <dl class="evidence-definition-list">
+        <div><dt>Company</dt><dd>${escapeHtml(String(assessment.company_name || "unknown"))}</dd></div>
+        <div><dt>Diagnostic quality</dt><dd>${escapeHtml(assessmentReadiness(assessment))}</dd></div>
+        <div><dt>Human review required</dt><dd>${escapeHtml(String(Boolean(diagnostic.requires_human_review)))}</dd></div>
+        <div><dt>Diagnostic reasons</dt><dd>${renderInlineList(reviewReasons.length ? reviewReasons : diagnosticReasons(assessment))}</dd></div>
+        <div><dt>Insufficient evidence fields</dt><dd>${renderInlineList(insufficientFields)}</dd></div>
+      </dl>
+    </section>
+  `;
+}
+
+function renderAssessmentCriteria(criteria) {
+  return `
+    <section class="assessment-section" aria-label="Criteria results">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Criteria results</p>
+          <h4>Passed, failed, unknown, and conflict conditions</h4>
+        </div>
+      </div>
+      ${
+        criteria.length
+          ? `<div class="assessment-card-list">${criteria.map((criterion) => renderCriterionResult(criterion)).join("")}</div>`
+          : renderEmptyState("No criteria results.", "The assessment payload did not include criterion-level diagnostics.")
+      }
+    </section>
+  `;
+}
+
+function renderCriterionResult(criterion) {
+  const status = String(criterion.status || "unknown");
+  const evidences = evidenceRecordsFrom(criterion);
+  return `
+    <article class="assessment-card ${status === "conflict" ? "has-conflict" : ""}">
+      <div class="field-title-row">
+        <h4>${escapeHtml(String(criterion.criterion || "unknown_criterion"))}</h4>
+        <span class="status-badge ${assessmentStatusClass(status)}">${escapeHtml(assessmentStatusLabel(status))}</span>
+      </div>
+      <dl class="evidence-definition-list compact">
+        <div><dt>Status</dt><dd>${escapeHtml(status)}</dd></div>
+        <div><dt>Confidence</dt><dd>${escapeHtml(formatConfidence(criterion.confidence))}</dd></div>
+        <div><dt>Rationale</dt><dd>${escapeHtml(String(criterion.rationale || "unknown"))}</dd></div>
+      </dl>
+      ${renderAssessmentEvidenceBlock(evidences, "Criterion evidence", String(criterion.criterion || "criterion"))}
+    </article>
+  `;
+}
+
+function renderPositiveSignals(signals) {
+  return `
+    <section class="assessment-section" aria-label="Positive signals">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Positive signals</p>
+          <h4>Observed or inferred AI-native indicators</h4>
+        </div>
+      </div>
+      ${
+        signals.length
+          ? `<div class="assessment-card-list">${signals.map((signal) => renderPositiveSignal(signal)).join("")}</div>`
+          : renderEmptyState("No positive AI-native signals.", "The assessment payload did not include supported positive signals.")
+      }
+    </section>
+  `;
+}
+
+function renderPositiveSignal(signal) {
+  const evidences = evidenceRecordsFrom(signal);
+  return `
+    <article class="assessment-card">
+      <div class="field-title-row">
+        <h4>${escapeHtml(String(signal.signal_type || "unknown_signal"))}</h4>
+        <span class="status-badge status-completed">Supported signal</span>
+      </div>
+      <dl class="evidence-definition-list compact">
+        <div><dt>Description</dt><dd>${escapeHtml(String(signal.description || "unknown"))}</dd></div>
+        <div><dt>Confidence</dt><dd>${escapeHtml(formatConfidence(signal.confidence))}</dd></div>
+      </dl>
+      ${renderAssessmentEvidenceBlock(evidences, "Signal evidence", String(signal.signal_type || "signal"))}
+    </article>
+  `;
+}
+
+function renderAssessmentGaps(gaps) {
+  return `
+    <section class="assessment-section" aria-label="Technical gaps">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Technical gaps</p>
+          <h4>Gap hypotheses tied to startup-side evidence</h4>
+        </div>
+      </div>
+      ${
+        gaps.length
+          ? `<div class="assessment-card-list">${gaps.map((gap) => renderAssessmentGap(gap)).join("")}</div>`
+          : renderEmptyState("No technical gaps.", "The assessment payload did not include supported or hypothesized gaps.")
+      }
+    </section>
+  `;
+}
+
+function renderAssessmentGap(gap) {
+  const evidences = evidenceRecordsFrom(gap);
+  return `
+    <article class="assessment-card">
+      <div class="field-title-row">
+        <h4>${escapeHtml(String(gap.gap_type || "unknown_gap"))}</h4>
+        <span class="status-badge ${severityClass(gap.severity)}">${escapeHtml(String(gap.severity || "unknown"))}</span>
+      </div>
+      <dl class="evidence-definition-list compact">
+        <div><dt>Type</dt><dd>${escapeHtml(String(gap.gap_type || "unknown"))}</dd></div>
+        <div><dt>Description</dt><dd>${escapeHtml(String(gap.description || gap.rationale || "unknown"))}</dd></div>
+        <div><dt>Severity</dt><dd>${escapeHtml(String(gap.severity || "unknown"))}</dd></div>
+        <div><dt>Confidence</dt><dd>${escapeHtml(formatConfidence(gap.confidence))}</dd></div>
+        <div><dt>Hypothesis</dt><dd>${escapeHtml(String(Boolean(gap.is_hypothesis)))}</dd></div>
+      </dl>
+      ${renderAssessmentEvidenceBlock(evidences, "Gap evidence", String(gap.gap_type || "gap"))}
+    </article>
+  `;
+}
+
+function renderWrapperRisks(risks) {
+  return `
+    <section class="assessment-section" aria-label="Wrapper/API-dependency signals">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Wrapper/API-dependency signals</p>
+          <h4>Dependency risks and validation status</h4>
+        </div>
+      </div>
+      ${
+        risks.length
+          ? `<div class="assessment-card-list">${risks.map((risk) => renderWrapperRisk(risk)).join("")}</div>`
+          : renderEmptyState("No wrapper/API-dependency signals.", "The assessment payload did not include wrapper risk diagnostics.")
+      }
+    </section>
+  `;
+}
+
+function renderWrapperRisk(risk) {
+  const evidences = evidenceRecordsFrom(risk);
+  const shouldValidate = Boolean(risk.is_hypothesis) || !evidences.length || String(risk.severity || "") === "high";
+  return `
+    <article class="assessment-card ${String(risk.severity || "") === "high" ? "has-conflict" : ""}">
+      <div class="field-title-row">
+        <h4>${escapeHtml(String(risk.risk_type || "unknown_risk"))}</h4>
+        <span class="status-badge ${severityClass(risk.severity)}">${escapeHtml(String(risk.severity || "unknown"))}</span>
+      </div>
+      <dl class="evidence-definition-list compact">
+        <div><dt>Signal</dt><dd>${escapeHtml(String(risk.risk_type || "unknown"))}</dd></div>
+        <div><dt>Severity</dt><dd>${escapeHtml(String(risk.severity || "unknown"))}</dd></div>
+        <div><dt>Confidence</dt><dd>${escapeHtml(formatConfidence(risk.confidence))}</dd></div>
+        <div><dt>Rationale</dt><dd>${escapeHtml(String(risk.rationale || "unknown"))}</dd></div>
+        <div><dt>Hypothesis</dt><dd>${escapeHtml(String(Boolean(risk.is_hypothesis)))}</dd></div>
+      </dl>
+      ${
+        shouldValidate
+          ? `<p class="review-signal-line">Review signal: public evidence may be incomplete; validate before treating this as dependency risk.</p>`
+          : ""
+      }
+      ${renderAssessmentEvidenceBlock(evidences, "Risk evidence", String(risk.risk_type || "risk"))}
+    </article>
+  `;
+}
+
+function renderCommercialOpportunities(opportunities) {
+  return `
+    <section class="assessment-section" aria-label="Commercial opportunities">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Commercial opportunities</p>
+          <h4>Program or ecosystem opportunities from downstream gap-space context</h4>
+        </div>
+      </div>
+      ${
+        opportunities.length
+          ? `<div class="assessment-card-list">${opportunities.map((opportunity) => renderCommercialOpportunity(opportunity)).join("")}</div>`
+          : renderEmptyState("No commercial opportunities.", "The payload did not include gap-space or human-review commercial opportunities.")
+      }
+    </section>
+  `;
+}
+
+function renderCommercialOpportunity(opportunity) {
+  const opportunityType = String(
+    opportunity.opportunity_type || opportunity.recommendation_type || opportunity.title || "unknown_opportunity"
+  );
+  const evidences = evidenceRecordsFrom(opportunity, ["evidences", "observed_evidences", "startup_evidences"]);
+  return `
+    <article class="assessment-card">
+      <div class="field-title-row">
+        <h4>${escapeHtml(opportunityType)}</h4>
+        <span class="status-badge ${Boolean(opportunity.is_hypothesis) ? "status-running" : "status-completed"}">${
+          Boolean(opportunity.is_hypothesis) ? "Hypothesis" : "Supported"
+        }</span>
+      </div>
+      <dl class="evidence-definition-list compact">
+        <div><dt>Type</dt><dd>${escapeHtml(opportunityType)}</dd></div>
+        <div><dt>Description</dt><dd>${escapeHtml(
+          String(
+            opportunity.description ||
+              opportunity.opportunity_description ||
+              opportunity.commercial_rationale ||
+              opportunity.rationale ||
+              "unknown"
+          )
+        )}</dd></div>
+        <div><dt>Confidence</dt><dd>${escapeHtml(formatConfidence(opportunity.confidence))}</dd></div>
+        <div><dt>Hypothesis</dt><dd>${escapeHtml(String(Boolean(opportunity.is_hypothesis)))}</dd></div>
+      </dl>
+      ${renderAssessmentEvidenceBlock(evidences, "Opportunity evidence", opportunityType)}
+    </article>
+  `;
+}
+
+function renderAssessmentHumanReview(assessment, reviewReasons, pendingQuestions) {
+  if (assessmentReadiness(assessment) === "ready_for_recommendation" && !reviewReasons.length && !pendingQuestions.length) {
+    return "";
+  }
+  return `
+    <section class="assessment-section" aria-label="Human review reasons">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Human review</p>
+          <h4>Reasons and pending validation questions</h4>
+        </div>
+        <span class="status-badge ${reviewReasons.length ? "status-failed" : "status-running"}">${
+          reviewReasons.length ? "review_required" : "review_signal"
+        }</span>
+      </div>
+      <div class="unknown-field-strip">
+        <h4>Human review reasons</h4>
+        <div class="chip-list">
+          ${
+            reviewReasons.length
+              ? reviewReasons.map((reason) => `<span class="unknown-chip">${escapeHtml(reason)}</span>`).join("")
+              : `<span class="unknown-chip">none</span>`
+          }
+        </div>
+      </div>
+      <div class="pending-question-list">
+        <h4>Pending validation questions</h4>
+        ${
+          pendingQuestions.length
+            ? pendingQuestions.map((question) => renderPendingQuestion(question)).join("")
+            : `<p class="muted-line">No pending validation questions were included.</p>`
+        }
+      </div>
+    </section>
+  `;
+}
+
+function renderPendingQuestion(question) {
+  return `
+    <article class="pending-question-item">
+      <div class="field-title-row">
+        <h4>${escapeHtml(String(question.field_name || "unknown_field"))}</h4>
+        <span class="status-badge ${String(question.priority || "") === "critical" ? "status-failed" : "status-running"}">${
+          escapeHtml(String(question.priority || "unknown"))
+        }</span>
+      </div>
+      <p>${escapeHtml(String(question.question || "unknown"))}</p>
+      <dl class="evidence-definition-list compact">
+        <div><dt>Reason</dt><dd>${escapeHtml(String(question.reason || "unknown"))}</dd></div>
+      </dl>
+    </article>
+  `;
+}
+
+function renderAssessmentEvidenceBlock(evidences, title, context) {
+  return `
+    <div class="assessment-evidence-block">
+      <div class="assessment-evidence-toolbar">
+        <span>${escapeHtml(title)}: ${escapeHtml(String(evidences.length))}</span>
+        ${renderEvidenceContextButton(context)}
+      </div>
+      ${
+        evidences.length
+          ? renderEvidenceSnippetList(evidences, title)
+          : `<p class="insufficient-line">insufficient evidence: no_linked_evidence</p>`
+      }
+    </div>
+  `;
+}
+
+function renderEvidenceContextButton(context) {
+  return `<button type="button" class="context-link" data-section="evidence" data-evidence-context="${escapeAttr(
+    context
+  )}">Evidence tab</button>`;
+}
+
+function firstRecord(...values) {
+  for (const value of values) {
+    const record = objectRecord(value);
+    if (record) {
+      return record;
+    }
+  }
+  return null;
+}
+
+function assessmentReadiness(assessment) {
+  const diagnostic = objectRecord(assessment.diagnostic_quality) || {};
+  if (typeof assessment.ready_for_recommendation === "boolean") {
+    return assessment.ready_for_recommendation ? "ready_for_recommendation" : "not_ready_for_recommendation";
+  }
+  if (typeof diagnostic.ready_for_recommendation === "boolean") {
+    return diagnostic.ready_for_recommendation ? "ready_for_recommendation" : "not_ready_for_recommendation";
+  }
+  return "unknown";
+}
+
+function assessmentEvidenceCount(assessment) {
+  return evidenceRecordsFrom(assessment).length;
+}
+
+function diagnosticReasons(assessment) {
+  const diagnostic = objectRecord(assessment.diagnostic_quality) || {};
+  return arrayValues(diagnostic.reasons).filter((reason) => !isReadyReason(reason));
+}
+
+function assessmentReviewReasons(run, assessment, gapSpace, humanReview, payload) {
+  const diagnostic = objectRecord(assessment.diagnostic_quality) || {};
+  const gapQuality = objectRecord(gapSpace?.quality) || {};
+  const reasons = [
+    ...arrayValues(run?.human_review_reasons),
+    ...arrayValues(payload.human_review_reasons),
+    ...arrayValues(diagnostic.reasons),
+    ...arrayValues(gapQuality.human_review_reasons),
+    ...arrayValues(humanReview?.review_reasons)
+  ];
+  if (gapQuality.ready_for_recommendation === false || gapQuality.requires_human_review === true) {
+    reasons.push(...arrayValues(gapQuality.reasons));
+  }
+  return dedupeStrings(reasons.filter((reason) => !isReadyReason(reason)));
+}
+
+function assessmentPendingQuestions(assessment, payload, humanReview) {
+  return dedupeRecordsByKey(
+    [
+      ...records(assessment.pending_questions),
+      ...records(payload.pending_questions),
+      ...records(humanReview?.pending_questions),
+      ...records(objectRecord(payload.briefing_narrative)?.pending_questions),
+      ...records(objectRecord(payload.executive_briefing)?.pending_questions)
+    ],
+    (question) =>
+      [
+        String(question.field_name || "unknown_field"),
+        String(question.question || "unknown"),
+        String(question.reason || "unknown")
+      ].join("|")
+  );
+}
+
+function commercialOpportunitiesFromPayload(payload, gapSpace, humanReview) {
+  return dedupeRecordsByKey(
+    [
+      ...records(payload.commercial_opportunities),
+      ...records(gapSpace?.commercial_opportunities),
+      ...records(gapSpace?.commercial_mappings),
+      ...records(humanReview?.commercial_opportunities)
+    ],
+    (opportunity) =>
+      String(
+        opportunity.opportunity_type ||
+          opportunity.recommendation_type ||
+          opportunity.opportunity_description ||
+          opportunity.title ||
+          "unknown_opportunity"
+      )
+  );
+}
+
+function evidenceRecordsFrom(record, keys = ["evidences", "evidence_references", "observed_evidences"]) {
+  const evidences = [];
+  for (const key of keys) {
+    evidences.push(...records(objectRecord(record)?.[key]));
+  }
+  return dedupeRecordsByKey(evidences, (evidence) =>
+    [String(evidence.url || "unknown"), String(evidence.snippet || "unknown"), String(evidence.source_type || "unknown")].join("|")
+  );
+}
+
+function dedupeRecordsByKey(items, keyFn) {
+  const seen = new Set();
+  const unique = [];
+  for (const item of items) {
+    const key = keyFn(item);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(item);
+  }
+  return unique;
+}
+
+function dedupeStrings(items) {
+  return Array.from(new Set(items.map((item) => String(item || "").trim()).filter(Boolean)));
+}
+
+function isReadyReason(reason) {
+  return new Set(["ready_for_recommendation", "gap_space_ready_for_recommendation"]).has(String(reason));
+}
+
+function formatConfidence(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "unknown";
+  }
+  return formatPercent(number);
+}
+
+function assessmentStatusLabel(status) {
+  const normalized = String(status || "unknown");
+  const labels = {
+    positive: "Passed",
+    negative: "Failed",
+    unknown: "Unknown",
+    conflict: "Conflict"
+  };
+  return labels[normalized] || normalized;
+}
+
+function assessmentStatusClass(status) {
+  const normalized = String(status || "unknown").toLowerCase();
+  if (normalized === "positive") {
+    return "status-completed";
+  }
+  if (normalized === "negative" || normalized === "conflict") {
+    return "status-failed";
+  }
+  if (normalized === "unknown") {
+    return "status-idle";
+  }
+  return statusClass(normalized);
+}
+
+function severityClass(severity) {
+  const normalized = String(severity || "unknown").toLowerCase();
+  if (normalized === "high") {
+    return "status-failed";
+  }
+  if (normalized === "medium") {
+    return "status-running";
+  }
+  if (normalized === "low") {
+    return "status-completed";
+  }
+  return "status-idle";
 }
 
 function renderNvidiaMatch(state) {

@@ -980,6 +980,92 @@ dd {
   color: var(--ink-muted);
 }
 
+.assessment-section {
+  margin-bottom: 16px;
+}
+
+.assessment-metrics {
+  margin-bottom: 12px;
+}
+
+.assessment-card-list,
+.pending-question-list {
+  display: grid;
+  gap: 12px;
+}
+
+.assessment-card,
+.pending-question-item {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfbfa;
+}
+
+.assessment-card.has-conflict {
+  border-color: rgb(180 35 24 / 28%);
+  background: rgb(180 35 24 / 6%);
+}
+
+.assessment-evidence-block {
+  margin-top: 12px;
+}
+
+.assessment-evidence-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  margin-bottom: 8px;
+  color: var(--ink-muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.context-link {
+  min-height: 30px;
+  padding: 4px 9px;
+  border: 1px solid rgb(67 107 0 / 28%);
+  border-radius: 8px;
+  background: rgb(118 185 0 / 12%);
+  color: var(--green-dark);
+  font-size: 0.76rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.context-link:hover {
+  border-color: var(--green);
+  background: rgb(118 185 0 / 18%);
+}
+
+.review-signal-line {
+  margin: 10px 0 0;
+  color: #7a4d0b;
+  font-weight: 800;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.pending-question-list {
+  margin-top: 14px;
+}
+
+.pending-question-list h4 {
+  margin-bottom: 8px;
+}
+
+.pending-question-item p {
+  margin: 8px 0 0;
+  color: var(--ink);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .audit-section {
   margin-top: 16px;
 }

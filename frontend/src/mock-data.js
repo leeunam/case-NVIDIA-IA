@@ -94,6 +94,22 @@ export function buildMockRunRecord(request, metadata) {
       reference: `runs/${metadata.runId}/processed/downstream/${safePathSegment(startupIdentifier)}/briefing.json`
     }
   ];
+  const assessmentEvidences = [
+    evidenceRecord({
+      url: input.startup_url || "https://neuralmind.ai/",
+      title: startupIdentifier,
+      snippet:
+        "Sinais de IA: modelos proprietarios, fine-tuning, inferencia em producao, latencia e dados proprietarios.",
+      collectedAt: metadata.createdAt
+    }),
+    evidenceRecord({
+      url: `${input.startup_url || "https://neuralmind.ai/"}product`,
+      title: `${startupIdentifier} Product`,
+      snippet:
+        "Tecnologias: MLOps, dados proprietarios, feedback loop, model serving e suporte tecnico para escala.",
+      collectedAt: metadata.createdAt
+    })
+  ];
   const finalPayload = {
     schema_version: "operational_entrypoint_result.v1",
     run_id: metadata.runId,
@@ -135,25 +151,16 @@ export function buildMockRunRecord(request, metadata) {
       startupIdentifier,
       createdAt: metadata.createdAt
     }),
-    ai_native_assessment: {
-      schema_version: "ai_native_assessment.v1",
-      classification: "ai_native",
-      opportunity_signal: "high",
-      technical_gaps: [
-        {
-          gap_type: "model_serving",
-          severity: "medium",
-          rationale: "Public evidence suggests production inference and latency constraints."
-        }
-      ],
-      wrapper_dependency_risks: [
-        {
-          risk_type: "external_api_only",
-          severity: "low",
-          rationale: "Mock evidence includes proprietary data and production inference signals."
-        }
-      ]
-    },
+    ai_native_assessment: buildMockAiNativeAssessment({
+      runId: metadata.runId,
+      startupIdentifier,
+      evidences: assessmentEvidences
+    }),
+    gap_space_assessment: buildMockGapSpaceAssessment({
+      runId: metadata.runId,
+      startupIdentifier,
+      evidences: assessmentEvidences
+    }),
     nvidia_match: {
       schema_version: "nvidia_recommendation.v1",
       priority: "high",
@@ -205,13 +212,47 @@ export function buildMockConflictingEvidenceRunRecord(metadata = {}) {
     createdAt: record.created_at,
     conflict: true
   });
+  const conflictEvidences = [
+    evidenceRecord({
+      url: "https://conflict-startup.ai/product",
+      title: "Conflict Startup Product",
+      snippet: "Tecnologias: MLOps e model serving.",
+      collectedAt: record.created_at
+    }),
+    evidenceRecord({
+      url: "https://directory.example/conflict-startup",
+      title: "Directory profile",
+      snippet: "Diretorio publico indica somente chatbot generico.",
+      collectedAt: record.created_at,
+      sourceType: "directory_profile"
+    })
+  ];
+  const assessment = buildMockConflictAssessment({
+    runId: record.run_id,
+    startupIdentifier: "Conflict Startup",
+    evidences: conflictEvidences
+  });
   return assertRunRecord({
     ...record,
     human_review_reasons: ["conflicting_startup_evidence", "unknown_funding"],
     final_payload: {
       ...record.final_payload,
       ...artifacts,
-      human_review_reasons: ["conflicting_startup_evidence", "unknown_funding"]
+      human_review_reasons: ["conflicting_startup_evidence", "unknown_funding"],
+      ai_native_assessment: assessment,
+      human_review_briefing: buildMockHumanReviewBriefing({
+        runId: record.run_id,
+        startupIdentifier: "Conflict Startup",
+        reviewReasons: ["conflicting_startup_evidence"],
+        pendingQuestions: [
+          {
+            field_name: "technologies_used",
+            question: "Resolve conflicting public evidence for technologies_used.",
+            priority: "critical",
+            reason: "conflicting_evidence_requires_validation"
+          }
+        ]
+      })
     }
   });
 }
@@ -242,7 +283,24 @@ export function buildMockCollectionFailureEvidenceRunRecord(metadata = {}) {
       ...artifacts,
       workflow_outcome: "needs_more_collection_or_human_review",
       next_action: "resolve_blocking_evidence",
-      human_review_reasons: ["robots_blocked_collection", "average_evidence_below_threshold"]
+      human_review_reasons: ["robots_blocked_collection", "average_evidence_below_threshold"],
+      ai_native_assessment: buildMockInsufficientAssessment({
+        runId: record.run_id,
+        startupIdentifier: "Blocked Startup"
+      }),
+      human_review_briefing: buildMockHumanReviewBriefing({
+        runId: record.run_id,
+        startupIdentifier: "Blocked Startup",
+        reviewReasons: ["collection_quality_not_ready", "unknown_assessment_criteria"],
+        pendingQuestions: [
+          {
+            field_name: "collection_quality",
+            question: "Which public sources should be collected before recommendation can be trusted?",
+            priority: "critical",
+            reason: "collection_quality_requires_validation"
+          }
+        ]
+      })
     }
   });
 }
@@ -276,6 +334,14 @@ export function buildMockHumanReviewRunRecord(metadata = {}) {
     artifact_kind: "briefing",
     startup_identifier: "Review Startup"
   };
+  const wrapperEvidence = [
+    evidenceRecord({
+      url: "https://review-startup.ai/product",
+      title: "Review Startup Product",
+      snippet: "Produto usa OpenAI API e ChatGPT sem dados proprietarios observados.",
+      collectedAt: record.created_at
+    })
+  ];
   const finalPayload = {
     ...record.final_payload,
     workflow_outcome: "human_review_requested",
@@ -283,6 +349,25 @@ export function buildMockHumanReviewRunRecord(metadata = {}) {
     briefing_reference: briefingReference,
     human_review_reasons: humanReviewReasons,
     branch_decisions: branchDecisions,
+    ai_native_assessment: buildMockHighWrapperRiskAssessment({
+      runId: record.run_id,
+      startupIdentifier: "Review Startup",
+      evidences: wrapperEvidence
+    }),
+    human_review_briefing: buildMockHumanReviewBriefing({
+      runId: record.run_id,
+      startupIdentifier: "Review Startup",
+      reviewReasons: ["high_wrapper_dependency_risk", "recommendation_hypothesis_requires_human_review"],
+      pendingQuestions: [
+        {
+          field_name: "external_api_only",
+          question:
+            "Validate dependency on external APIs, proprietary data, and production inference before prioritizing NVIDIA outreach.",
+          priority: "critical",
+          reason: "wrapper_risk_requires_validation"
+        }
+      ]
+    }),
     nvidia_match: {
       ...record.final_payload.nvidia_match,
       priority: "human_review",
@@ -573,6 +658,271 @@ function buildMockEvidenceArtifacts({ startupIdentifier, createdAt, conflict = f
     evidence_groups_by_profile: collectionFailure ? {} : { [profileKey]: evidenceGroups },
     quality_summary: qualitySummary
   };
+}
+
+function buildMockAiNativeAssessment({ runId, startupIdentifier, evidences }) {
+  return {
+    schema_version: "ai_native_assessment.v1",
+    run_id: runId,
+    company_name: startupIdentifier,
+    classification: "ai_native",
+    confidence: 0.84,
+    nvidia_opportunity_urgency: "urgent",
+    criteria_results: [
+      assessmentCriterion("ai_product_centrality", "positive", evidences),
+      assessmentCriterion("ai_architecture_depth", "positive", evidences),
+      assessmentCriterion("proprietary_data_loop", "positive", evidences),
+      assessmentCriterion("production_readiness", "positive", evidences),
+      assessmentCriterion("scale_governance_need", "positive", evidences),
+      {
+        criterion: "evidence_quality",
+        status: "positive",
+        confidence: 0.8,
+        rationale: "Collection quality is ready for AI-native evaluation.",
+        evidences: []
+      }
+    ],
+    positive_signals: [
+      {
+        signal_type: "ai_architecture_depth",
+        description: "Evidence mentions proprietary models, tuning, MLOps, or inference architecture.",
+        confidence: 0.8,
+        evidences
+      },
+      {
+        signal_type: "production_readiness",
+        description: "Evidence indicates production inference, serving, MLOps, or latency concerns.",
+        confidence: 0.8,
+        evidences
+      }
+    ],
+    technical_gaps: [
+      {
+        gap_type: "model_serving",
+        description: "Potential need around model serving, latency, cost, or production inference.",
+        severity: "high",
+        confidence: 0.72,
+        evidences,
+        is_hypothesis: false
+      },
+      {
+        gap_type: "data_acceleration",
+        description: "Potential need around data processing, feedback loops, or acceleration.",
+        severity: "medium",
+        confidence: 0.72,
+        evidences,
+        is_hypothesis: false
+      }
+    ],
+    wrapper_dependency_risks: [
+      {
+        risk_type: "external_api_only",
+        severity: "low",
+        confidence: 0.62,
+        rationale: "No evidence that external APIs are the only AI dependency.",
+        evidences: [],
+        is_hypothesis: true
+      },
+      {
+        risk_type: "no_proprietary_data_evidence",
+        severity: "low",
+        confidence: 0.8,
+        rationale: "Evidence indicates proprietary data or feedback loops.",
+        evidences,
+        is_hypothesis: false
+      }
+    ],
+    insufficient_evidence_fields: ["funding"],
+    evidences,
+    diagnostic_quality: {
+      ready_for_recommendation: true,
+      requires_human_review: false,
+      reasons: ["ready_for_recommendation"]
+    },
+    ready_for_recommendation: true
+  };
+}
+
+function buildMockGapSpaceAssessment({ runId, startupIdentifier, evidences }) {
+  return {
+    schema_version: "gap_space_assessment.v1",
+    run_id: runId,
+    startup_identifier: startupIdentifier,
+    corpus_version: "official-nvidia-fixture.v1",
+    commercial_opportunities: [
+      {
+        opportunity_type: "inception_program_fit",
+        description: "Potential startup program support, technical enablement, or go-to-market opportunity.",
+        confidence: 0.78,
+        evidences,
+        is_hypothesis: false
+      }
+    ],
+    commercial_mappings: [],
+    quality: {
+      ready_for_recommendation: true,
+      requires_human_review: false,
+      reasons: ["gap_space_ready_for_recommendation"],
+      human_review_reasons: []
+    }
+  };
+}
+
+function buildMockInsufficientAssessment({ runId, startupIdentifier }) {
+  return {
+    schema_version: "ai_native_assessment.v1",
+    run_id: runId,
+    company_name: startupIdentifier,
+    classification: "insufficient_evidence",
+    confidence: 0,
+    nvidia_opportunity_urgency: "human_review",
+    criteria_results: [
+      {
+        criterion: "evidence_quality",
+        status: "unknown",
+        confidence: 0,
+        rationale: "Collection quality is not ready for AI-native evaluation.",
+        evidences: []
+      }
+    ],
+    positive_signals: [],
+    technical_gaps: [
+      {
+        gap_type: "unknown",
+        description: "No specific technical gap can be supported by current evidence.",
+        severity: "unknown",
+        confidence: 0,
+        evidences: [],
+        is_hypothesis: true
+      }
+    ],
+    wrapper_dependency_risks: [
+      {
+        risk_type: "unknown",
+        severity: "unknown",
+        confidence: 0,
+        rationale: "No AI dependency risk can be assessed from current evidence.",
+        evidences: [],
+        is_hypothesis: true
+      }
+    ],
+    insufficient_evidence_fields: ["collection_quality", "company_summary", "product", "ai_signals"],
+    evidences: [],
+    diagnostic_quality: {
+      ready_for_recommendation: false,
+      requires_human_review: true,
+      reasons: ["collection_quality_not_ready", "unknown_assessment_criteria"]
+    },
+    ready_for_recommendation: false
+  };
+}
+
+function buildMockHighWrapperRiskAssessment({ runId, startupIdentifier, evidences }) {
+  const base = buildMockAiNativeAssessment({ runId, startupIdentifier, evidences });
+  return {
+    ...base,
+    classification: "ai_enabled",
+    confidence: 0.58,
+    nvidia_opportunity_urgency: "human_review",
+    criteria_results: [
+      assessmentCriterion("ai_product_centrality", "positive", evidences),
+      assessmentCriterion("ai_architecture_depth", "negative", []),
+      assessmentCriterion("proprietary_data_loop", "unknown", []),
+      assessmentCriterion("production_readiness", "unknown", [])
+    ],
+    positive_signals: [
+      {
+        signal_type: "ai_product_centrality",
+        description: "AI appears central to product positioning.",
+        confidence: 0.8,
+        evidences
+      }
+    ],
+    technical_gaps: [
+      {
+        gap_type: "llm_customization",
+        description: "Potential need around LLM customization, tuning, evaluation, or domain adaptation.",
+        severity: "medium",
+        confidence: 0.62,
+        evidences,
+        is_hypothesis: true
+      }
+    ],
+    wrapper_dependency_risks: [
+      {
+        risk_type: "external_api_only",
+        severity: "high",
+        confidence: 0.82,
+        rationale: "Evidence points to external LLM/API dependency without deeper stack signals.",
+        evidences,
+        is_hypothesis: false
+      }
+    ],
+    insufficient_evidence_fields: ["technologies_used"],
+    diagnostic_quality: {
+      ready_for_recommendation: false,
+      requires_human_review: true,
+      reasons: ["classification_confidence_below_threshold", "high_wrapper_dependency_risk"]
+    },
+    ready_for_recommendation: false
+  };
+}
+
+function buildMockConflictAssessment({ runId, startupIdentifier, evidences }) {
+  const base = buildMockAiNativeAssessment({ runId, startupIdentifier, evidences });
+  return {
+    ...base,
+    classification: "ai_enabled",
+    confidence: 0.52,
+    nvidia_opportunity_urgency: "human_review",
+    criteria_results: [
+      assessmentCriterion("ai_product_centrality", "positive", evidences),
+      assessmentCriterion("ai_architecture_depth", "conflict", evidences),
+      assessmentCriterion("production_readiness", "unknown", [])
+    ],
+    insufficient_evidence_fields: ["conflicting_technologies_used"],
+    diagnostic_quality: {
+      ready_for_recommendation: false,
+      requires_human_review: true,
+      reasons: ["conflicting_startup_evidence", "classification_confidence_below_threshold"]
+    },
+    ready_for_recommendation: false
+  };
+}
+
+function buildMockHumanReviewBriefing({ runId, startupIdentifier, reviewReasons, pendingQuestions }) {
+  return {
+    schema_version: "human_review_briefing.v1",
+    run_id: runId,
+    startup_identifier: startupIdentifier,
+    status: "ready_for_human_review",
+    review_reasons: reviewReasons,
+    pending_questions: pendingQuestions,
+    next_action: "validate_nvidia_fit_with_human"
+  };
+}
+
+function assessmentCriterion(criterion, status, evidences) {
+  return {
+    criterion,
+    status,
+    confidence: status === "positive" ? 0.8 : status === "conflict" ? 0.4 : 0.55,
+    rationale: assessmentCriterionRationale(criterion, status),
+    evidences: status === "negative" || status === "unknown" ? [] : evidences
+  };
+}
+
+function assessmentCriterionRationale(criterion, status) {
+  if (status === "conflict") {
+    return `Public evidence conflicts for ${criterion}.`;
+  }
+  if (status === "negative") {
+    return `No strong public support for ${criterion}.`;
+  }
+  if (status === "unknown") {
+    return `Insufficient public evidence for ${criterion}.`;
+  }
+  return `Public evidence supports ${criterion}.`;
 }
 
 function evidenceRecord({ url, title, snippet, collectedAt, sourceType = "collected_page" }) {
