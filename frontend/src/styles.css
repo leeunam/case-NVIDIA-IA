@@ -639,6 +639,108 @@ dd {
   background: var(--green);
 }
 
+.history-panel {
+  margin-top: 16px;
+}
+
+.history-actions,
+.history-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.history-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.25fr) repeat(4, minmax(150px, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfbfa;
+}
+
+.history-search-field {
+  min-width: 0;
+}
+
+.history-summary-line {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  margin-bottom: 12px;
+  color: var(--ink-muted);
+  font-weight: 800;
+}
+
+.history-summary-line strong {
+  color: var(--ink);
+  font-size: 1.1rem;
+}
+
+.history-list {
+  display: grid;
+  gap: 12px;
+}
+
+.history-item {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfbfa;
+}
+
+.history-item.has-errors {
+  border-color: rgb(180 35 24 / 24%);
+  background: rgb(180 35 24 / 5%);
+}
+
+.history-item-header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.history-item-header h4 {
+  margin-bottom: 0;
+}
+
+.history-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+
+.history-metrics .metric-card {
+  min-height: 72px;
+  background: #fff;
+}
+
+.history-summary,
+.history-issues {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.history-issues {
+  margin-top: 10px;
+}
+
+.artifact-availability {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0;
+}
+
 .empty-state {
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr);
@@ -1080,6 +1182,7 @@ dd {
   .stage-strip,
   .compact-metrics,
   .metric-row,
+  .history-filter-bar,
   .profile-field-grid {
     grid-template-columns: 1fr;
   }
@@ -1100,7 +1203,8 @@ dd {
   }
 
   .topbar,
-  .panel-header {
+  .panel-header,
+  .history-item-header {
     display: grid;
   }
 

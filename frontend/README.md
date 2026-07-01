@@ -40,8 +40,15 @@ nvidia-startup-intel-api --host 127.0.0.1 --port 8000
 The frontend client maps only these backend routes:
 
 - `POST /api/runs`
+- `GET /api/runs`
 - `GET /api/runs/{run_id}`
 - `GET /api/production-smoke-matrix`
+
+## Run History Backing
+
+In default mock mode, the Runs history is backed by deterministic fixtures in `src/mock-data.js`, including completed, human review, failed, and partial-artifact run records.
+
+In real API mode, `GET /api/runs` currently reads the optional backend-for-frontend process store. That store is in-memory for the current environment: it exposes runs started during the API process lifetime and does not yet scan JSON artifact directories or Postgres history. Missing downstream artifacts remain explicit in the run record instead of being treated as successful stages.
 
 ## Contract Boundary
 
@@ -49,6 +56,7 @@ The frontend client maps only these backend routes:
 
 - `frontend_api_run_create.v1`
 - `frontend_api_run.v1`
+- `frontend_api_run_history.v1`
 - `frontend_api_production_smoke_matrix.v1`
 
 `src/mock-data.js` implements fixture mode for local UI work without network, credentials, Postgres, LangGraph, LLM, embedding, or a real search provider.

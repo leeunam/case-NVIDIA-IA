@@ -1,4 +1,5 @@
 import { RUN_LAUNCHER_DEFAULTS, createRunLauncherForm } from "./run-launcher.js";
+import { createRunHistoryFilters, filterRunHistory } from "./run-history.js";
 
 export const SECTIONS = [
   { id: "runs", label: "Runs" },
@@ -34,6 +35,10 @@ const LOW_TEXT_THRESHOLD = 80;
  * @property {string} apiBaseUrl
  * @property {import("./run-launcher.js").RunLauncherForm} launcherForm
  * @property {FrontendRunRecord | null} currentRun
+ * @property {FrontendRunRecord[]} runHistory
+ * @property {"idle" | "loading" | "loaded" | "empty" | "failed"} runHistoryLoadState
+ * @property {import("./run-history.js").RunHistoryFilters} runHistoryFilters
+ * @property {Record<string, string>} runHistoryMetadata
  * @property {string} routeRunId
  * @property {"idle" | "loading" | "loaded" | "not_found" | "failed"} runLoadState
  * @property {ProductionSmokeMatrix | null} smokeMatrix
@@ -48,12 +53,17 @@ const LOW_TEXT_THRESHOLD = 80;
  */
 export function createInitialState(overrides = {}) {
   const launcherForm = createRunLauncherForm(overrides.launcherForm || {});
+  const runHistoryFilters = createRunHistoryFilters(overrides.runHistoryFilters || {});
   return {
     activeSection: "runs",
     apiMode: "mock",
     apiBaseUrl: "http://127.0.0.1:8000",
     launcherForm,
     currentRun: null,
+    runHistory: [],
+    runHistoryLoadState: "idle",
+    runHistoryFilters,
+    runHistoryMetadata: {},
     routeRunId: "",
     runLoadState: "idle",
     smokeMatrix: null,
@@ -61,7 +71,8 @@ export function createInitialState(overrides = {}) {
     notice: "",
     errorMessage: "",
     ...overrides,
-    launcherForm
+    launcherForm,
+    runHistoryFilters
   };
 }
 
@@ -190,6 +201,7 @@ function renderRuns(state) {
       </section>
     </section>
     ${renderStageStrip(state.currentRun)}
+    ${renderRunHistory(state)}
   `;
 }
 
@@ -561,6 +573,304 @@ function renderStageStrip(run) {
         .join("")}
     </section>
   `;
+}
+
+function renderRunHistory(state) {
+  const runs = Array.isArray(state.runHistory) ? state.runHistory : [];
+  const filters = createRunHistoryFilters(state.runHistoryFilters || {});
+  const visibleRuns = filterRunHistory(runs, filters);
+  const metadata = objectRecord(state.runHistoryMetadata) || {};
+  return `
+    <section class="panel detail-panel history-panel" aria-label="Run history">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">History</p>
+          <h3>Run history</h3>
+        </div>
+        <div class="history-actions">
+          <span class="schema-pill">${escapeHtml(String(metadata.persistence_mode || historyPersistenceLabel(state)))}</span>
+          <button type="button" class="secondary-action" data-refresh-history>Refresh</button>
+        </div>
+      </div>
+      ${renderRunHistoryFilters(runs, filters)}
+      ${renderRunHistoryBody(state, runs, visibleRuns)}
+    </section>
+  `;
+}
+
+function renderRunHistoryFilters(runs, filters) {
+  return `
+    <form class="history-filter-bar" data-run-history-filters>
+      <label class="history-search-field">
+        <span>Search</span>
+        <input name="history_search" type="search" placeholder="startup, URL, domain, run ID" value="${escapeAttr(
+          filters.search
+        )}" />
+      </label>
+      ${renderHistorySelect(
+        "history_workflow_outcome",
+        "Workflow outcome",
+        filters.workflow_outcome,
+        historyOptions(runs, (run) => run.workflow_outcome)
+      )}
+      ${renderHistorySelect(
+        "history_next_action",
+        "Next action",
+        filters.next_action,
+        historyOptions(runs, (run) => run.next_action)
+      )}
+      ${renderHistorySelect(
+        "history_human_review_reason",
+        "Human review reason",
+        filters.human_review_reason,
+        historyOptions(runs, (run) => run.human_review_reasons).flat()
+      )}
+      <label>
+        <span>Date</span>
+        <input name="history_date" type="date" value="${escapeAttr(filters.date)}" />
+      </label>
+      <div class="history-filter-actions">
+        <button type="submit" class="secondary-action">Apply</button>
+        <button type="button" class="secondary-action" data-reset-history-filters>Clear</button>
+      </div>
+    </form>
+  `;
+}
+
+function renderHistorySelect(name, label, selectedValue, options) {
+  const uniqueOptions = Array.from(new Set(options.map((option) => String(option || "")).filter(Boolean))).sort();
+  return `
+    <label>
+      <span>${escapeHtml(label)}</span>
+      <select name="${escapeAttr(name)}">
+        <option value="">Any</option>
+        ${uniqueOptions
+          .map(
+            (option) => `
+              <option value="${escapeAttr(option)}" ${selected(option === selectedValue)}>${escapeHtml(option)}</option>
+            `
+          )
+          .join("")}
+      </select>
+    </label>
+  `;
+}
+
+function renderRunHistoryBody(state, runs, visibleRuns) {
+  if (state.runHistoryLoadState === "loading") {
+    return renderEmptyState("Loading run history.", "Fetching previous runs without creating a new run.");
+  }
+  if (state.runHistoryLoadState === "failed") {
+    return renderEmptyState(
+      "Run history could not be loaded.",
+      state.errorMessage || "Check the API mode, base URL, and history endpoint."
+    );
+  }
+  if (state.runHistoryLoadState === "empty" || (!runs.length && state.runHistoryLoadState === "loaded")) {
+    return renderEmptyState("No previous runs found.", "The current history backend has no persisted run records yet.");
+  }
+  if (!runs.length) {
+    return renderEmptyState("Run history has not loaded yet.", "Use Refresh to load API or fixture-backed history.");
+  }
+  if (!visibleRuns.length) {
+    return renderEmptyState("No runs match the current filters.", "Adjust the search, status, review reason, or date.");
+  }
+  return `
+    <div class="history-summary-line">
+      <strong>${escapeHtml(String(visibleRuns.length))}</strong>
+      <span>of ${escapeHtml(String(runs.length))} runs shown</span>
+    </div>
+    <div class="history-list">
+      ${visibleRuns.map((run) => renderRunHistoryItem(run)).join("")}
+    </div>
+  `;
+}
+
+function renderRunHistoryItem(run) {
+  const source = runSource(run);
+  const readiness = runReadiness(run);
+  const missingArtifacts = runMissingArtifacts(run);
+  const failedSteps = runFailedSteps(run);
+  return `
+    <article class="history-item${run.errors.length ? " has-errors" : ""}">
+      <div class="history-item-header">
+        <div>
+          <p class="eyebrow">${escapeHtml(run.run_id)}</p>
+          <h4>${escapeHtml(run.startup_identifier || "unknown startup")}</h4>
+        </div>
+        <span class="status-badge ${statusClass(run.status)}">${escapeHtml(run.status)}</span>
+      </div>
+      <div class="metric-row history-metrics">
+        ${metric("Workflow outcome", run.workflow_outcome)}
+        ${metric("Next action", run.next_action)}
+        ${metric("Readiness", readiness)}
+      </div>
+      <dl class="summary-list history-summary">
+        <div><dt>Created</dt><dd>${escapeHtml(run.created_at || "unknown")}</dd></div>
+        <div><dt>Startup/query</dt><dd>${escapeHtml(source.label)}</dd></div>
+        <div><dt>Source/domain</dt><dd>${escapeHtml(source.detail)}</dd></div>
+        <div><dt>Human review</dt><dd>${escapeHtml(humanReviewStatus(run))}</dd></div>
+        <div><dt>Human review reasons</dt><dd>${renderInlineList(run.human_review_reasons)}</dd></div>
+      </dl>
+      ${renderHistoryArtifactAvailability(run)}
+      ${
+        missingArtifacts.length || failedSteps.length
+          ? `<dl class="summary-list history-issues">
+              <div><dt>Missing artifacts</dt><dd>${renderInlineList(missingArtifacts)}</dd></div>
+              <div><dt>failed steps</dt><dd>${renderInlineList(failedSteps)}</dd></div>
+            </dl>`
+          : `<p class="muted-line">No missing artifacts or failed steps were reported.</p>`
+      }
+      <div class="status-actions">
+        <button type="button" class="secondary-action" data-open-run="${escapeAttr(run.run_id)}">Open workspace</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderHistoryArtifactAvailability(run) {
+  const statuses = runArtifactStatuses(run);
+  return `
+    <div class="artifact-availability" aria-label="Artifact availability">
+      ${statuses
+        .map(
+          (item) => `
+            <span class="status-badge ${statusClass(item.status)}">${escapeHtml(item.label)} ${escapeHtml(item.status)}</span>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function runArtifactStatuses(run) {
+  const payload = objectRecord(run.final_payload) || {};
+  const missing = new Set(runMissingArtifacts(run).map((item) => normalizeArtifactName(item)));
+  const evidenceAvailable =
+    artifactCount(run) > 0 ||
+    records(payload.profiles).length > 0 ||
+    objectEntries(payload.collected_pages_by_candidate).length > 0;
+  const assessmentAvailable = Boolean(objectRecord(payload.ai_native_assessment));
+  const matchAvailable = Boolean(objectRecord(payload.nvidia_match));
+  const briefingAvailable = hasBriefing(run);
+  const humanReviewBriefingAvailable = hasHumanReviewBriefing(run);
+  return [
+    artifactStatus("evidence", evidenceAvailable, missing),
+    artifactStatus("assessment", assessmentAvailable, missing, "ai_native_assessment"),
+    artifactStatus("nvidia_match", matchAvailable, missing),
+    artifactStatus("briefing", briefingAvailable, missing),
+    {
+      label: "human review briefing",
+      status: humanReviewBriefingAvailable ? "available" : humanReviewStatus(run) === "required" ? "missing" : "not requested"
+    }
+  ];
+}
+
+function artifactStatus(label, available, missing, artifactName = label) {
+  if (available) {
+    return { label, status: "available" };
+  }
+  if (missing.has(normalizeArtifactName(artifactName)) || missing.has(normalizeArtifactName(label))) {
+    return { label, status: "missing" };
+  }
+  return { label, status: "missing" };
+}
+
+function runSource(run) {
+  const input = objectRecord(run.input) || {};
+  const startupUrl = String(input.startup_url || "").trim();
+  const query = String(input.query || "").trim();
+  if (startupUrl) {
+    return {
+      label: startupUrl,
+      detail: hostname(startupUrl) || "startup_url"
+    };
+  }
+  if (query) {
+    return {
+      label: query,
+      detail: "bounded query"
+    };
+  }
+  return {
+    label: run.startup_identifier || "unknown",
+    detail: "unknown source"
+  };
+}
+
+function runReadiness(run) {
+  const payload = objectRecord(run.final_payload) || {};
+  const quality = objectRecord(payload.quality_summary) || objectRecord(payload.collection_quality) || {};
+  if (typeof quality.ready_for_evaluation === "boolean") {
+    return quality.ready_for_evaluation ? "ready_for_ai_native_evaluation" : "needs_more_collection_or_human_review";
+  }
+  if (quality.readiness || quality.status) {
+    return String(quality.readiness || quality.status);
+  }
+  const assessment = objectRecord(payload.ai_native_assessment);
+  const diagnostic = objectRecord(assessment?.diagnostic_quality);
+  if (typeof diagnostic?.ready_for_recommendation === "boolean") {
+    return diagnostic.ready_for_recommendation ? "ready_for_recommendation" : "not_ready_for_recommendation";
+  }
+  return run.workflow_outcome || "unknown";
+}
+
+function humanReviewStatus(run) {
+  if (arrayValues(run.human_review_reasons).length || run.workflow_outcome === "human_review_requested") {
+    return "required";
+  }
+  return "not requested";
+}
+
+function hasBriefing(run) {
+  const reference = objectRecord(run.briefing_reference);
+  const payload = objectRecord(run.final_payload) || {};
+  return Boolean(
+    reference ||
+      objectRecord(payload.briefing) ||
+      objectRecord(payload.executive_briefing) ||
+      objectRecord(payload.human_review_briefing)
+  );
+}
+
+function hasHumanReviewBriefing(run) {
+  const reference = objectRecord(run.briefing_reference);
+  const payload = objectRecord(run.final_payload) || {};
+  return String(reference?.briefing_type || "") === "human_review" || Boolean(objectRecord(payload.human_review_briefing));
+}
+
+function runMissingArtifacts(run) {
+  const payload = objectRecord(run.final_payload) || {};
+  return arrayValues(payload.missing_artifacts);
+}
+
+function runFailedSteps(run) {
+  return records(run.errors)
+    .map((error) => String(error.step || error.error_type || "unknown_step"))
+    .filter(Boolean);
+}
+
+function historyOptions(runs, accessor) {
+  return runs.flatMap((run) => {
+    const value = accessor(run);
+    return Array.isArray(value) ? value.map((item) => String(item)) : [String(value || "")];
+  });
+}
+
+function historyPersistenceLabel(state) {
+  return state.apiMode === "mock" ? "mock-fixtures" : "api history";
+}
+
+function hostname(value) {
+  try {
+    return new URL(String(value || "")).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+function normalizeArtifactName(value) {
+  return String(value || "").trim().toLowerCase();
 }
 
 function renderEvidence(state) {
@@ -1427,13 +1737,13 @@ function statusClass(status) {
   if (/^[45]\d\d$/.test(normalized)) {
     return "status-failed";
   }
-  if (normalized.includes("fail") || normalized.includes("blocked") || normalized.includes("not_found")) {
+  if (normalized.includes("fail") || normalized.includes("blocked") || normalized.includes("not_found") || normalized.includes("missing")) {
     return "status-failed";
   }
-  if (normalized.includes("complete") || normalized.includes("generated") || normalized.includes("ready")) {
+  if (normalized.includes("complete") || normalized.includes("generated") || normalized.includes("ready") || normalized.includes("available")) {
     return "status-completed";
   }
-  if (normalized.includes("skip") || normalized.includes("idle")) {
+  if (normalized.includes("skip") || normalized.includes("idle") || normalized.includes("not requested")) {
     return "status-idle";
   }
   return "status-running";

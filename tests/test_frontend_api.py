@@ -10,6 +10,7 @@ from nvidia_startup_intel.frontend_api import (
     API_SCHEMA_VERSION,
     FrontendApiService,
     FrontendRunRequest,
+    RUN_HISTORY_SCHEMA_VERSION,
     RUN_CREATE_SCHEMA_VERSION,
     SMOKE_MATRIX_SCHEMA_VERSION,
     build_run_record,
@@ -210,6 +211,47 @@ def test_frontend_api_reports_missing_run() -> None:
 
     with pytest.raises(KeyError):
         service.get_run("missing-run")
+
+
+def test_frontend_api_lists_in_memory_run_history(tmp_path: Path) -> None:
+    service = FrontendApiService(
+        fetcher=_fetcher(
+            {
+                "https://neuralmind.ai": FetchResponse(
+                    url="https://neuralmind.ai/",
+                    status_code=200,
+                    body=(
+                        "<html><head><title>NeuralMind</title></head><body>"
+                        "Resumo: Plataforma AI-native para documentos. Setor: dados. "
+                        "Produto: Copiloto documental com IA generativa. "
+                        "Sinais de IA: modelos proprietarios e inferencia em producao. "
+                        "Tecnologias: MLOps, dados proprietarios e model serving."
+                        "</body></html>"
+                    ),
+                )
+            }
+        ),
+        robots_fetcher=_allow_robots,
+        clock=_fixed_clock,
+    )
+    record = service.start_run(
+        {
+            "startup_url": "https://neuralmind.ai/",
+            "startup_name": "NeuralMind",
+            "max_pages": 1,
+            "max_depth": 0,
+            "output_dir": str(tmp_path / "runs"),
+            "nvidia_corpus_path": "tests/fixtures/nvidia_knowledge_official_fixture.json",
+        }
+    )
+
+    history = service.list_runs()
+
+    assert history["schema_version"] == RUN_HISTORY_SCHEMA_VERSION
+    assert history["persistence_mode"] == "in-memory"
+    assert history["runs"] == [record]
+    assert history["generated_at"] == "2026-06-26T09:30:00+00:00"
+    json.dumps(history)
 
 
 def _fixed_clock() -> datetime:

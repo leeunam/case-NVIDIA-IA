@@ -7,6 +7,7 @@ import {
   buildMockConflictingEvidenceRunRecord,
   buildMockFailedRunRecord,
   buildMockHumanReviewRunRecord,
+  buildMockPartialRunRecord,
   buildMockRunRecord,
   buildMockSmokeMatrix
 } from "../src/mock-data.js";
@@ -103,6 +104,120 @@ test("renders human review run payload with branch decision and review action", 
   assert.match(html, /validate_nvidia_fit_with_human/);
   assert.match(html, /recommendation_hypothesis_requires_human_review/);
   assert.match(html, /Branch decisions/);
+});
+
+test("renders run history list with metadata, artifact availability, and reopen controls", () => {
+  const currentRun = buildMockRunRecord(
+    {
+      startup_url: "https://neuralmind.ai/",
+      startup_name: "NeuralMind"
+    },
+    {
+      runId: "mock-history-current",
+      createdAt: "2026-06-30T15:00:00.000Z"
+    }
+  );
+  const runHistory = [
+    currentRun,
+    buildMockHumanReviewRunRecord({ runId: "mock-history-review" }),
+    buildMockFailedRunRecord({ runId: "mock-history-failed" })
+  ];
+
+  const html = renderApp(
+    createInitialState({
+      currentRun,
+      runHistory,
+      runHistoryLoadState: "loaded",
+      runHistoryMetadata: {
+        generated_at: "2026-06-30T15:30:00.000Z",
+        persistence_mode: "mock-fixtures"
+      }
+    })
+  );
+
+  assert.match(html, /Run history/);
+  assert.match(html, /mock-fixtures/);
+  assert.match(html, /mock-history-current/);
+  assert.match(html, /NeuralMind/);
+  assert.match(html, /neuralmind\.ai/);
+  assert.match(html, /briefing available/);
+  assert.match(html, /human review briefing available/);
+  assert.match(html, /data-open-run="mock-history-review"/);
+  assert.match(html, /mock-history-failed/);
+  assert.match(html, /failed steps/);
+});
+
+test("filters run history in the Runs view", () => {
+  const html = renderApp(
+    createInitialState({
+      runHistory: [
+        buildMockRunRecord(
+          {
+            startup_url: "https://neuralmind.ai/",
+            startup_name: "NeuralMind"
+          },
+          {
+            runId: "mock-history-completed",
+            createdAt: "2026-06-30T15:00:00.000Z"
+          }
+        ),
+        buildMockHumanReviewRunRecord({
+          runId: "mock-history-review",
+          createdAt: "2026-06-29T10:00:00.000Z"
+        })
+      ],
+      runHistoryLoadState: "loaded",
+      runHistoryFilters: {
+        search: "review-startup.ai",
+        workflow_outcome: "human_review_requested",
+        next_action: "validate_nvidia_fit_with_human",
+        human_review_reason: "recommendation_hypothesis_requires_human_review",
+        date: "2026-06-29"
+      }
+    })
+  );
+
+  assert.match(html, /mock-history-review/);
+  assert.match(html, /review-startup\.ai/);
+  assert.doesNotMatch(html, /mock-history-completed/);
+});
+
+test("renders partial run payloads without treating missing artifacts as success", () => {
+  const partialRun = buildMockPartialRunRecord({
+    runId: "mock-history-partial",
+    createdAt: "2026-06-30T14:00:00.000Z"
+  });
+  const html = renderApp(
+    createInitialState({
+      runHistory: [partialRun],
+      runHistoryLoadState: "loaded"
+    })
+  );
+
+  assert.match(html, /mock-history-partial/);
+  assert.match(html, /ready_for_ai_native_assessment/);
+  assert.match(html, /assessment missing/);
+  assert.match(html, /nvidia_match/);
+  assert.match(html, /briefing missing/);
+  assert.match(html, /collect_missing_artifacts/);
+  assert.doesNotMatch(html, /briefing available/);
+});
+
+test("renders run history empty, loading, and failed states", () => {
+  const loadingHtml = renderApp(createInitialState({ runHistoryLoadState: "loading" }));
+  assert.match(loadingHtml, /Loading run history/);
+
+  const emptyHtml = renderApp(createInitialState({ runHistoryLoadState: "empty", runHistory: [] }));
+  assert.match(emptyHtml, /No previous runs found/);
+
+  const failedHtml = renderApp(
+    createInitialState({
+      runHistoryLoadState: "failed",
+      errorMessage: "api_request_failed:history_down"
+    })
+  );
+  assert.match(failedHtml, /Run history could not be loaded/);
+  assert.match(failedHtml, /api_request_failed:history_down/);
 });
 
 test("renders evidence conflicts, unknown fields, and insufficient evidence reasons", () => {

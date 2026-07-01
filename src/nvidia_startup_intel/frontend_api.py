@@ -26,6 +26,7 @@ from nvidia_startup_intel.sql_repository import SqlPipelineRepository
 
 API_SCHEMA_VERSION = "frontend_api_run.v1"
 RUN_CREATE_SCHEMA_VERSION = "frontend_api_run_create.v1"
+RUN_HISTORY_SCHEMA_VERSION = "frontend_api_run_history.v1"
 SMOKE_MATRIX_SCHEMA_VERSION = "frontend_api_production_smoke_matrix.v1"
 Clock = Callable[[], datetime]
 OperationalRunner = Callable[..., dict[str, object]]
@@ -135,6 +136,13 @@ class InMemoryFrontendRunStore:
             return None
         return dict(record)
 
+    def list(self) -> list[dict[str, object]]:
+        return sorted(
+            (dict(record) for record in self._records.values()),
+            key=lambda record: str(record.get("created_at", "")),
+            reverse=True,
+        )
+
 
 class FrontendApiService:
     """Framework-neutral API behavior used by tests and the optional web adapter."""
@@ -179,6 +187,15 @@ class FrontendApiService:
         if record is None:
             raise KeyError(run_id)
         return record
+
+    def list_runs(self) -> dict[str, object]:
+        generated_at = self.clock().isoformat() if self.clock else datetime.now(UTC).isoformat()
+        return {
+            "schema_version": RUN_HISTORY_SCHEMA_VERSION,
+            "generated_at": generated_at,
+            "persistence_mode": "in-memory",
+            "runs": self.store.list(),
+        }
 
     def production_smoke_matrix(
         self,
@@ -252,6 +269,10 @@ def create_app(service: FrontendApiService | None = None) -> Any:
             return active_service.start_run(payload)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/runs")
+    def list_runs() -> dict[str, object]:
+        return active_service.list_runs()
 
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str) -> dict[str, object]:

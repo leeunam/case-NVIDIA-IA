@@ -1,6 +1,8 @@
 import {
+  RUN_HISTORY_SCHEMA_VERSION,
   RUN_RECORD_SCHEMA_VERSION,
   SMOKE_MATRIX_SCHEMA_VERSION,
+  assertRunHistory,
   assertRunRecord,
   assertSmokeMatrix,
   validateRunRequest
@@ -45,12 +47,30 @@ export function createMockFrontendApiClient(options = {}) {
       return record;
     },
 
+    async listRuns() {
+      await delay(delayMs);
+      return buildMockRunHistory(Array.from(runs.values()), clock().toISOString());
+    },
+
     async getProductionSmokeMatrix(only = []) {
       await delay(delayMs);
       const matrix = buildMockSmokeMatrix(only);
       return assertSmokeMatrix(matrix);
     }
   };
+}
+
+/**
+ * @param {import("./api-contract.js").FrontendRunRecord[]} records
+ * @param {string=} generatedAt
+ */
+export function buildMockRunHistory(records, generatedAt = "2026-06-30T12:00:00.000Z") {
+  return assertRunHistory({
+    schema_version: RUN_HISTORY_SCHEMA_VERSION,
+    generated_at: generatedAt,
+    persistence_mode: "mock-fixtures",
+    runs: sortRunsByCreatedAt(records)
+  });
 }
 
 /**
@@ -247,6 +267,97 @@ export function buildMockCollectionFailureEvidenceRunRecord(metadata = {}) {
   });
 }
 
+export function buildMockPartialRunRecord(metadata = {}) {
+  const runId = metadata.runId || "mock-partial-run";
+  const createdAt = metadata.createdAt || "2026-06-30T14:00:00.000Z";
+  const input = {
+    startup_url: "https://partial-startup.ai/",
+    query: null,
+    startup_name: "Partial Startup"
+  };
+  const missingArtifacts = ["ai_native_assessment", "nvidia_match", "briefing"];
+  const error = {
+    step: "retrieve_nvidia_knowledge",
+    error_type: "MissingArtifact",
+    message: "NVIDIA match and briefing were not generated for this run.",
+    audit_reason: "missing_downstream_artifacts"
+  };
+  const finalPayload = {
+    schema_version: "operational_entrypoint_result.v1",
+    run_id: runId,
+    created_at: createdAt,
+    input,
+    startup_identifier: "Partial Startup",
+    workflow_outcome: "ready_for_ai_native_assessment",
+    next_action: "collect_missing_artifacts",
+    briefing_reference: null,
+    human_review_reasons: ["missing_downstream_artifacts"],
+    branch_decisions: [
+      {
+        branch_name: "ready_for_ai_native_assessment",
+        next_action: "collect_missing_artifacts",
+        audit_reason: "profile_available_but_downstream_missing"
+      }
+    ],
+    artifact_locations: {
+      raw_dir: `runs/${runId}/raw`,
+      processed_dir: `runs/${runId}/processed`
+    },
+    persistence_references: [
+      {
+        artifact_kind: "evidence",
+        startup_identifier: "Partial Startup",
+        storage: "json",
+        reference: `runs/${runId}/processed/profile.json`
+      }
+    ],
+    missing_artifacts: missingArtifacts,
+    errors: [error],
+    options: {
+      persistence_mode: "json",
+      retrieval_mode: "bm25",
+      orchestration: "local",
+      render_js: false,
+      search_provider: false,
+      reranking: false,
+      llm_narrative: false
+    },
+    collection_quality: {
+      schema_version: "collection_quality_summary.v1",
+      readiness: "ready_for_ai_native_assessment",
+      collected_pages: 1,
+      unknown_field_rate: 0.35,
+      conflict_count: 0
+    },
+    ...buildMockEvidenceArtifacts({
+      startupIdentifier: "Partial Startup",
+      createdAt,
+      baseUrl: "https://partial-startup.ai/",
+      productUrl: "https://partial-startup.ai/product"
+    })
+  };
+  return assertRunRecord({
+    schema_version: RUN_RECORD_SCHEMA_VERSION,
+    run_id: runId,
+    status: "completed",
+    workflow_outcome: "ready_for_ai_native_assessment",
+    created_at: createdAt,
+    input,
+    startup_identifier: "Partial Startup",
+    next_action: "collect_missing_artifacts",
+    briefing_reference: null,
+    human_review_reasons: finalPayload.human_review_reasons,
+    branch_decisions: finalPayload.branch_decisions,
+    artifact_references: {
+      artifact_locations: finalPayload.artifact_locations,
+      persistence_references: finalPayload.persistence_references
+    },
+    errors: [error],
+    options: finalPayload.options,
+    final_payload: finalPayload
+  });
+}
+
 export function buildMockHumanReviewRunRecord(metadata = {}) {
   const record = buildMockRunRecord(
     {
@@ -416,9 +527,18 @@ function step(integrationId, title, bottleneck) {
   };
 }
 
-function buildMockEvidenceArtifacts({ startupIdentifier, createdAt, conflict = false, collectionFailure = false }) {
-  const baseUrl = collectionFailure ? "https://blocked-startup.ai/" : "https://neuralmind.ai/";
-  const productUrl = collectionFailure ? "https://blocked-startup.ai/product" : "https://neuralmind.ai/product";
+function buildMockEvidenceArtifacts({
+  startupIdentifier,
+  createdAt,
+  conflict = false,
+  collectionFailure = false,
+  baseUrl: fixtureBaseUrl = "",
+  productUrl: fixtureProductUrl = ""
+}) {
+  const baseUrl = collectionFailure ? "https://blocked-startup.ai/" : fixtureBaseUrl || "https://neuralmind.ai/";
+  const productUrl = collectionFailure
+    ? "https://blocked-startup.ai/product"
+    : fixtureProductUrl || "https://neuralmind.ai/product";
   const collectedAt = createdAt || "2026-06-30T12:00:00.000Z";
   const homeEvidence = evidenceRecord({
     url: baseUrl,
@@ -624,9 +744,25 @@ function seedRouteRuns(runs, clock) {
       createdAt: clock().toISOString()
     }
   );
-  for (const record of [completed, buildMockHumanReviewRunRecord(), buildMockFailedRunRecord()]) {
+  for (const record of [
+    completed,
+    buildMockHumanReviewRunRecord(),
+    buildMockFailedRunRecord(),
+    buildMockPartialRunRecord()
+  ]) {
     runs.set(record.run_id, record);
   }
+}
+
+function sortRunsByCreatedAt(records) {
+  return [...records].sort((left, right) => {
+    const leftDate = Date.parse(left.created_at || "");
+    const rightDate = Date.parse(right.created_at || "");
+    if (Number.isFinite(leftDate) && Number.isFinite(rightDate) && leftDate !== rightDate) {
+      return rightDate - leftDate;
+    }
+    return String(right.run_id).localeCompare(String(left.run_id));
+  });
 }
 
 function safePathSegment(value) {

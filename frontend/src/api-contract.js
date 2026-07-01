@@ -1,5 +1,6 @@
 export const RUN_CREATE_SCHEMA_VERSION = "frontend_api_run_create.v1";
 export const RUN_RECORD_SCHEMA_VERSION = "frontend_api_run.v1";
+export const RUN_HISTORY_SCHEMA_VERSION = "frontend_api_run_history.v1";
 export const SMOKE_MATRIX_SCHEMA_VERSION = "frontend_api_production_smoke_matrix.v1";
 
 /**
@@ -46,6 +47,12 @@ export const SMOKE_MATRIX_SCHEMA_VERSION = "frontend_api_production_smoke_matrix
  * @property {Record<string, unknown>} options
  * @property {Record<string, unknown>} final_payload
  *
+ * @typedef {Object} FrontendRunHistory
+ * @property {typeof RUN_HISTORY_SCHEMA_VERSION} schema_version
+ * @property {string} generated_at
+ * @property {string} persistence_mode
+ * @property {FrontendRunRecord[]} runs
+ *
  * @typedef {Object} ProductionSmokeStep
  * @property {string} integration_id
  * @property {string} title
@@ -67,6 +74,7 @@ export const SMOKE_MATRIX_SCHEMA_VERSION = "frontend_api_production_smoke_matrix
  * @typedef {Object} FrontendApiClient
  * @property {(request: FrontendRunRequest) => Promise<FrontendRunRecord>} startRun
  * @property {(runId: string) => Promise<FrontendRunRecord>} getRun
+ * @property {() => Promise<FrontendRunHistory>} listRuns
  * @property {(only?: string[]) => Promise<ProductionSmokeMatrix>} getProductionSmokeMatrix
  */
 
@@ -108,6 +116,11 @@ export function createFrontendApiClient(options = {}) {
       return assertRunRecord(await readJsonResponse(response));
     },
 
+    async listRuns() {
+      const response = await fetchImpl(apiUrl(baseUrl, "/api/runs"));
+      return assertRunHistory(await readJsonResponse(response));
+    },
+
     async getProductionSmokeMatrix(only = []) {
       const selected = only.map((item) => String(item).trim()).filter(Boolean);
       const suffix = selected.length ? `?only=${encodeURIComponent(selected.join(","))}` : "";
@@ -146,6 +159,23 @@ export function assertRunRecord(payload) {
   requireArray(record, "errors", "run_record");
   requireObject(record, "final_payload", "run_record");
   return /** @type {FrontendRunRecord} */ (record);
+}
+
+/**
+ * @param {unknown} payload
+ * @returns {FrontendRunHistory}
+ */
+export function assertRunHistory(payload) {
+  const record = objectPayload(payload, "run_history");
+  requireSchema(record, RUN_HISTORY_SCHEMA_VERSION, "run_history");
+  requireString(record, "generated_at", "run_history");
+  requireString(record, "persistence_mode", "run_history");
+  requireArray(record, "runs", "run_history");
+  const runs = record.runs.map((run) => assertRunRecord(run));
+  return /** @type {FrontendRunHistory} */ ({
+    ...record,
+    runs
+  });
 }
 
 /**

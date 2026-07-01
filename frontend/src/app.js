@@ -1,6 +1,12 @@
 import { createFrontendApiClient } from "./api-contract.js";
 import { createMockFrontendApiClient } from "./mock-data.js";
 import { createInitialState, renderApp } from "./renderer.js";
+import {
+  createRunHistoryFilters,
+  loadRunHistory,
+  openRunFromHistory,
+  runHistoryFiltersFromFormData
+} from "./run-history.js";
 import { runLauncherFormFromFormData, submitRunLauncher } from "./run-launcher.js";
 import { loadRunWorkspace, runIdFromSearch, updateRunRoute } from "./run-workspace.js";
 
@@ -18,6 +24,7 @@ let state = createInitialState({ apiMode, apiBaseUrl, routeRunId: initialRouteRu
 
 render();
 void loadSmokeMatrix({ quiet: true });
+void loadRunHistory({ apiClient, commit, quiet: true });
 if (initialRouteRunId) {
   void loadRunFromRoute(initialRouteRunId);
 }
@@ -58,6 +65,7 @@ function bindEvents() {
         if (currentRun) {
           updateRunRoute({ runId: currentRun.run_id, location: window.location, history: window.history });
           commit({ routeRunId: currentRun.run_id, runLoadState: "loaded" });
+          void loadRunHistory({ apiClient, commit, quiet: true });
         }
       });
     });
@@ -76,6 +84,46 @@ function bindEvents() {
   for (const button of root.querySelectorAll("[data-refresh-run]")) {
     button.addEventListener("click", () => {
       void loadRunFromRoute(button.getAttribute("data-refresh-run") || "");
+    });
+  }
+
+  for (const button of root.querySelectorAll("[data-open-run]")) {
+    button.addEventListener("click", () => {
+      void openRunFromHistory({
+        runId: button.getAttribute("data-open-run") || "",
+        apiClient,
+        commit,
+        location: window.location,
+        history: window.history
+      });
+    });
+  }
+
+  for (const button of root.querySelectorAll("[data-refresh-history]")) {
+    button.addEventListener("click", () => {
+      void loadRunHistory({ apiClient, commit });
+    });
+  }
+
+  const historyFilterForm = root.querySelector("[data-run-history-filters]");
+  if (historyFilterForm) {
+    historyFilterForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      commit({
+        runHistoryFilters: runHistoryFiltersFromFormData(new FormData(historyFilterForm)),
+        notice: "",
+        errorMessage: ""
+      });
+    });
+  }
+
+  for (const button of root.querySelectorAll("[data-reset-history-filters]")) {
+    button.addEventListener("click", () => {
+      commit({
+        runHistoryFilters: createRunHistoryFilters(),
+        notice: "",
+        errorMessage: ""
+      });
     });
   }
 
