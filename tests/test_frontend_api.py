@@ -13,6 +13,7 @@ from nvidia_startup_intel.frontend_api import (
     RUN_CREATE_SCHEMA_VERSION,
     SMOKE_MATRIX_SCHEMA_VERSION,
     build_run_record,
+    create_app,
 )
 from nvidia_startup_intel.page_collection import FetchResponse
 from nvidia_startup_intel.search_execution import SearchProviderResult
@@ -203,6 +204,27 @@ def test_frontend_api_exposes_read_only_production_smoke_matrix() -> None:
     assert [step["integration_id"] for step in payload["matrix"]["steps"]] == ["postgres_persistence"]
     assert payload["matrix"]["steps"][0]["status"] == "skipped"
     json.dumps(payload)
+
+
+def test_frontend_api_allows_local_frontend_cors_preflight() -> None:
+    try:
+        from fastapi.testclient import TestClient
+    except Exception as exc:  # noqa: BLE001 - optional API test dependency may be incomplete.
+        pytest.skip(f"fastapi test client unavailable: {exc}")
+    client = TestClient(create_app(FrontendApiService()))
+
+    response = client.options(
+        "/api/runs",
+        headers={
+            "Origin": "http://127.0.0.1:5173",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
+    assert "POST" in response.headers["access-control-allow-methods"]
 
 
 def test_frontend_api_reports_missing_run() -> None:

@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import UTC, datetime
 from enum import Enum
+import os
 from pathlib import Path
 import sys
 from typing import Any
@@ -232,6 +233,7 @@ def create_app(service: FrontendApiService | None = None) -> Any:
 
     try:
         from fastapi import FastAPI, HTTPException, Query, status
+        from fastapi.middleware.cors import CORSMiddleware
     except ModuleNotFoundError as exc:
         raise RuntimeError('Install the optional API extra with: python -m pip install -e ".[api]"') from exc
 
@@ -240,6 +242,13 @@ def create_app(service: FrontendApiService | None = None) -> Any:
         title="NVIDIA Startup Intel Frontend API",
         version="0.1.0",
         description="Optional transport layer over project-owned operational intelligence contracts.",
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_allowed_cors_origins(os.environ),
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type"],
     )
 
     @app.get("/health")
@@ -352,6 +361,14 @@ def _selected_integrations(raw_value: str | None) -> tuple[str, ...]:
     if raw_value is None:
         return ()
     return tuple(dict.fromkeys(item.strip() for item in raw_value.split(",") if item.strip()))
+
+
+def _allowed_cors_origins(env: Mapping[str, str]) -> list[str]:
+    configured = env.get("NVIDIA_STARTUP_INTEL_FRONTEND_ORIGINS", "")
+    origins = tuple(item.strip() for item in configured.split(",") if item.strip())
+    if origins:
+        return list(dict.fromkeys(origins))
+    return ["http://127.0.0.1:5173", "http://localhost:5173"]
 
 
 def _plain_data(value: object) -> object:

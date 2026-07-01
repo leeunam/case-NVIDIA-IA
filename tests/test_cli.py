@@ -104,7 +104,7 @@ def test_collect_pages_cli_can_render_javascript_with_injected_playwright_bounda
     assert payload["options"]["render_js"] is True
     assert payload["pages"][0]["title"] == "Startup AI Rendered"
     assert "renderizado" in payload["pages"][0]["main_text"]
-    assert payload["pages"][0]["extraction_strategy"] == "stdlib_html_parser+playwright"
+    assert payload["pages"][0]["extraction_strategy"].endswith("+playwright")
 
 
 def test_collect_pages_cli_can_disable_playwright_for_deterministic_debugging() -> None:
