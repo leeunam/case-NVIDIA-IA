@@ -38,6 +38,7 @@ env/
 ### Build/package artifacts ###
 build/
 dist/
+frontend/dist/
 *.egg-info/
 
 ### Local environment/secrets ###
