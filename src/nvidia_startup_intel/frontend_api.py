@@ -216,6 +216,7 @@ def build_run_record(
         "next_action": str(payload.get("next_action", "review_workflow_output")),
         "briefing_reference": payload.get("briefing_reference"),
         "human_review_reasons": payload.get("human_review_reasons", []),
+        "branch_decisions": payload.get("branch_decisions", []),
         "artifact_references": {
             "artifact_locations": payload.get("artifact_locations", {}),
             "persistence_references": payload.get("persistence_references", []),

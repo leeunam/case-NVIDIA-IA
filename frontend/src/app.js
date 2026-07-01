@@ -1,20 +1,26 @@
 import { createFrontendApiClient } from "./api-contract.js";
 import { createMockFrontendApiClient } from "./mock-data.js";
 import { briefingExportText, createInitialState, renderApp } from "./renderer.js";
+import { runLauncherFormFromFormData, submitRunLauncher } from "./run-launcher.js";
+import { loadRunWorkspace, runIdFromSearch, updateRunRoute } from "./run-workspace.js";
 
 const root = document.querySelector("#app");
 const params = new URLSearchParams(window.location.search);
 const apiMode = params.get("api") === "real" ? "real" : "mock";
 const apiBaseUrl = params.get("baseUrl") || "http://127.0.0.1:8000";
+const initialRouteRunId = runIdFromSearch(window.location.search);
 const apiClient =
   apiMode === "real"
     ? createFrontendApiClient({ baseUrl: apiBaseUrl })
     : createMockFrontendApiClient({ delayMs: 120 });
 
-let state = createInitialState({ apiMode, apiBaseUrl });
+let state = createInitialState({ apiMode, apiBaseUrl, routeRunId: initialRouteRunId });
 
 render();
 void loadSmokeMatrix({ quiet: true });
+if (initialRouteRunId) {
+  void loadRunFromRoute(initialRouteRunId);
+}
 
 function render() {
   root.innerHTML = renderApp(state);
@@ -44,13 +50,32 @@ function bindEvents() {
   if (form) {
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      void startRun(new FormData(form));
+      void submitRunLauncher({
+        formData: new FormData(form),
+        apiClient,
+        commit
+      }).then((currentRun) => {
+        if (currentRun) {
+          updateRunRoute({ runId: currentRun.run_id, location: window.location, history: window.history });
+          commit({ routeRunId: currentRun.run_id, runLoadState: "loaded" });
+        }
+      });
     });
+
+    for (const control of form.querySelectorAll("[data-launcher-autosync]")) {
+      control.addEventListener("change", () => {
+        commit({
+          launcherForm: runLauncherFormFromFormData(new FormData(form)),
+          notice: "",
+          errorMessage: ""
+        });
+      });
+    }
   }
 
   for (const button of root.querySelectorAll("[data-refresh-run]")) {
     button.addEventListener("click", () => {
-      void refreshRun(button.getAttribute("data-refresh-run") || "");
+      void loadRunFromRoute(button.getAttribute("data-refresh-run") || "");
     });
   }
 
@@ -79,53 +104,10 @@ function bindEvents() {
   }
 }
 
-async function startRun(formData) {
-  const request = runRequestFromForm(formData);
-  if (Boolean(request.startup_url) === Boolean(request.query)) {
-    commit({
-      errorMessage: "Provide exactly one startup URL or bounded query.",
-      notice: ""
-    });
-    return;
-  }
-  commit({ isBusy: true, notice: "Run submitted.", errorMessage: "" });
-  try {
-    const currentRun = await apiClient.startRun(request);
-    commit({
-      currentRun,
-      activeSection: "runs",
-      isBusy: false,
-      notice: `Run ${currentRun.run_id} completed.`,
-      errorMessage: ""
-    });
-  } catch (error) {
-    commit({
-      isBusy: false,
-      notice: "",
-      errorMessage: error instanceof Error ? error.message : "run_failed"
-    });
-  }
-}
-
-async function refreshRun(runId) {
-  if (!runId) {
-    return;
-  }
-  commit({ isBusy: true, notice: "Refreshing run.", errorMessage: "" });
-  try {
-    const currentRun = await apiClient.getRun(runId);
-    commit({
-      currentRun,
-      isBusy: false,
-      notice: `Run ${runId} refreshed.`,
-      errorMessage: ""
-    });
-  } catch (error) {
-    commit({
-      isBusy: false,
-      notice: "",
-      errorMessage: error instanceof Error ? error.message : "run_refresh_failed"
-    });
+async function loadRunFromRoute(runId) {
+  const currentRun = await loadRunWorkspace({ runId, apiClient, commit });
+  if (currentRun) {
+    updateRunRoute({ runId: currentRun.run_id, location: window.location, history: window.history });
   }
 }
 
@@ -185,35 +167,4 @@ function downloadBriefing() {
     notice: "Briefing export prepared with evidence and citation references.",
     errorMessage: ""
   });
-}
-
-function runRequestFromForm(formData) {
-  return {
-    startup_url: textValue(formData, "startup_url") || undefined,
-    query: textValue(formData, "query") || undefined,
-    startup_name: textValue(formData, "startup_name") || "unknown",
-    max_pages: numberValue(formData, "max_pages", 1),
-    max_depth: numberValue(formData, "max_depth", 0),
-    limit: 1,
-    output_dir: "runs",
-    persistence_mode: textValue(formData, "persistence_mode") || "json",
-    nvidia_corpus_path: "tests/fixtures/nvidia_knowledge_official_fixture.json",
-    render_js: formData.get("render_js") === "on",
-    robots_policy: "conservative",
-    retrieval_mode: "bm25",
-    orchestration: "local",
-    enable_search_provider: formData.get("enable_search_provider") === "on",
-    enable_reranking: formData.get("enable_reranking") === "on",
-    reranker_model: "",
-    llm_narrative: formData.get("llm_narrative") === "on"
-  };
-}
-
-function textValue(formData, key) {
-  return String(formData.get(key) || "").trim();
-}
-
-function numberValue(formData, key, fallback) {
-  const value = Number(formData.get(key));
-  return Number.isFinite(value) ? value : fallback;
 }
