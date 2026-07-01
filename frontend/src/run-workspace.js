@@ -1,4 +1,5 @@
 export const RUN_ID_QUERY_PARAM = "run_id";
+export const SECTION_QUERY_PARAM = "section";
 
 export function runIdFromSearch(search) {
   const params = new URLSearchParams(String(search || ""));
@@ -7,11 +8,17 @@ export function runIdFromSearch(search) {
 
 export function updateRunRoute(options) {
   const runId = String(options.runId || "").trim();
-  if (!runId || !options.location || !options.history) {
+  const activeSection = String(options.activeSection || "").trim();
+  if ((!runId && !activeSection) || !options.location || !options.history) {
     return;
   }
   const nextUrl = new URL(options.location.href);
-  nextUrl.searchParams.set(RUN_ID_QUERY_PARAM, runId);
+  if (runId) {
+    nextUrl.searchParams.set(RUN_ID_QUERY_PARAM, runId);
+  }
+  if (activeSection) {
+    nextUrl.searchParams.set(SECTION_QUERY_PARAM, activeSection);
+  }
   options.history.replaceState({}, "", String(nextUrl));
 }
 

@@ -26,6 +26,7 @@ test("loads a single run workspace from the API without starting a run", async (
 
   const loaded = await loadRunWorkspace({
     runId: "mock-route-run",
+    activeSection: "assessment",
     apiClient: {
       async startRun() {
         calls.push(["startRun"]);
@@ -48,7 +49,7 @@ test("loads a single run workspace from the API without starting a run", async (
   assert.deepEqual(calls, [["getRun", "mock-route-run"]]);
   assert.equal(state.currentRun.run_id, "mock-route-run");
   assert.equal(state.runLoadState, "loaded");
-  assert.equal(state.activeSection, "runs");
+  assert.equal(state.activeSection, "assessment");
 });
 
 test("reports missing route run as not found", async () => {
@@ -82,6 +83,7 @@ test("updates the route without dropping existing API settings", () => {
   const calls = [];
   updateRunRoute({
     runId: "mock-route-run",
+    activeSection: "evidence",
     location: { href: "http://localhost:4173/?api=real&baseUrl=http%3A%2F%2F127.0.0.1%3A8000" },
     history: {
       replaceState(state, title, url) {
@@ -93,4 +95,23 @@ test("updates the route without dropping existing API settings", () => {
   assert.equal(calls.length, 1);
   assert.match(calls[0].url, /api=real/);
   assert.match(calls[0].url, /run_id=mock-route-run/);
+  assert.match(calls[0].url, /section=evidence/);
+});
+
+test("updates a section-only route for launcher and smoke QA views", () => {
+  const calls = [];
+  updateRunRoute({
+    activeSection: "production-smokes",
+    location: { href: "http://localhost:4173/?api=mock" },
+    history: {
+      replaceState(state, title, url) {
+        calls.push({ state, title, url: String(url) });
+      }
+    }
+  });
+
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /api=mock/);
+  assert.match(calls[0].url, /section=production-smokes/);
+  assert.doesNotMatch(calls[0].url, /run_id=/);
 });

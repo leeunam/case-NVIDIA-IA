@@ -38,6 +38,7 @@ select {
   min-height: 40px;
 }
 
+a:focus-visible,
 button:focus-visible,
 input:focus-visible,
 select:focus-visible {
@@ -156,6 +157,7 @@ h4 {
   color: #f8f8f4;
   text-align: left;
   cursor: pointer;
+  overflow-wrap: anywhere;
 }
 
 .nav-item:hover,
@@ -233,6 +235,9 @@ h4 {
   gap: 8px;
   min-height: 32px;
   border-radius: 999px;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
   white-space: nowrap;
 }
 
@@ -246,6 +251,8 @@ h4 {
 
 .run-chip strong {
   color: var(--ink);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .message-stack {
@@ -276,6 +283,7 @@ h4 {
   color: var(--ink-muted);
   font-weight: 800;
   cursor: pointer;
+  overflow-wrap: anywhere;
 }
 
 .workspace-tab.is-active {
@@ -543,6 +551,8 @@ select {
   border-radius: 8px;
   font-weight: 800;
   cursor: pointer;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .primary-action {
@@ -1260,6 +1270,8 @@ dd {
 
 .context-link {
   min-height: 30px;
+  max-width: 100%;
+  min-width: 0;
   padding: 4px 9px;
   border: 1px solid rgb(67 107 0 / 28%);
   border-radius: 8px;
@@ -1268,6 +1280,7 @@ dd {
   font-size: 0.76rem;
   font-weight: 800;
   cursor: pointer;
+  overflow-wrap: anywhere;
 }
 
 .context-link:hover {
@@ -1576,6 +1589,11 @@ dd {
   border-bottom: 1px solid var(--line);
 }
 
+.smoke-row > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .smoke-row:last-child {
   border-bottom: 0;
 }
@@ -1610,6 +1628,7 @@ dd {
   }
 
   .nav-item {
+    flex: 0 0 auto;
     width: auto;
     white-space: nowrap;
   }
@@ -1652,6 +1671,7 @@ dd {
 
   .run-chip,
   .schema-pill,
+  .safe-pill,
   .status-badge {
     width: fit-content;
     max-width: 100%;

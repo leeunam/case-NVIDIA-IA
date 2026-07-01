@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "node scripts/dev-server.mjs",
     "build": "node scripts/build.mjs",
+    "lint": "node scripts/lint.mjs",
+    "qa": "npm run lint && npm test && npm run build",
+    "qa:browser": "node scripts/browser-qa.mjs",
     "test": "node --test tests/*.test.mjs"
   },
   "engines": {

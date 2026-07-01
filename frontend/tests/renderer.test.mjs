@@ -86,6 +86,8 @@ test("renders run-driven status, evidence, assessment, NVIDIA match, and briefin
   assert.match(assessmentHtml, /model_serving/);
 
   const matchHtml = renderApp(createInitialState({ activeSection: "nvidia-match", currentRun }));
+  assert.match(matchHtml, /Ready for briefing[\s\S]*true/);
+  assert.match(matchHtml, /Supported[\s\S]*1/);
   assert.match(matchHtml, /Supported recommendations/);
   assert.match(matchHtml, /Evaluate NVIDIA inference stack/);
 
